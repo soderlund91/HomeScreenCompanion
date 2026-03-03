@@ -379,6 +379,206 @@
                 opacity: 1;
                 border-bottom-color: #52B54B;
             }
+
+        /* Page-level tabs */
+        .page-tab-nav {
+            display: flex;
+            gap: 0;
+            margin-bottom: 24px;
+            border-bottom: 2px solid var(--line-color);
+        }
+
+        .page-tab-btn {
+            background: none;
+            border: none;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -2px;
+            padding: 10px 22px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: bold;
+            color: var(--theme-text-secondary);
+            transition: color 0.15s, border-color 0.15s;
+        }
+
+        .page-tab-btn.active {
+            color: var(--theme-text-primary);
+            border-bottom-color: #52B54B;
+        }
+
+        .page-tab-btn:hover:not(.active) {
+            color: var(--theme-text-primary);
+            background: rgba(128,128,128,0.08);
+        }
+
+        /* Home Screen tab */
+        .hsc-card {
+            background: var(--theme-background-level2);
+            border: 1px solid var(--line-color);
+            border-radius: 8px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+
+        .hsc-section-title {
+            font-size: 1.05em;
+            font-weight: bold;
+            color: #52B54B;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin: 0 0 16px 0;
+        }
+
+        .hsc-user-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 260px;
+            overflow-y: auto;
+            padding: 4px 0;
+        }
+
+        .hsc-user-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 6px 4px;
+            border-radius: 4px;
+            transition: background 0.15s;
+        }
+
+        .hsc-user-row:hover {
+            background: rgba(128,128,128,0.08);
+        }
+
+        .hsc-api-key-hint {
+            font-size: 0.82em;
+            color: var(--theme-text-secondary);
+            margin-top: 4px;
+            opacity: 0.75;
+        }
+
+        .mi-op-info {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            flex-shrink: 0;
+            cursor: default;
+        }
+
+        .mi-op-info-icon {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            border: 1px solid #52b0db;
+            background: transparent;
+            color: #52b0db;
+            font-size: 0.7em;
+            font-weight: bold;
+            font-style: italic;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0.75;
+            transition: opacity 0.15s;
+            user-select: none;
+        }
+
+        .mi-op-info:hover .mi-op-info-icon {
+            opacity: 1;
+        }
+
+        .mi-op-tooltip {
+            display: none;
+            position: absolute;
+            bottom: calc(100% + 8px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: #222;
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 7px;
+            padding: 10px 14px;
+            white-space: nowrap;
+            z-index: 2000;
+            font-size: 0.82em;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.6);
+            pointer-events: none;
+            color: #ddd;
+        }
+
+        .mi-op-info:hover .mi-op-tooltip {
+            display: block;
+        }
+
+        .mi-op-tooltip table {
+            border-collapse: collapse;
+        }
+
+        .mi-op-tooltip td {
+            padding: 2px 8px 2px 0;
+            vertical-align: middle;
+        }
+
+        .mi-op-tooltip td:first-child {
+            font-family: monospace;
+            font-size: 1.1em;
+            color: #00a4dc;
+            font-weight: bold;
+            min-width: 28px;
+        }
+
+        .run-speed-dial {
+            position: relative;
+        }
+
+        .run-speed-dial-menu {
+            position: absolute;
+            bottom: calc(100% + 8px);
+            right: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            opacity: 0;
+            transform: translateY(8px);
+            pointer-events: none;
+            transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+
+        .run-speed-dial-menu.open {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+
+        .run-dial-item {
+            background: #2a2a2a;
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 20px;
+            padding: 8px 16px;
+            cursor: pointer;
+            font-size: 0.85em;
+            white-space: nowrap;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+            transition: background 0.15s;
+        }
+
+        .run-dial-item:hover {
+            background: #3d3d3d;
+        }
+
+        .run-dial-chevron {
+            transition: transform 0.18s ease;
+            font-size: 0.9em !important;
+            margin-left: 4px;
+        }
+
+        #runSpeedDial.open .run-dial-chevron {
+            transform: rotate(180deg);
+        }
     </style>
 
     <div class="content-primary">
@@ -404,67 +604,67 @@
 
             <div id="versionBadgeArea"></div>
 
-            <form class="AutoTagForm">
+            <div class="page-tab-nav" id="pageTabNav">
+                <button class="page-tab-btn active" data-page-tab="TagCollection">Tag and Collection</button>
+                <button class="page-tab-btn" data-page-tab="HomeCompanion">Home Screen</button>
+                <button class="page-tab-btn" data-page-tab="Settings">Settings</button>
+            </div>
 
-                <div class="advanced-section" id="globalSettings">
-                    <div class="advanced-header">
-                        <i class="md-icon expand-icon">expand_more</i>
-                        <span style="margin-left: 10px; font-weight: bold; font-size: 1.1em;">Settings</span>
-                    </div>
-                    <div class="advanced-body" style="display: none;">
+            <div id="tabSettings" class="page-tab-content" style="display:none;">
 
-                        <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.05em; color: #52B54B; text-transform: uppercase; letter-spacing: 1px;">Basic Settings</h3>
-                        <div class="inputContainer">
-                            <input is="emby-input" type="text" id="txtTraktClientId" label="Trakt Client ID" />
-                            <div class="fieldDescription">
-                                Create app at <a href="https://trakt.tv/oauth/applications" target="_blank" class="help-link">Trakt.tv</a>.
-                            </div>
-                        </div>
-
-                        <div class="inputContainer">
-                            <input is="emby-input" type="text" id="txtMdblistApiKey" label="MDBList API Key" />
-                            <div class="fieldDescription">
-                                Get key at <a href="https://mdblist.com/preferences/" target="_blank" class="help-link">MDBList Preferences</a>.
-                            </div>
-                        </div>
-
-                        <hr style="border-color: var(--line-color); margin: 25px 0;" />
-
-                        <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.05em; color: #52B54B; text-transform: uppercase; letter-spacing: 1px;">Advanced Settings</h3>
-                        <div class="checkboxContainer checkboxContainer-withDescription">
-                            <label>
-                                <input is="emby-checkbox" type="checkbox" id="chkExtendedConsoleOutput" />
-                                <span>Extended Log Output</span>
-                            </label>
-                            <div class="fieldDescription">Enable verbose logging for debugging purposes.</div>
-                        </div>
-
-                        <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
-                            <label>
-                                <input is="emby-checkbox" type="checkbox" id="chkDryRunMode" />
-                                <span>Dry Run Mode</span>
-                            </label>
-                            <div class="fieldDescription">Simulate process without modifying database.</div>
-                        </div>
-
-                        <hr style="border-color: var(--line-color); margin: 25px 0;" />
-
-                        <h3 style="margin-top: 0; margin-bottom: 10px; font-size: 1.05em; color: #52B54B; text-transform: uppercase; letter-spacing: 1px;">Backup & Restore</h3>
-                        <p class="textMuted" style="font-size:0.9em; margin-bottom:15px;">Export your configuration to a JSON file or restore from a backup.</p>
-                        <div style="display:flex; gap:10px;">
-                            <button is="emby-button" type="button" id="btnBackupConfig" class="raised btn-neutral">
-                                <i class="md-icon" style="margin-right:5px;">download</i>Download Backup
-                            </button>
-                            <button is="emby-button" type="button" id="btnRestoreConfigTrigger" class="raised btn-neutral">
-                                <i class="md-icon" style="margin-right:5px;">upload</i>Restore Backup
-                            </button>
-                            <input type="file" id="fileRestoreConfig" accept=".json" style="display:none;" />
-                        </div>
-
+                <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.05em; color: #52B54B; text-transform: uppercase; letter-spacing: 1px;">Basic Settings</h3>
+                <div class="inputContainer">
+                    <input is="emby-input" type="text" id="txtTraktClientId" label="Trakt Client ID" />
+                    <div class="fieldDescription">
+                        Create app at <a href="https://trakt.tv/oauth/applications" target="_blank" class="help-link">Trakt.tv</a>.
                     </div>
                 </div>
 
-                <hr style="border-color: var(--line-color);" />
+                <div class="inputContainer">
+                    <input is="emby-input" type="text" id="txtMdblistApiKey" label="MDBList API Key" />
+                    <div class="fieldDescription">
+                        Get key at <a href="https://mdblist.com/preferences/" target="_blank" class="help-link">MDBList Preferences</a>.
+                    </div>
+                </div>
+
+                <hr style="border-color: var(--line-color); margin: 25px 0;" />
+
+                <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.05em; color: #52B54B; text-transform: uppercase; letter-spacing: 1px;">Advanced Settings</h3>
+                <div class="checkboxContainer checkboxContainer-withDescription">
+                    <label>
+                        <input is="emby-checkbox" type="checkbox" id="chkExtendedConsoleOutput" />
+                        <span>Extended Log Output</span>
+                    </label>
+                    <div class="fieldDescription">Enable verbose logging for debugging purposes.</div>
+                </div>
+
+                <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
+                    <label>
+                        <input is="emby-checkbox" type="checkbox" id="chkDryRunMode" />
+                        <span>Dry Run Mode</span>
+                    </label>
+                    <div class="fieldDescription">Simulate process without modifying database.</div>
+                </div>
+
+                <hr style="border-color: var(--line-color); margin: 25px 0;" />
+
+                <h3 style="margin-top: 0; margin-bottom: 10px; font-size: 1.05em; color: #52B54B; text-transform: uppercase; letter-spacing: 1px;">Backup & Restore</h3>
+                <p class="textMuted" style="font-size:0.9em; margin-bottom:15px;">Export your configuration to a JSON file or restore from a backup.</p>
+                <div style="display:flex; gap:10px;">
+                    <button is="emby-button" type="button" id="btnBackupConfig" class="raised btn-neutral">
+                        <i class="md-icon" style="margin-right:5px;">download</i>Download Backup
+                    </button>
+                    <button is="emby-button" type="button" id="btnRestoreConfigTrigger" class="raised btn-neutral">
+                        <i class="md-icon" style="margin-right:5px;">upload</i>Restore Backup
+                    </button>
+                    <input type="file" id="fileRestoreConfig" accept=".json" style="display:none;" />
+                </div>
+
+            </div><!-- /tabSettings -->
+
+            <div id="tabTagCollection" class="page-tab-content">
+
+            <form class="AutoTagForm" id="autoTagForm">
 
                 <div class="inspiration-container">
                     <p class="textMuted" style="margin-bottom: 10px; font-size: 0.9em;">Looking for lists?</p>
@@ -490,19 +690,42 @@
 
                 <br /><br /><br /><br /><br />
 
-                <div class="floating-actions">
-                    <button is="emby-button" type="submit" class="raised button-submit fab-btn btn-save">
-                        <i class="md-icon" style="margin-right:5px;">save</i><span>Save Settings</span>
-                    </button>
+            </form>
+
+            </div><!-- /tabTagCollection -->
+
+            <div id="tabHomeCompanion" class="page-tab-content" style="display:none;">
+                <div id="hscContainer"></div>
+            </div>
+
+            <div class="floating-actions">
+                <button is="emby-button" type="submit" form="autoTagForm" class="raised button-submit fab-btn btn-save">
+                    <i class="md-icon" style="margin-right:5px;">save</i><span>Save Settings</span>
+                </button>
+                <div class="run-speed-dial" id="runSpeedDial">
+                    <div class="run-speed-dial-menu" id="runSyncMenu">
+                        <button type="button" class="run-dial-item" id="btnDialFullSync">
+                            <i class="md-icon">sync</i><span>Full sync</span>
+                        </button>
+                        <button type="button" class="run-dial-item" id="btnDialHomeScreen">
+                            <i class="md-icon">home</i><span>Sync home screen</span>
+                        </button>
+                        <button type="button" class="run-dial-item" id="btnDialTagsCollections">
+                            <i class="md-icon">local_offer</i><span>Sync tags and collections</span>
+                        </button>
+                    </div>
                     <button is="emby-button" type="button" id="btnRunSync" class="raised button-submit fab-btn btn-run">
-                        <i class="md-icon" style="margin-right:5px;">play_arrow</i><span>Run Full Sync</span>
+                        <i class="md-icon" style="margin-right:5px;">play_arrow</i>
+                        <span>Run</span>
+                        <i class="md-icon run-dial-chevron">expand_less</i>
                     </button>
                 </div>
-            </form>
-        </div>
+            </div>
+
+        </div><!-- /verticalSection -->
 
         <div style="margin-top: 5em; padding-top: 2em; border-top: 1px solid var(--line-color); text-align: center; color: var(--theme-text-secondary);">
-            <p style="margin-bottom: 5px; font-weight: bold;">AutoTag v2.3.2.0-BETA</p>
+            <p style="margin-bottom: 5px; font-weight: bold;">AutoTag v3.0.0.0</p>
             <div style="display: flex; justify-content: center; margin-bottom: 15px;">
                 <a href="https://github.com/soderlund91/AutoTag/tree/main" target="_blank" class="simple-link">
                     <i class="md-icon" style="font-size:1.2em;">link</i>

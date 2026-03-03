@@ -115,6 +115,21 @@ namespace AutoTag
                 // Byggs lazily vid första träff; delas av alla MediaInfo-regler.
                 var seriesEpisodeCache = new Dictionary<long, BaseItem>();
 
+                // Pass 1: find tags/collections that have an active override entry
+                var activeTagOverrides = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var activeCollectionOverrides = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var tc in config.Tags)
+                {
+                    if (!tc.Active || !tc.OverrideWhenActive || string.IsNullOrWhiteSpace(tc.Tag)) continue;
+                    if (!IsScheduleActive(tc.ActiveIntervals)) continue;
+                    activeTagOverrides.Add(tc.Tag.Trim());
+                    if (tc.EnableCollection)
+                    {
+                        var overrideCName = string.IsNullOrWhiteSpace(tc.CollectionName) ? tc.Tag.Trim() : tc.CollectionName.Trim();
+                        activeCollectionOverrides.Add(overrideCName);
+                    }
+                }
+
                 foreach (var tagConfig in config.Tags)
                 {
                     if (string.IsNullOrWhiteSpace(tagConfig.Tag) || !tagConfig.Active) continue;
@@ -131,6 +146,14 @@ namespace AutoTag
                     }
 
                     string cName = string.IsNullOrWhiteSpace(tagConfig.CollectionName) ? tagName : tagConfig.CollectionName.Trim();
+
+                    if (!tagConfig.OverrideWhenActive &&
+                        (activeTagOverrides.Contains(tagName) ||
+                         (tagConfig.EnableCollection && activeCollectionOverrides.Contains(cName))))
+                    {
+                        LogSummary($"  ~ {displayName}  ·  suppressed (overridden by priority entry)");
+                        continue;
+                    }
                     if (tagConfig.EnableCollection)
                     {
                         activeCollections.Add(cName);
@@ -493,7 +516,7 @@ namespace AutoTag
             {
                 bool match = false;
                 if (interval.Type == "Weekly") { if (!string.IsNullOrEmpty(interval.DayOfWeek) && interval.DayOfWeek.IndexOf(now.DayOfWeek.ToString(), StringComparison.OrdinalIgnoreCase) >= 0) match = true; }
-                else if (interval.Type == "EveryYear") { if (interval.Start.HasValue && interval.End.HasValue) { var s = new DateTime(now.Year, interval.Start.Value.Month, interval.Start.Value.Day); var e = new DateTime(now.Year, interval.End.Value.Month, interval.End.Value.Day); if (e < s) e = e.AddYears(1); if (now.Date >= s.Date && now.Date <= e.Date) match = true; } }
+                else if (interval.Type == "EveryYear") { if (interval.Start.HasValue && interval.End.HasValue) { var sDay = Math.Min(interval.Start.Value.Day, DateTime.DaysInMonth(now.Year, interval.Start.Value.Month)); var eDay = Math.Min(interval.End.Value.Day, DateTime.DaysInMonth(now.Year, interval.End.Value.Month)); var s = new DateTime(now.Year, interval.Start.Value.Month, sDay); var e = new DateTime(now.Year, interval.End.Value.Month, eDay); if (e < s) e = e.AddYears(1); if (now.Date >= s.Date && now.Date <= e.Date) match = true; } }
                 else { if ((!interval.Start.HasValue || now.Date >= interval.Start.Value.Date) && (!interval.End.HasValue || now.Date <= interval.End.Value.Date)) match = true; }
                 if (match) return true;
             }
@@ -649,7 +672,14 @@ namespace AutoTag
             string? mediaType = null,
             string[]? itemTags = null)
         {
-            var parts = cond.Split(':');
+            bool negate = cond.Length > 0 && cond[0] == '!';
+            if (negate) cond = cond.Substring(1);
+            bool evalResult = EvaluateCriterionCore(cond);
+            return negate ? !evalResult : evalResult;
+
+            bool EvaluateCriterionCore(string c)
+            {
+            var parts = c.Split(':');
             if (parts.Length == 2)
             {
                 var prop = parts[0]; var val = parts[1].Trim();
@@ -665,6 +695,7 @@ namespace AutoTag
                     "AudioLanguage" => audioLanguages != null && audioLanguages.Contains(val),
                     "MediaType"     => string.Equals(mediaType, val, StringComparison.OrdinalIgnoreCase),
                     "Tag"           => itemTags != null && MatchesAny(itemTags, val),
+                    "ImdbId"        => MatchesImdbId(item.GetProviderId("Imdb"), val),
                     _ => false
                 };
             }
@@ -691,7 +722,7 @@ namespace AutoTag
                     _ => false
                 };
             }
-            return cond switch
+            return c switch
             {
                 "4K" => is4k, "8K" => is8k, "1080p" => is1080, "720p" => is720, "SD" => isSd,
                 "HEVC" => isHevc, "AV1" => isAv1, "H264" => isH264,
@@ -701,11 +732,16 @@ namespace AutoTag
                 "7.1" => is71, "5.1" => is51, "Stereo" => isStereo, "Mono" => isMono,
                 _ => false
             };
+            } // EvaluateCriterionCore
         }
 
         private static bool MatchesAny(string[] values, string search) =>
             values != null && values.Any(v =>
                 v.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0);
+
+        private static bool MatchesImdbId(string? itemImdb, string val) =>
+            !string.IsNullOrEmpty(itemImdb) &&
+            val.Split(',').Any(id => string.Equals(itemImdb, id.Trim(), StringComparison.OrdinalIgnoreCase));
 
         private static bool MatchesPerson(BaseItem item, string name, string type)
         {

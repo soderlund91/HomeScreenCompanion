@@ -11,6 +11,11 @@ namespace AutoTag
         public bool ExtendedConsoleOutput { get; set; } = false;
         public bool DryRunMode { get; set; } = false;
         public List<TagConfig> Tags { get; set; } = new List<TagConfig>();
+
+        // Home Screen Companion
+        public bool HomeSyncEnabled { get; set; } = false;
+        public string HomeSyncSourceUserId { get; set; } = "";
+        public List<string> HomeSyncTargetUserIds { get; set; } = new List<string>();
     }
 
     public class TagConfig
@@ -30,6 +35,7 @@ namespace AutoTag
         public List<string> Blacklist { get; set; } = new List<string>();
         public List<DateInterval> ActiveIntervals { get; set; } = new List<DateInterval>();
 
+        public bool OverrideWhenActive { get; set; } = false;
         public bool EnableTag { get; set; } = true;
         public bool EnableCollection { get; set; } = false;
         public string CollectionName { get; set; } = "";

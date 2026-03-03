@@ -1,4 +1,6 @@
-﻿namespace AutoTag
+﻿using System.Collections.Generic;
+
+namespace AutoTag
 {
     public class ExternalItemDto
     {
@@ -43,5 +45,26 @@
         public string slug { get; set; }
         public int? tmdb { get; set; }
         public string imdb { get; set; }
+    }
+
+    // Home Screen Companion DTOs
+    public class HscUserDto
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+    }
+
+    public class HscUsersResponse
+    {
+        public List<HscUserDto> Users { get; set; } = new List<HscUserDto>();
+    }
+
+    public class HscSyncStatusResponse
+    {
+        public string LastSyncTime { get; set; } = "";
+        public bool IsRunning { get; set; }
+        public string LastSyncResult { get; set; } = "";
+        public int SectionsCopied { get; set; }
+        public List<string> Logs { get; set; } = new List<string>();
     }
 }

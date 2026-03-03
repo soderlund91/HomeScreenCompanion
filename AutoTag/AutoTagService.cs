@@ -1,8 +1,6 @@
 ﻿using MediaBrowser.Common.Net;
-using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Serialization;
 using MediaBrowser.Model.Services;
-using MediaBrowser.Model.Tasks;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -65,6 +63,9 @@ namespace AutoTag
         public List<string> Logs { get; set; } = new List<string>();
         public bool IsRunning { get; set; }
     }
+
+    [Route("/AutoTag/Hsc/Status", "GET")]
+    public class HscGetStatusRequest : IReturn<HscSyncStatusResponse> { }
 
     public class AutoTagService : IService
     {
@@ -192,6 +193,20 @@ namespace AutoTag
             {
                 return new TestUrlResponse { Success = false, Message = $"Error: {ex.Message}" };
             }
+        }
+
+        public object Get(HscGetStatusRequest request)
+        {
+            List<string> logs;
+            lock (HomeSectionSyncTask.ExecutionLog) { logs = HomeSectionSyncTask.ExecutionLog.ToList(); }
+            return new HscSyncStatusResponse
+            {
+                LastSyncTime = HomeSectionSyncTask.LastSyncTime,
+                IsRunning = HomeSectionSyncTask.IsRunning,
+                LastSyncResult = HomeSectionSyncTask.LastSyncResult,
+                SectionsCopied = HomeSectionSyncTask.LastSectionsCopied,
+                Logs = logs
+            };
         }
     }
 }
