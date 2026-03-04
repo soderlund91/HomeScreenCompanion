@@ -9,6 +9,9 @@
 
 > **v3.0.0.0** — Plugin renamed from AutoTag to Home Screen Companion.
 
+> [!IMPORTANT]
+> Since version 3.0.0.0 this plugin no longer support Emby server version 4.9.x.x. Requires Emby 4.10+
+
 ---
 
 ## 🚀 Key Features
@@ -19,12 +22,6 @@ Make your library feel alive with tags that update automatically every day.
 * **Popular & Top Rated** — self-managing "Best of" lists.
 * **Personal Curations** — sync your own Trakt/MDBList lists (e.g., "Best of 80s", "Dad's Favorites").
 * **Automagical Sync** — link a URL, and the plugin handles the rest. Items are added and removed automatically.
-
-### 📅 Advanced Scheduling
-Set tags and collections to be active only during specific time windows. AutoTag handles cleanup when the window closes.
-* **Annual** — e.g., "Christmas Movies" active Dec 1–31 every year.
-* **Weekly** — e.g., "Friday Movie Night" active only on Fridays.
-* **Specific Dates** — for one-time events or marathons.
 
 ### 📚 Automated Collection Management
 Beyond tagging, the plugin can manage your Emby Collections.
@@ -37,6 +34,12 @@ Beyond tagging, the plugin can manage your Emby Collections.
 No external API needed. Use what's already in your library.
 * Tag items based on existing **Emby Collections** or **Playlists**.
 * Combine with schedules to create time-limited promotions of curated content.
+
+### 📅 Advanced Scheduling
+Set tags and collections to be active only during specific time windows. AutoTag handles cleanup when the window closes.
+* **Annual** — e.g., "Christmas Movies" active Dec 1–31 every year.
+* **Weekly** — e.g., "Friday Movie Night" active only on Fridays.
+* **Specific Dates** — for one-time events or marathons.
 
 ### 🔬 MediaInfo Filtering
 Tag items based on their actual technical properties—no manual curation required.
@@ -53,13 +56,12 @@ Tag items based on their actual technical properties—no manual curation requir
 * Tag action movies from 2020+ with a rating above 7 → `Genre: Action AND Year >= 2020 AND CommunityRating >= 7`
 * Tag content suitable for a specific setup → `DTS-HD MA OR Atmos`
 
-### 🏠 Home Screen Companion
+### 🏠 Home Screen
 Keep home screen sections in sync across all your Emby users—automatically.
 * **Source user** — pick one user whose home screen layout is the "master" configuration.
 * **Target users** — select one or more users whose home screens will be updated to mirror the source.
 * **Scheduled task** — runs every 30 minutes by default, or manually trigger a sync from the plugin page.
 * **Live status** — the plugin page shows last sync time, result, and how many sections were copied.
-* **API key support** — configure a dedicated Emby API key for reliable access.
 
 This is ideal for multi-user households or Emby servers with guests, where you want everyone to see the same curated home screen without manually configuring each account.
 
@@ -70,13 +72,9 @@ AutoTag doesn't just add tags; it **enforces** them.
 * Your library always reflects the current state of the list.
 
 ### 🛡️ Safety & Stability
-* **Safety Lock** — prevents saving or starting a new run while a sync is in progress.
 * **Fail-Safe Cleanup** — if a remote list fails to download, the plugin skips cleanup for that tag/collection to prevent accidental data loss.
 * **Dry Run Mode** — test your configuration in the logs without modifying anything in your library.
 * **Live Logging** — view the execution log directly inside the plugin settings with real-time status updates.
-
-### 🧠 Self-Cleaning Memory
-Deleted a configuration? On the next run, the plugin automatically removes that tag and/or collection from your entire library. No manual cleanup required.
 
 ---
 
@@ -91,9 +89,9 @@ Deleted a configuration? On the next run, the plugin automatically removes that 
 
 ## ⚙️ Configuration
 
-Go to your Emby Dashboard. You will see **HomeScreenCompanion** in the sidebar menu.
+Go to your Emby Dashboard. You will see **Home Screen Companion** in the sidebar menu.
 
-The plugin page has two tabs: **Tag and Collection** and **Home Screen Companion**.
+The plugin page has three tabs: **Tag and Collection**, **Home Screen** and **Settings**
 
 ### API Keys (Tag and Collection tab)
 * **Trakt Client ID** — required for Trakt lists. Get one free at [trakt.tv/oauth/applications](https://trakt.tv/oauth/applications).
@@ -132,14 +130,6 @@ Each source is configured across four tabs:
 | **Blacklist** | Comma-separated IMDB IDs to ignore (e.g., `tt1234567`). |
 | **MediaInfo Filter** | Rule-based filter to restrict which items in the list get tagged. |
 
-### Home Screen Companion Tab
-| Setting | Description |
-| :--- | :--- |
-| **Enable HSC Sync** | Toggle the home section sync feature on or off. |
-| **Source User** | The user whose home screen layout will be copied. |
-| **Target Users** | Users who will receive the source user's home screen layout. |
-| **Server URL** | The internal Emby server URL (e.g., `http://localhost:8096`). |
-| **API Key** | An Emby API key with sufficient permissions. |
 
 ---
 
@@ -160,7 +150,14 @@ Each source is configured across four tabs:
 
 ### Screenshots
 
-(Coming)
+<img width="775" height="828" alt="image" src="https://github.com/user-attachments/assets/bfe32910-ad40-418b-8c2f-a4b38fe7b69a" />
+
+<img width="721" height="1200" alt="image" src="https://github.com/user-attachments/assets/b96714b8-d9bf-4aea-9a66-bc08e7060d48" />
+
+<img width="778" height="905" alt="image" src="https://github.com/user-attachments/assets/04b29706-1e23-4505-b2e0-155089bdb433" />
+
+<img width="916" height="699" alt="image" src="https://github.com/user-attachments/assets/b78d6f9a-6ce5-4af7-b4d5-f05c11abcbef" />
+
 
 ---
 **Disclaimer:** This plugin is not affiliated with Emby, Trakt, or MDBList.
