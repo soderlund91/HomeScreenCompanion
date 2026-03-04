@@ -8,19 +8,19 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace AutoTag
+namespace HomeScreenCompanion
 {
-    [Route("/AutoTag/TestUrl", "GET")]
+    [Route("/HomeScreenCompanion/TestUrl", "GET")]
     public class TestUrlRequest : IReturn<TestUrlResponse>
     {
         public string Url { get; set; } = string.Empty;
         public int Limit { get; set; } = 10;
     }
 
-    [Route("/AutoTag/Status", "GET")]
+    [Route("/HomeScreenCompanion/Status", "GET")]
     public class GetStatusRequest : IReturn<StatusResponse> { }
 
-    [Route("/AutoTag/Version", "GET")]
+    [Route("/HomeScreenCompanion/Version", "GET")]
     public class VersionRequest : IReturn<VersionResponse> { }
 
     public class VersionResponse
@@ -28,7 +28,7 @@ namespace AutoTag
         public string Version { get; set; } = "";
     }
 
-    [Route("/AutoTag/UploadCollectionImage", "POST")]
+    [Route("/HomeScreenCompanion/UploadCollectionImage", "POST")]
     public class UploadCollectionImageRequest : IReturn<UploadCollectionImageResponse>
     {
         public string FileName { get; set; } = "";
@@ -36,7 +36,7 @@ namespace AutoTag
         public string OldFilePath { get; set; } = "";
     }
 
-    [Route("/AutoTag/FetchCollectionImageFromUrl", "POST")]
+    [Route("/HomeScreenCompanion/FetchCollectionImageFromUrl", "POST")]
     public class FetchCollectionImageFromUrlRequest : IReturn<UploadCollectionImageResponse>
     {
         public string Url { get; set; } = "";
@@ -64,15 +64,15 @@ namespace AutoTag
         public bool IsRunning { get; set; }
     }
 
-    [Route("/AutoTag/Hsc/Status", "GET")]
+    [Route("/HomeScreenCompanion/Hsc/Status", "GET")]
     public class HscGetStatusRequest : IReturn<HscSyncStatusResponse> { }
 
-    public class AutoTagService : IService
+public class HomeScreenCompanionService : IService
     {
         private readonly IHttpClient _httpClient;
         private readonly IJsonSerializer _jsonSerializer;
 
-        public AutoTagService(IHttpClient httpClient, IJsonSerializer jsonSerializer)
+        public HomeScreenCompanionService(IHttpClient httpClient, IJsonSerializer jsonSerializer)
         {
             _httpClient = httpClient;
             _jsonSerializer = jsonSerializer;
@@ -86,12 +86,12 @@ namespace AutoTag
         public object Get(GetStatusRequest request)
         {
             List<string> logs;
-            lock (AutoTagTask.ExecutionLog) { logs = AutoTagTask.ExecutionLog.ToList(); }
+            lock (HomeScreenCompanionTask.ExecutionLog) { logs = HomeScreenCompanionTask.ExecutionLog.ToList(); }
             return new StatusResponse
             {
-                LastRunStatus = AutoTagTask.LastRunStatus,
+                LastRunStatus = HomeScreenCompanionTask.LastRunStatus,
                 Logs = logs,
-                IsRunning = AutoTagTask.IsRunning
+                IsRunning = HomeScreenCompanionTask.IsRunning
             };
         }
 
@@ -208,5 +208,6 @@ namespace AutoTag
                 Logs = logs
             };
         }
+
     }
 }

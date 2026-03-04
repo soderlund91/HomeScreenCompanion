@@ -12,7 +12,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     var lastHscConfig = {};
 
     var customCss = `
-    <style id="autoTagCustomCss">
+    <style id="homeScreenCompanionCustomCss">
         .day-toggle {
             background: rgba(128,128,128,0.08);
             color: var(--theme-text-secondary);
@@ -732,7 +732,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     </div>
 
                     <div class="source-external-container" style="display: ${sourceType === 'External' ? 'block' : 'none'};">
-                        <p style="margin:10px 0 10px 0; font-size:0.9em; font-weight:bold; opacity:0.7;">Source URLs</p>
+                        <div style="display:flex; align-items:baseline; gap:10px; margin:10px 0 10px 0;">
+                            <p style="margin:0; font-size:0.9em; font-weight:bold; opacity:0.7;">Source URLs</p>
+                            <span style="font-size:0.75em; opacity:0.5;">— Find lists: <a href="https://trakt.tv/discover" target="_blank" style="color:inherit; text-decoration:underline;">Trakt</a> &middot; <a href="https://mdblist.com/toplists/" target="_blank" style="color:inherit; text-decoration:underline;">MDBList</a></span>
+                        </div>
                         <div class="url-list-container">${urls.map(u => getUrlRowHtml(u.url, u.limit)).join('')}</div>
                         <div style="margin-top:10px;"><button is="emby-button" type="button" class="raised btnAddUrl" style="width:100%; background:transparent; border:2px dashed rgba(128,128,128,0.4); color:var(--theme-text-secondary);"><i class="md-icon" style="margin-right:5px;">add</i>Add another URL</button></div>
                     </div>
@@ -764,6 +767,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         <div class="inputContainer" style="flex-grow:1;"><input is="emby-input" class="txtTagName" type="text" label="Tag Name" value="${tagName}" /></div>
                         <p style="margin:5px 0 0 0; font-size:0.9em; opacity:0.7;">The tag that will be applied to matched items in Emby.</p>
                     </div>
+            </div>
+
+                <div class="tab-content schedule-tab" style="display:none;">
+                    <p style="margin:0 0 15px 0; font-size:0.9em; opacity:0.8;">Define when this tag should be active. If empty, it's always active.</p>
+                    <div class="date-list-container">${intervals.map(i => getDateRowHtml(i)).join('')}</div>
+                    <button is="emby-button" type="button" class="btnAddDate" style="width:100%; background:transparent; border:2px dashed rgba(128,128,128,0.4); color:var(--theme-text-secondary); margin-top:10px;"><i class="md-icon" style="margin-right:5px;">event</i>Add Schedule Rule</button>
                     <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:16px;">
                         <label>
                             <input is="emby-checkbox" type="checkbox" class="chkOverrideWhenActive" ${overrideChecked} />
@@ -771,12 +780,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         </label>
                         <div class="fieldDescription">When this entry is in schedule, all other entries sharing the same tag or collection are suppressed — only this entry's items keep the tag and collection.</div>
                     </div>
-            </div>
-
-                <div class="tab-content schedule-tab" style="display:none;">
-                    <p style="margin:0 0 15px 0; font-size:0.9em; opacity:0.8;">Define when this tag should be active. If empty, it's always active.</p>
-                    <div class="date-list-container">${intervals.map(i => getDateRowHtml(i)).join('')}</div>
-                    <button is="emby-button" type="button" class="btnAddDate" style="width:100%; background:transparent; border:2px dashed rgba(128,128,128,0.4); color:var(--theme-text-secondary); margin-top:10px;"><i class="md-icon" style="margin-right:5px;">event</i>Add Schedule Rule</button>
                 </div>
 
                 <div class="tab-content collection-tab" style="display:none;">
@@ -1067,7 +1070,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 if (!url) return;
 
                 btnTest.disabled = true;
-                window.ApiClient.getJSON(window.ApiClient.getUrl("AutoTag/TestUrl", { Url: url, Limit: 1000 })).then(result => {
+                window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/TestUrl", { Url: url, Limit: 1000 })).then(result => {
                     window.Dashboard.alert(result.Message);
                 }).finally(() => btnTest.disabled = false);
             }
@@ -1084,7 +1087,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var handle = row.querySelector('.drag-handle');
 
         handle.addEventListener('mousedown', () => {
-            if (localStorage.getItem('AutoTag_SortBy') === 'Manual') {
+            if (localStorage.getItem('HomeScreenCompanion_SortBy') === 'Manual') {
                 row.setAttribute('draggable', 'true');
             }
         });
@@ -1094,7 +1097,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         });
 
         row.addEventListener('dragstart', (e) => {
-            if (localStorage.getItem('AutoTag_SortBy') !== 'Manual') { e.preventDefault(); return; }
+            if (localStorage.getItem('HomeScreenCompanion_SortBy') !== 'Manual') { e.preventDefault(); return; }
 
             document.querySelectorAll('.tag-body').forEach(b => b.style.display = 'none');
             document.querySelectorAll('.expand-icon').forEach(i => i.innerText = 'expand_more');
@@ -1141,7 +1144,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var headers = { 'Content-Type': 'application/json' };
                 var token = window.ApiClient.accessToken();
                 if (token) headers['X-Emby-Token'] = token;
-                fetch(window.ApiClient.getUrl('AutoTag/UploadCollectionImage'), {
+                fetch(window.ApiClient.getUrl('HomeScreenCompanion/UploadCollectionImage'), {
                     method: 'POST',
                     headers: headers,
                     body: JSON.stringify({ FileName: file.name, Base64Data: base64, OldFilePath: row.querySelector('.hiddenPosterPath').value })
@@ -1179,7 +1182,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var token = window.ApiClient.accessToken();
             if (token) headers['X-Emby-Token'] = token;
 
-            fetch(window.ApiClient.getUrl('AutoTag/FetchCollectionImageFromUrl'), {
+            fetch(window.ApiClient.getUrl('HomeScreenCompanion/FetchCollectionImageFromUrl'), {
                 method: 'POST',
                 headers: headers,
                 body: JSON.stringify({ Url: url, OldFilePath: row.querySelector('.hiddenPosterPath').value })
@@ -1222,8 +1225,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     function refreshStatus(view) {
         var myId = ++statusRequestId;
         Promise.all([
-            window.ApiClient.getJSON(window.ApiClient.getUrl("AutoTag/Status")),
-            window.ApiClient.getJSON(window.ApiClient.getUrl("AutoTag/Hsc/Status")).catch(function () { return null; })
+            window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/Status")),
+            window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/Hsc/Status")).catch(function () { return null; })
         ]).then(function (results) {
             if (myId !== statusRequestId) return;
             var result = results[0], hscResult = results[1];
@@ -1259,7 +1262,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     allLogs.push({ t: getLogTime(l), text: l.replace(/^(\[\d{2}:\d{2}:\d{2}\]) /, '$1 [TAG] ') });
                 });
                 (hscResult && hscResult.Logs || []).forEach(function (l) {
-                    allLogs.push({ t: getLogTime(l), text: l.replace(/^(\[\d{2}:\d{2}:\d{2}\]) /, '$1 [HSC] ') });
+                    allLogs.push({ t: getLogTime(l), text: l.replace(/^(\[\d{2}:\d{2}:\d{2}\]) /, '$1 [Home Screen] ') });
                 });
                 allLogs.sort(function (a, b) { return a.t.localeCompare(b.t); });
                 content.textContent = allLogs.map(function (x) { return x.text; }).join('\n') || '(no logs yet)';
@@ -1412,7 +1415,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
 
     function checkFormState() {
-        var view = document.querySelector('#AutoTagConfigPage');
+        var view = document.querySelector('#HomeScreenCompanionConfigPage');
         if (!view || !originalConfigState) return;
         
         var isDirty = false;
@@ -1437,7 +1440,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
 
     function updateDryRunWarning() {
-        var view = document.querySelector('#AutoTagConfigPage');
+        var view = document.querySelector('#HomeScreenCompanionConfigPage');
         if (!view || !originalConfigState) return;
         var warn = view.querySelector('.dry-run-warning');
         if (warn) {
@@ -1481,11 +1484,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     function checkForUpdates(view) {
         if (view.querySelector('#autoTagVersionBadge')) return;
 
-        window.ApiClient.getJSON(window.ApiClient.getUrl("AutoTag/Version")).then(function (result) {
+        window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/Version")).then(function (result) {
             var currentVer = result.Version || '';
             if (!currentVer) return;
 
-            fetch('https://api.github.com/repos/soderlund91/AutoTag/releases/latest')
+            fetch('https://api.github.com/repos/soderlund91/HomeScreenCompanion/releases/latest')
                 .then(function (r) { return r.json(); })
                 .then(function (release) {
                     var latestTag = (release.tag_name || '').replace(/^v/i, '');
@@ -1519,7 +1522,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var key = t.Name ? t.Name + '\x1F' + t.Tag : t.Tag;
             if (!grouped[key]) {
                 grouped[key] = {
-                    Tag: t.Tag, Name: t.Name || '', Urls: [], LocalSources: [], Active: t.Active, Blacklist: t.Blacklist, ActiveIntervals: t.ActiveIntervals,
+                    Tag: t.Tag, Name: t.Name || '', Urls: [], LocalSources: [], Active: t.Active !== false, Blacklist: t.Blacklist, ActiveIntervals: t.ActiveIntervals,
                     EnableTag: t.EnableTag !== false, EnableCollection: t.EnableCollection, CollectionName: t.CollectionName, CollectionDescription: t.CollectionDescription || '', CollectionPosterPath: t.CollectionPosterPath || '', OnlyCollection: t.OnlyCollection, OverrideWhenActive: t.OverrideWhenActive || false, LastModified: t.LastModified,
                     SourceType: t.SourceType || "External", MediaInfoConditions: t.MediaInfoConditions || [], MediaInfoFilters: t.MediaInfoFilters || [],
                     Limit: t.Limit || 0
@@ -1601,13 +1604,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
     return function (view) {
         view.addEventListener('viewshow', () => {
-            if (!document.getElementById('autoTagCustomCss')) {
+            if (!document.getElementById('homeScreenCompanionCustomCss')) {
                 document.body.insertAdjacentHTML('beforeend', customCss);
             }
 
-            var form = view.querySelector('.AutoTagForm');
-            var isFirstVisit = !view.dataset.autotagInit;
-            if (isFirstVisit) view.dataset.autotagInit = '1';
+            var form = view.querySelector('.HomeScreenCompanionForm');
+            var isFirstVisit = !view.dataset.hscInit;
+            if (isFirstVisit) view.dataset.hscInit = '1';
 
             originalConfigState = null;
 
@@ -1634,7 +1637,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 if (container) {
                     let rafId = null;
                     container.addEventListener('dragover', (e) => {
-                        if (localStorage.getItem('AutoTag_SortBy') !== 'Manual') return;
+                        if (localStorage.getItem('HomeScreenCompanion_SortBy') !== 'Manual') return;
                         e.preventDefault();
                         if (rafId) return;
                         rafId = requestAnimationFrame(() => {
@@ -1655,7 +1658,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         });
                     });
                     container.addEventListener('drop', (e) => {
-                        if (localStorage.getItem('AutoTag_SortBy') !== 'Manual') return;
+                        if (localStorage.getItem('HomeScreenCompanion_SortBy') !== 'Manual') return;
                         e.preventDefault();
                         const draggingRow = document.querySelector('.tag-row.dragging');
                         const placeholder = document.querySelector('.sort-placeholder');
@@ -1682,7 +1685,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 var headerAction = view.querySelector('.sectionTitleContainer');
                 if (headerAction && !view.querySelector('#cbSortTags')) {
-                    var savedSort = localStorage.getItem('AutoTag_SortBy') || 'Manual';
+                    var savedSort = localStorage.getItem('HomeScreenCompanion_SortBy') || 'Manual';
                     headerAction.style.display = "flex";
                     headerAction.style.alignItems = "center";
                     headerAction.style.justifyContent = "space-between";
@@ -1741,7 +1744,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     });
 
                     view.querySelector('#cbSortTags').addEventListener('change', function () {
-                        localStorage.setItem('AutoTag_SortBy', this.value);
+                        localStorage.setItem('HomeScreenCompanion_SortBy', this.value);
                         sortRows(view.querySelector('#tagListContainer'), this.value);
                     });
 
@@ -1760,7 +1763,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         var blob = new Blob([json], { type: "application/json" });
                         var url = URL.createObjectURL(blob);
                         var a = document.createElement('a');
-                        a.href = url; a.download = `AutoTag_Backup_${new Date().toISOString().split('T')[0]}.json`;
+                        a.href = url; a.download = `HSC_Backup_${new Date().toISOString().split('T')[0]}.json`;
                         document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
                     });
                 });
@@ -1788,25 +1791,21 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             applyFilters(view);
 
                             requestAnimationFrame(function () {
-                                try {
-                                    originalConfigState = JSON.stringify(getUiConfig(view, true));
-                                } catch (err) {
-                                    originalConfigState = null;
-                                }
                                 window.Dashboard.alert("Configuration loaded!");
                                 checkFormState();
                             });
                         } catch (err) {
-                            window.Dashboard.alert("Failed to parse configuration file. The file may be corrupt or not a valid AutoTag backup file. Error: " + err.message);
+                            window.Dashboard.alert("Failed to parse configuration file. The file may be corrupt or not a valid backup file. Error: " + err.message);
                         }
                         fileInput.value = '';
                     };
                     reader.readAsText(file);
                 });
+
             }
 
             if (!view.querySelector('.dry-run-warning')) {
-                view.insertAdjacentHTML('afterbegin', '<div class="dry-run-warning"><i class="md-icon" style="font-size:1.4em;"></i>AUTOTAG<br>DRY RUN MODE IS ACTIVE - NO CHANGES WILL BE SAVED</div>');
+                view.insertAdjacentHTML('afterbegin', '<div class="dry-run-warning"><i class="md-icon" style="font-size:1.4em;"></i>DRY RUN MODE IS ACTIVE - NO CHANGES WILL BE SAVED</div>');
             }
 
             var btnSave = view.querySelector('.btn-save');
@@ -1851,7 +1850,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                     if (keys.length === 0) renderTagGroup({ Tag: '', Urls: [{ url: '', limit: 0 }], Active: true }, container, false, 0);
 
-                    var savedSort = localStorage.getItem('AutoTag_SortBy') || 'Manual';
+                    var savedSort = localStorage.getItem('HomeScreenCompanion_SortBy') || 'Manual';
                     sortRows(container, savedSort);
                     applyFilters(view);
                     requestAnimationFrame(function () {
@@ -1869,7 +1868,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
         view.addEventListener('viewhide', () => { if (statusInterval) clearInterval(statusInterval); });
 
-        view.querySelector('.AutoTagForm').addEventListener('submit', e => {
+        view.querySelector('.HomeScreenCompanionForm').addEventListener('submit', e => {
             e.preventDefault();
             
             var configObj = getUiConfig(view, false);
@@ -1940,7 +1939,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }
 
         view.querySelector('#btnDialTagsCollections').addEventListener('click', function () {
-            runTask('AutoTagSyncTask', 'Tag sync');
+            runTask('HomeScreenCompanionSyncTask', 'Tag sync');
         });
 
         view.querySelector('#btnDialHomeScreen').addEventListener('click', function () {
@@ -1949,7 +1948,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
         view.querySelector('#btnDialFullSync').addEventListener('click', function () {
             window.ApiClient.getScheduledTasks().then(function (tasks) {
-                var tagTask = tasks.find(function (x) { return x.Key === 'AutoTagSyncTask'; });
+                var tagTask = tasks.find(function (x) { return x.Key === 'HomeScreenCompanionSyncTask'; });
                 var hscTask = tasks.find(function (x) { return x.Key === 'HomeSectionSyncTask'; });
                 var promises = [];
                 if (tagTask) promises.push(window.ApiClient.startScheduledTask(tagTask.Id));

@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 using MediaBrowser.Common.Net;
 using MediaBrowser.Model.Serialization;
 
-namespace AutoTag
+namespace HomeScreenCompanion
 {
     public class ListFetcher
     {
@@ -93,7 +93,7 @@ namespace AutoTag
 
             options.RequestHeaders.Add("trakt-api-version", "2");
             options.RequestHeaders.Add("trakt-api-key", clientId);
-            options.UserAgent = "AutoTagPlugin/1.0";
+            options.UserAgent = "HomeScreenCompanionPlugin/1.0";
             options.RequestHeaders.Add("Accept", "application/json");
 
             return await FetchTraktRobust(options);

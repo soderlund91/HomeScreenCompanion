@@ -5,13 +5,13 @@
 		<ImplicitUsings>disable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
-		<AssemblyTitle>AutoTag</AssemblyTitle>
-		<AssemblyName>AutoTag</AssemblyName>
-		<RootNamespace>AutoTag</RootNamespace>
+		<AssemblyTitle>Home Screen Companion</AssemblyTitle>
+		<AssemblyName>HomeScreenCompanion</AssemblyName>
+		<RootNamespace>HomeScreenCompanion</RootNamespace>
 		
-		<Version>2.3.2.0-beta</Version>
+		<Version>3.0.0.0</Version>
 
-		<Product>AutoTag</Product>
+		<Product>Home Screen Companion</Product>
 		
 	</PropertyGroup>
 

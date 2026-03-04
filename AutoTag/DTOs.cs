@@ -1,6 +1,6 @@
 ﻿using System.Collections.Generic;
 
-namespace AutoTag
+namespace HomeScreenCompanion
 {
     public class ExternalItemDto
     {

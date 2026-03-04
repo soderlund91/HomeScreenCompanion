@@ -1,6 +1,6 @@
-<div id="AutoTagConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
+<div id="HomeScreenCompanionConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
      data-require="emby-input,emby-button,emby-checkbox,emby-textarea"
-     data-controller="__plugin/AutoTagJS">
+     data-controller="__plugin/HomeScreenCompanionJS">
 
     <style>
         .tag-row {
@@ -384,31 +384,44 @@
         .page-tab-nav {
             display: flex;
             gap: 0;
-            margin-bottom: 24px;
+            margin-bottom: 28px;
             border-bottom: 2px solid var(--line-color);
+            padding: 0;
+            background: transparent;
         }
 
         .page-tab-btn {
-            background: none;
+            background: transparent;
             border: none;
             border-bottom: 3px solid transparent;
             margin-bottom: -2px;
-            padding: 10px 22px;
+            padding: 12px 26px;
             cursor: pointer;
-            font-size: 1em;
-            font-weight: bold;
-            color: var(--theme-text-secondary);
-            transition: color 0.15s, border-color 0.15s;
+            font-size: 0.95em;
+            font-weight: 600;
+            color: rgba(255,255,255,0.45);
+            transition: color 0.2s, border-color 0.2s;
+            white-space: nowrap;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            letter-spacing: 0.3px;
+            text-transform: uppercase;
+            font-size: 0.82em;
+        }
+
+        .page-tab-btn .tab-icon {
+            font-size: 1.1em !important;
         }
 
         .page-tab-btn.active {
-            color: var(--theme-text-primary);
+            color: #52B54B;
             border-bottom-color: #52B54B;
         }
 
         .page-tab-btn:hover:not(.active) {
-            color: var(--theme-text-primary);
-            background: rgba(128,128,128,0.08);
+            color: rgba(255,255,255,0.8);
+            border-bottom-color: rgba(128, 128, 128, 0.3);
         }
 
         /* Home Screen tab */
@@ -579,6 +592,87 @@
         #runSpeedDial.open .run-dial-chevron {
             transform: rotate(180deg);
         }
+        /* Help modal – sections & feature rows */
+        .help-section {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.82em;
+            font-weight: bold;
+            color: #52B54B;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin: 26px 0 12px;
+            padding-bottom: 7px;
+            border-bottom: 1px solid rgba(82,181,75,0.3);
+        }
+        .help-section-icon { font-size: 1.15em !important; }
+
+        .src-cards {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-bottom: 4px;
+        }
+        .src-card {
+            background: #252525;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 12px 13px;
+            font-size: 0.88em;
+            color: #bbb;
+            line-height: 1.5;
+        }
+        .src-card-title {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-weight: bold;
+            color: #eee;
+            margin-bottom: 6px;
+        }
+        .help-feature-row {
+            display: flex;
+            gap: 11px;
+            align-items: flex-start;
+            margin-bottom: 9px;
+            font-size: 0.92em;
+            color: #ccc;
+            line-height: 1.5;
+        }
+        .help-feat-icon {
+            font-size: 1em !important;
+            color: #52B54B;
+            flex-shrink: 0;
+            margin-top: 1px;
+            opacity: 0.85;
+        }
+        .mi-help-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-bottom: 4px;
+        }
+        .mi-help-col {
+            background: #252525;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 11px 13px;
+            font-size: 0.88em;
+            color: #bbb;
+            line-height: 1.5;
+        }
+        .mi-help-category {
+            font-weight: bold;
+            color: #52b0db;
+            margin-bottom: 4px;
+            font-size: 0.82em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        @media (max-width: 600px) {
+            .src-cards, .mi-help-grid { grid-template-columns: 1fr; }
+        }
     </style>
 
     <div class="content-primary">
@@ -605,9 +699,15 @@
             <div id="versionBadgeArea"></div>
 
             <div class="page-tab-nav" id="pageTabNav">
-                <button class="page-tab-btn active" data-page-tab="TagCollection">Tag and Collection</button>
-                <button class="page-tab-btn" data-page-tab="HomeCompanion">Home Screen</button>
-                <button class="page-tab-btn" data-page-tab="Settings">Settings</button>
+                <button class="page-tab-btn active" data-page-tab="TagCollection">
+                    <i class="md-icon tab-icon">local_offer</i>Tag &amp; Collection
+                </button>
+                <button class="page-tab-btn" data-page-tab="HomeCompanion">
+                    <i class="md-icon tab-icon">home</i>Home Screen
+                </button>
+                <button class="page-tab-btn" data-page-tab="Settings">
+                    <i class="md-icon tab-icon">settings</i>Settings
+                </button>
             </div>
 
             <div id="tabSettings" class="page-tab-content" style="display:none;">
@@ -664,22 +764,9 @@
 
             <div id="tabTagCollection" class="page-tab-content">
 
-            <form class="AutoTagForm" id="autoTagForm">
+            <form class="HomeScreenCompanionForm" id="homeScreenCompanionForm">
 
-                <div class="inspiration-container">
-                    <p class="textMuted" style="margin-bottom: 10px; font-size: 0.9em;">Looking for lists?</p>
-                    <div class="links-wrapper">
-                        <a href="https://trakt.tv/discover" target="_blank" class="simple-link">
-                            <img src="https://i.ibb.co/xSMnN8NK/trakt-logo.png" alt="Trakt" /><span>Trakt</span>
-                        </a>
-                        <span style="color: var(--theme-text-secondary);">|</span>
-                        <a href="https://mdblist.com/toplists/" target="_blank" class="simple-link">
-                            <img src="https://i.ibb.co/7JWQDLLR/mdblist.png" alt="MDBList" /><span>MDBList</span>
-                        </a>
-                    </div>
-                </div>
-
-                <div class="sectionTitleContainer flex align-items-center" style="margin-bottom: 1em; margin-top: 2em;">
+<div class="sectionTitleContainer flex align-items-center" style="margin-bottom: 1em; margin-top: 2em;">
                     <h2 class="sectionTitle" style="margin-bottom:0;">Sources</h2>
                     <button is="emby-button" type="button" id="btnAddTag" class="raised button-submit mb025" style="margin-left: auto;">
                         <span>+ Add New Source</span>
@@ -699,7 +786,7 @@
             </div>
 
             <div class="floating-actions">
-                <button is="emby-button" type="submit" form="autoTagForm" class="raised button-submit fab-btn btn-save">
+                <button is="emby-button" type="submit" form="homeScreenCompanionForm" class="raised button-submit fab-btn btn-save">
                     <i class="md-icon" style="margin-right:5px;">save</i><span>Save Settings</span>
                 </button>
                 <div class="run-speed-dial" id="runSpeedDial">
@@ -725,14 +812,14 @@
         </div><!-- /verticalSection -->
 
         <div style="margin-top: 5em; padding-top: 2em; border-top: 1px solid var(--line-color); text-align: center; color: var(--theme-text-secondary);">
-            <p style="margin-bottom: 5px; font-weight: bold;">AutoTag v3.0.0.0</p>
+            <p style="margin-bottom: 5px; font-weight: bold;">Home Screen Companion v3.0.0.0</p>
             <div style="display: flex; justify-content: center; margin-bottom: 15px;">
-                <a href="https://github.com/soderlund91/AutoTag/tree/main" target="_blank" class="simple-link">
+                <a href="https://github.com/soderlund91/HomeScreenCompanion/tree/main" target="_blank" class="simple-link">
                     <i class="md-icon" style="font-size:1.2em;">link</i>
                     <span>GitHub Repository</span>
                 </a>
             </div>
-            <p style="font-size: 0.75em; opacity: 0.6; font-style: italic;">AutoTag is not affiliated with Trakt.tv or MDBList.</p>
+            <p style="font-size: 0.75em; opacity: 0.6; font-style: italic;">Home Screen Companion is not affiliated with Trakt.tv or MDBList.</p>
         </div>
     </div>
 
@@ -754,36 +841,156 @@
     </div>
 
     <div id="helpModalOverlay" class="modal-backdrop">
-        <div class="modal-content">
+        <div class="modal-content" style="max-width:720px;">
             <div class="modal-header-bar">
                 <i class="md-icon modal-header-icon">school</i>
                 <div>
-                    <h2 class="modal-header-title">Quick Start Guide</h2>
-                    <span style="opacity:0.9; font-size:0.9em;">Get up and running in 4 steps</span>
+                    <h2 class="modal-header-title">Home Screen Companion — Setup Guide</h2>
+                    <span style="opacity:0.9; font-size:0.9em;">All features at a glance</span>
                 </div>
             </div>
             <div class="modal-body-scroll">
+
+                <!-- Quick Start -->
+                <div class="help-section" style="margin-top:0;">
+                    <i class="md-icon help-section-icon">rocket_launch</i>
+                    <span>Quick Start</span>
+                </div>
+
                 <div class="help-step">
                     <div class="step-num">1</div>
                     <div class="step-text">
-                        <strong>Get API Keys</strong>
-                        <div class="info-box">
-                            <div style="margin-bottom:10px;">
-                                <strong>Trakt:</strong> Go to <a href="https://trakt.tv/oauth/applications" target="_blank" class="help-link">My Apps</a>. New App -> Name it "AutoTag".<br>
-                                ⚠️ <strong>Redirect URI:</strong> Set to anything, example <code>http://localhost</code>.
+                        <strong>Enter API Keys</strong> — go to the <strong>Settings</strong> tab.
+                        <div class="info-box" style="margin-top:6px;">
+                            <div style="margin-bottom:8px;">
+                                <strong>Trakt:</strong> <a href="https://trakt.tv/oauth/applications" target="_blank" class="help-link">trakt.tv/oauth/applications</a>
+                                → New App → set Redirect URI to <code>http://localhost</code>. Copy the <em>Client ID</em>.
                             </div>
-                            <div style="border-top:1px dashed #444; padding-top:10px;">
-                                <strong>MDBList:</strong> Go to <a href="https://mdblist.com/preferences/" target="_blank" class="help-link">Preferences</a>. Scroll down to "API Access".
+                            <div style="border-top:1px dashed #444; padding-top:8px;">
+                                <strong>MDBList:</strong> <a href="https://mdblist.com/preferences/" target="_blank" class="help-link">mdblist.com/preferences</a>
+                                → scroll to "API Access".
                             </div>
                         </div>
                     </div>
                 </div>
-                <div class="help-step"><div class="step-num">2</div><div class="step-text"><strong>Add a Rule</strong><br>Click the <strong>"+ Add New Source"</strong> button.</div></div>
-                <div class="help-step"><div class="step-num">3</div><div class="step-text"><strong>Configure</strong><br />• <strong>Tag Name:</strong> The tag (e.g., "Trending").<br />• <strong>URL:</strong> Link from Trakt/MDBList.<br />• <strong>Schedule:</strong> Set active times for the tag/collection<br />• <strong>Collection:</strong> Create a collection from the list items.<br />• <strong>Advanced settings:</strong> Here you can blacklist specific movies/shows.</div></div>
-                <div class="help-step"><div class="step-num">4</div><div class="step-text"><strong>Save & Sync</strong><br>Click <strong>"Save Settings"</strong> then <strong>"Run Full Sync"</strong>.</div></div>
-                <div class="help-step"><div class="step-num">5</div><div class="step-text"><strong>Schedule</strong><br>Edit the scheduled run in Embys "Scheduled Tasks".</div></div>
-                <div style="text-align:right; margin-top:20px;"><button is="emby-button" type="button" id="btnCloseHelp" class="raised button-submit" style="background:#52B54B; color:white; padding: 0 25px;">Close Guide</button></div>
+                <div class="help-step">
+                    <div class="step-num">2</div>
+                    <div class="step-text"><strong>Add a Source</strong> — open the <strong>Tag &amp; Collection</strong> tab, click <strong>+ Add New Source</strong>.</div>
+                </div>
+                <div class="help-step">
+                    <div class="step-num">3</div>
+                    <div class="step-text"><strong>Configure</strong> — give it a tag name, paste a list URL or pick a local source, and optionally enable a collection.</div>
+                </div>
+                <div class="help-step" style="margin-bottom:0;">
+                    <div class="step-num">4</div>
+                    <div class="step-text"><strong>Save &amp; Sync</strong> — click <strong>Save Settings</strong>, then use the <strong>Run</strong> button → <em>Full sync</em>. Done!</div>
+                </div>
+
+                <!-- Source Types -->
+                <div class="help-section">
+                    <i class="md-icon help-section-icon">input</i>
+                    <span>Source Types</span>
+                </div>
+                <div class="src-cards">
+                    <div class="src-card">
+                        <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:#52B54B;">public</i> External</div>
+                        Paste a list URL from <strong>Trakt</strong> or <strong>MDBList</strong>. The plugin fetches the items and tags matching titles in your library.
+                    </div>
+                    <div class="src-card">
+                        <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:#52B54B;">video_library</i> Local</div>
+                        Pick an existing <strong>playlist</strong> or <strong>collection</strong> in Emby. Every item in that list gets the configured tag or collection.
+                    </div>
+                    <div class="src-card">
+                        <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:#52B54B;">tune</i> MediaInfo</div>
+                        Filter your library by technical properties — codec, resolution, HDR, audio format, genre, actors, ratings and more.
+                    </div>
+                </div>
+
+                <!-- Tags & Collections -->
+                <div class="help-section">
+                    <i class="md-icon help-section-icon">local_offer</i>
+                    <span>Tags &amp; Collections</span>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">label</i>
+                    <div><strong>Tag</strong> — An Emby tag applied to every matched item. Automatically added when an item appears in the list and removed when it leaves.</div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">collections_bookmark</i>
+                    <div><strong>Collection</strong> — Creates and maintains an Emby collection. Name, description, and poster are all customisable. Enable <em>Only Collection</em> to skip tagging entirely.</div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">block</i>
+                    <div><strong>Blacklist</strong> — Titles listed here are permanently excluded from this source, one per line.</div>
+                </div>
+                <div class="help-feature-row" style="margin-bottom:0;">
+                    <i class="md-icon help-feat-icon">workspace_premium</i>
+                    <div><strong>Priority Override</strong> — When this entry is in-schedule, all other entries sharing the same tag or collection are suppressed. Ideal for seasonal overrides (e.g. "Spotlight Halloween" takes over "Spotlight").</div>
+                </div>
+
+                <!-- Scheduling -->
+                <div class="help-section">
+                    <i class="md-icon help-section-icon">calendar_month</i>
+                    <span>Scheduling</span>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">all_inclusive</i>
+                    <div><strong>No schedule</strong> — Entry is always active.</div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">date_range</i>
+                    <div><strong>Specific dates</strong> — Active between a start date and an end date.</div>
+                </div>
+                <div class="help-feature-row" style="margin-bottom:0;">
+                    <i class="md-icon help-feat-icon">repeat</i>
+                    <div><strong>Recurring</strong> — Activate on specific days every week, month, or year. Multiple intervals can be stacked on a single entry.</div>
+                </div>
+
+                <!-- MediaInfo Filters -->
+                <div class="help-section">
+                    <i class="md-icon help-section-icon">analytics</i>
+                    <span>MediaInfo Filters</span>
+                </div>
+                <div class="step-text" style="margin-bottom:12px; font-size:0.92em;">Build filter rules from four property categories. Rules within a group use AND/OR logic; the <strong>NOT</strong> toggle inverts any rule. Numeric properties support <code>=&nbsp; &gt;&nbsp; &ge;&nbsp; &lt;&nbsp; &le;</code>.</div>
+                <div class="mi-help-grid">
+                    <div class="mi-help-col">
+                        <div class="mi-help-category">Video</div>
+                        Resolution (4K, 8K, HD…), Video Codec (HEVC, H264…), HDR type (HDR10, Dolby Vision…)
+                    </div>
+                    <div class="mi-help-col">
+                        <div class="mi-help-category">Audio</div>
+                        Format (Atmos, DTS-HD MA, TrueHD…), Channels (stereo, surround…)
+                    </div>
+                    <div class="mi-help-col">
+                        <div class="mi-help-category">Content</div>
+                        Genre, Actor, Studio, IMDB ID (comma-separated list supported)
+                    </div>
+                    <div class="mi-help-col">
+                        <div class="mi-help-category">Metrics</div>
+                        Community Rating, Year, Runtime (in minutes)
+                    </div>
+                </div>
+
+                <!-- Home Screen Companion -->
+                <div class="help-section">
+                    <i class="md-icon help-section-icon">home</i>
+                    <span>Home Screen Companion</span>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">manage_accounts</i>
+                    <div>Copies the home screen section layout from a <strong>source user</strong> to one or more <strong>target users</strong>. Useful for keeping multiple profiles in sync.</div>
+                </div>
+                <div class="help-feature-row" style="margin-bottom:0;">
+                    <i class="md-icon help-feat-icon">sync</i>
+                    <div>Enable automatic sync (runs alongside the scheduled task), or trigger a manual sync from the <strong>Home Screen</strong> tab. Runs independently from the tag/collection sync.</div>
+                </div>
+
+                <div style="text-align:right; margin-top:24px; padding-top:16px; border-top:1px solid #333;">
+                    <button is="emby-button" type="button" id="btnCloseHelp" class="raised button-submit" style="background:#52B54B; color:white; padding: 0 25px;">Close Guide</button>
+                </div>
+
             </div>
         </div>
     </div>
+
 </div>

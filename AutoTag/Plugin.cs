@@ -8,23 +8,27 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 
-namespace AutoTag
+namespace HomeScreenCompanion
 {
     public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages, IHasThumbImage
     {
-        public override string Name => "Auto Tag";
+        public override string Name => "Home Screen Companion";
 
         public override Guid Id => new Guid("7c10708f-43e4-4d69-923c-77d01802315b");
 
-        public override string Description => "Automatic tagging system based on Trakt and MDBList.";
+        public override string Description => "Auto-tagging, collection management and home screen sync for Emby.";
 
         public Plugin(IApplicationPaths applicationPaths, IXmlSerializer xmlSerializer)
             : base(applicationPaths, xmlSerializer)
         {
             Instance = this;
+            AppPaths = applicationPaths;
+            XmlSerializer = xmlSerializer;
         }
 
         public static Plugin? Instance { get; private set; }
+        public static IApplicationPaths AppPaths { get; private set; } = null!;
+        public static IXmlSerializer XmlSerializer { get; private set; } = null!;
 
         public IEnumerable<PluginPageInfo> GetPages()
         {
@@ -42,16 +46,16 @@ namespace AutoTag
             {
                 new PluginPageInfo
                 {
-                    Name = "AutoTag",
+                    Name = "HomeScreenCompanion",
                     EmbeddedResourcePath = htmlPath,
 
                     EnableInMainMenu = true,
-                    DisplayName = "AutoTag",
-                    MenuIcon = "local_offer"
+                    DisplayName = "Home Screen Companion",
+                    MenuIcon = "home"
                 },
                 new PluginPageInfo
                 {
-                    Name = "AutoTagJS",
+                    Name = "HomeScreenCompanionJS",
                     EmbeddedResourcePath = jsPath
                 }
             };

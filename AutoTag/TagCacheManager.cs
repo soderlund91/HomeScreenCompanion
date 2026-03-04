@@ -5,7 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 
-namespace AutoTag
+namespace HomeScreenCompanion
 {
     public class TagCacheManager
     {
@@ -20,7 +20,7 @@ namespace AutoTag
 
         public void Initialize(string dataPath, IJsonSerializer jsonSerializer)
         {
-            _cacheFilePath = Path.Combine(dataPath, "autotag_cache.json");
+            _cacheFilePath = Path.Combine(dataPath, "homescreencompanion_cache.json");
             _jsonSerializer = jsonSerializer;
             Load();
         }

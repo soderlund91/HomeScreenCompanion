@@ -10,7 +10,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace AutoTag
+namespace HomeScreenCompanion
 {
     public class HomeSectionSyncTask : IScheduledTask
     {
@@ -26,13 +26,13 @@ namespace AutoTag
         public HomeSectionSyncTask(IUserManager userManager, ILogManager logManager)
         {
             _userManager = userManager;
-            _logger = logManager.GetLogger("AutoTag_HSC");
+            _logger = logManager.GetLogger("HomeScreenCompanion_HSC");
         }
 
         public string Key => "HomeSectionSyncTask";
-        public string Name => "AutoTag: Home Screen Companion Sync";
+        public string Name => "Home Screen Sync";
         public string Description => "Syncs home screen sections from a source user to all selected target users.";
-        public string Category => "Library";
+        public string Category => "Home Screen Companion";
 
         public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
         {
@@ -172,9 +172,9 @@ namespace AutoTag
         {
             var msg = $"[{DateTime.Now:HH:mm:ss}] {message}";
             lock (ExecutionLog) { ExecutionLog.Add(msg); if (ExecutionLog.Count > 200) ExecutionLog.RemoveAt(0); }
-            if (level == "Error") _logger.Error($"[HSC] {message}");
-            else if (level == "Warn") _logger.Warn($"[HSC] {message}");
-            else _logger.Info($"[HSC] {message}");
+            if (level == "Error") _logger.Error($"[Home Screen] {message}");
+            else if (level == "Warn") _logger.Warn($"[Home Screen] {message}");
+            else _logger.Info($"[Home Screen] {message}");
         }
 
         private void LogDebug(string message)

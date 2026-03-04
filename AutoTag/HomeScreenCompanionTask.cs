@@ -14,9 +14,9 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace AutoTag
+namespace HomeScreenCompanion
 {
-    public class AutoTagTask : IScheduledTask
+    public class HomeScreenCompanionTask : IScheduledTask
     {
         private readonly ILibraryManager _libraryManager;
         private readonly ICollectionManager _collectionManager;
@@ -28,19 +28,19 @@ namespace AutoTag
         public static List<string> ExecutionLog { get; } = new List<string>();
         public static bool IsRunning { get; private set; } = false;
 
-        public AutoTagTask(ILibraryManager libraryManager, ICollectionManager collectionManager, IHttpClient httpClient, IJsonSerializer jsonSerializer, ILogManager logManager)
+        public HomeScreenCompanionTask(ILibraryManager libraryManager, ICollectionManager collectionManager, IHttpClient httpClient, IJsonSerializer jsonSerializer, ILogManager logManager)
         {
             _libraryManager = libraryManager;
             _collectionManager = collectionManager;
             _httpClient = httpClient;
             _jsonSerializer = jsonSerializer;
-            _logger = logManager.GetLogger("AutoTag");
+            _logger = logManager.GetLogger("HomeScreenCompanion");
         }
 
-        public string Key => "AutoTagSyncTask";
-        public string Name => "AutoTag: Start Sync";
+        public string Key => "HomeScreenCompanionSyncTask";
+        public string Name => "Tag & Collection Sync";
         public string Description => "Syncs tags and collections from MDBList, Trakt, Playlists and Local Media.";
-        public string Category => "Library";
+        public string Category => "Home Screen Companion";
 
         public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
         {
@@ -62,7 +62,7 @@ namespace AutoTag
                 bool dryRun = config.DryRunMode;
 
                 var startTime = DateTime.Now;
-                LogSummary($"AutoTag v{Plugin.Instance.Version}  ·  {startTime:yyyy-MM-dd HH:mm}");
+                LogSummary($"Home Screen Companion v{Plugin.Instance.Version}  ·  {startTime:yyyy-MM-dd HH:mm}");
                 if (dryRun) LogSummary("! DRY RUN MODE — no changes will be saved");
 
                 var allItems = _libraryManager.GetItemList(new InternalItemsQuery
@@ -100,10 +100,10 @@ namespace AutoTag
                 var activeCollections = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var failedFetches = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-                var previouslyManagedTags = LoadFileHistory("autotag_history.txt");
+                var previouslyManagedTags = LoadFileHistory("homescreencompanion_history.txt");
                 foreach (var t in previouslyManagedTags) managedTags.Add(t);
 
-                var previouslyManagedCollections = LoadFileHistory("autotag_collections.txt");
+                var previouslyManagedCollections = LoadFileHistory("homescreencompanion_collections.txt");
 
                 TagCacheManager.Instance.Initialize(Plugin.Instance.DataFolderPath, _jsonSerializer);
                 TagCacheManager.Instance.ClearCache();
@@ -386,7 +386,7 @@ namespace AutoTag
                 if (!dryRun)
                 {
                     TagCacheManager.Instance.Save();
-                    SaveFileHistory("autotag_history.txt", managedTags.ToList());
+                    SaveFileHistory("homescreencompanion_history.txt", managedTags.ToList());
                 }
 
                 int tagsAdded = 0, tagsRemoved = 0, itemsChanged = 0, updateCount = 0;
@@ -489,7 +489,7 @@ namespace AutoTag
                 if (collDeleted > 0)
                     LogSummary($"Cleanup: {collDeleted} collection(s) removed");
 
-                if (!dryRun) SaveFileHistory("autotag_collections.txt", activeCollections.ToList());
+                if (!dryRun) SaveFileHistory("homescreencompanion_collections.txt", activeCollections.ToList());
 
                 progress.Report(100);
                 var elapsed = DateTime.Now - startTime;
