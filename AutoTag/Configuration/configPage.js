@@ -1581,6 +1581,23 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         container.dataset.loaded = '1';
     }
 
+    function enforceHscSourceTargetConflict(container) {
+        var sourceId = (container.querySelector('#selHscSourceUser') || {}).value || '';
+        container.querySelectorAll('.hsc-target-chk').forEach(function (chk) {
+            var isConflict = sourceId && chk.value === sourceId;
+            if (isConflict) {
+                chk.checked = false;
+                chk.disabled = true;
+                chk.closest('.hsc-user-row').title = 'Cannot sync a user to themselves';
+                chk.closest('.hsc-user-row').style.opacity = '0.45';
+            } else {
+                chk.disabled = false;
+                chk.closest('.hsc-user-row').title = '';
+                chk.closest('.hsc-user-row').style.opacity = '';
+            }
+        });
+    }
+
     function loadHscUsers(view) {
         var container = view.querySelector('#hscContainer');
         if (!container) return;
@@ -1589,7 +1606,24 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             .then(function (users) {
                 renderHscTab(container, lastHscConfig, users || []);
 
-                container.querySelectorAll('input, select').forEach(function (el) {
+                enforceHscSourceTargetConflict(container);
+
+                var sourceSelect = container.querySelector('#selHscSourceUser');
+                if (sourceSelect) {
+                    sourceSelect.addEventListener('change', function () {
+                        enforceHscSourceTargetConflict(container);
+                        setTimeout(checkFormState, 0);
+                    });
+                }
+
+                container.querySelectorAll('.hsc-target-chk').forEach(function (chk) {
+                    chk.addEventListener('change', function () {
+                        enforceHscSourceTargetConflict(container);
+                        setTimeout(checkFormState, 0);
+                    });
+                });
+
+                container.querySelectorAll('input:not(.hsc-target-chk), select:not(#selHscSourceUser)').forEach(function (el) {
                     el.addEventListener('change', function () { setTimeout(checkFormState, 0); });
                     el.addEventListener('input',  function () { setTimeout(checkFormState, 0); });
                 });
