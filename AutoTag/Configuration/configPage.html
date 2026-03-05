@@ -464,6 +464,73 @@
             background: rgba(128,128,128,0.08);
         }
 
+        /* HSC sub-tabs */
+        .hsc-sub-tab-nav {
+            display: flex;
+            border-bottom: 1px solid var(--line-color);
+            margin-bottom: 20px;
+        }
+
+        .hsc-sub-tab-btn {
+            background: transparent;
+            border: none;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -1px;
+            padding: 10px 22px;
+            cursor: pointer;
+            font-size: 0.82em;
+            font-weight: 600;
+            color: var(--theme-text-secondary);
+            transition: color 0.2s, border-color 0.2s;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .hsc-sub-tab-btn.active {
+            color: #52B54B;
+            border-bottom-color: #52B54B;
+        }
+
+        .hsc-sub-tab-btn:hover:not(.active) {
+            color: var(--theme-text-primary);
+            border-bottom-color: rgba(128,128,128,0.3);
+        }
+
+        /* Manage section rows — same visual as .tag-row */
+        .man-section-row {
+            position: relative;
+            background: var(--theme-background-level2);
+            margin-bottom: 15px;
+            border-radius: 6px;
+            border: 1px solid var(--line-color);
+            border-left: 5px solid #52B54B;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 12px;
+            user-select: none;
+        }
+
+        .man-section-row.man-dragging {
+            opacity: 0.4 !important;
+            border: 2px dashed #999 !important;
+            background: var(--theme-background-level1) !important;
+        }
+
+        .man-btn-delete {
+            background: transparent !important;
+            min-width: 40px;
+            width: 40px;
+            padding: 0;
+            color: #cc3333;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: none !important;
+            flex-shrink: 0;
+        }
+
         .hsc-api-key-hint {
             font-size: 0.82em;
             color: var(--theme-text-secondary);
@@ -782,7 +849,16 @@
             </div><!-- /tabTagCollection -->
 
             <div id="tabHomeCompanion" class="page-tab-content" style="display:none;">
-                <div id="hscContainer"></div>
+                <div class="hsc-sub-tab-nav">
+                    <button class="hsc-sub-tab-btn active" data-hsc-tab="copy">Copy</button>
+                    <button class="hsc-sub-tab-btn" data-hsc-tab="manage">Manage</button>
+                </div>
+                <div id="hscSubTabCopy" class="hsc-sub-tab-content verticalSection">
+                    <div id="hscContainer"></div>
+                </div>
+                <div id="hscSubTabManage" class="hsc-sub-tab-content verticalSection" style="display:none;">
+                    <div id="hscManageContainer"></div>
+                </div>
             </div>
 
             <div class="floating-actions">
@@ -812,7 +888,7 @@
         </div><!-- /verticalSection -->
 
         <div style="margin-top: 5em; padding-top: 2em; border-top: 1px solid var(--line-color); text-align: center; color: var(--theme-text-secondary);">
-            <p style="margin-bottom: 5px; font-weight: bold;">Home Screen Companion v3.0.0.1</p>
+            <p style="margin-bottom: 5px; font-weight: bold;">Home Screen Companion v3.1.0.0</p>
             <div style="display: flex; justify-content: center; margin-bottom: 15px;">
                 <a href="https://github.com/soderlund91/HomeScreenCompanion/tree/main" target="_blank" class="simple-link">
                     <i class="md-icon" style="font-size:1.2em;">link</i>

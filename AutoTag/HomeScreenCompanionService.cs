@@ -1,10 +1,14 @@
 ﻿using MediaBrowser.Common.Net;
+using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Serialization;
 using MediaBrowser.Model.Services;
+using MediaBrowser.Model.Users;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -71,11 +75,13 @@ public class HomeScreenCompanionService : IService
     {
         private readonly IHttpClient _httpClient;
         private readonly IJsonSerializer _jsonSerializer;
+        private readonly IUserManager _userManager;
 
-        public HomeScreenCompanionService(IHttpClient httpClient, IJsonSerializer jsonSerializer)
+        public HomeScreenCompanionService(IHttpClient httpClient, IJsonSerializer jsonSerializer, IUserManager userManager)
         {
             _httpClient = httpClient;
             _jsonSerializer = jsonSerializer;
+            _userManager = userManager;
         }
 
         public object Get(VersionRequest request)
@@ -207,6 +213,74 @@ public class HomeScreenCompanionService : IService
                 SectionsCopied = HomeSectionSyncTask.LastSectionsCopied,
                 Logs = logs
             };
+        }
+
+        public object Get(HscGetUserSectionsRequest request)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(request.UserId))
+                    return new HscUserSectionsResponse();
+
+                var internalId = _userManager.GetInternalId(request.UserId);
+                var result = _userManager.GetHomeSections(internalId, CancellationToken.None);
+                return new HscUserSectionsResponse
+                {
+                    Sections = result?.Sections ?? Array.Empty<ContentSection>()
+                };
+            }
+            catch (Exception ex)
+            {
+                return new HscSaveUserSectionsResponse { Success = false, Message = ex.Message };
+            }
+        }
+
+        public object Post(HscSaveUserSectionsRequest request)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(request.UserId))
+                    return new HscSaveUserSectionsResponse { Success = false, Message = "No user specified." };
+
+                var internalId = _userManager.GetInternalId(request.UserId);
+
+                // Delete all existing sections
+                var existing = _userManager.GetHomeSections(internalId, CancellationToken.None);
+                if (existing?.Sections?.Length > 0)
+                {
+                    var idsToDelete = existing.Sections
+                        .Where(s => !string.IsNullOrEmpty(s.Id))
+                        .Select(s => s.Id)
+                        .ToArray();
+                    if (idsToDelete.Length > 0)
+                        _userManager.DeleteHomeSections(internalId, idsToDelete, CancellationToken.None);
+                }
+
+                // Re-add in the supplied order (without Id so Emby assigns new ones)
+                if (request.Sections != null)
+                {
+                    foreach (var section in request.Sections)
+                        _userManager.AddHomeSection(internalId, CopySectionWithoutId(section), CancellationToken.None);
+                }
+
+                return new HscSaveUserSectionsResponse { Success = true };
+            }
+            catch (Exception ex)
+            {
+                return new HscSaveUserSectionsResponse { Success = false, Message = ex.Message };
+            }
+        }
+
+        private static ContentSection CopySectionWithoutId(ContentSection source)
+        {
+            var copy = new ContentSection();
+            foreach (var prop in typeof(ContentSection).GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (prop.Name == "Id") continue;
+                if (prop.CanRead && prop.CanWrite)
+                    prop.SetValue(copy, prop.GetValue(source));
+            }
+            return copy;
         }
 
     }

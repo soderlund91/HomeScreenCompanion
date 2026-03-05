@@ -10,6 +10,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     var cachedPlaylists = [];
     var cachedTags = [];
     var lastHscConfig = {};
+    var currentManageSections = [];
 
     var customCss = `
     <style id="homeScreenCompanionCustomCss">
@@ -1634,6 +1635,239 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             });
     }
 
+    // ── Home Screen – Manage tab ──────────────────────────────────────────────
+
+    function getManDragAfterElement(container, y) {
+        var els = [...container.querySelectorAll('.man-section-row:not(.man-dragging)')];
+        return els.reduce(function (closest, child) {
+            var box = child.getBoundingClientRect();
+            var offset = y - box.top - box.height / 2;
+            if (offset < 0 && offset > closest.offset) return { offset: offset, element: child };
+            return closest;
+        }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+
+    function loadHscManageTab(view) {
+        var container = view.querySelector('#hscManageContainer');
+        if (!container) return;
+
+        window.ApiClient.getJSON(window.ApiClient.getUrl('Users', { IsDisabled: false }))
+            .then(function (users) {
+                var userOptions = (users || []).map(function (u) {
+                    return '<option value="' + u.Id + '">' + u.Name + '</option>';
+                }).join('');
+
+                container.innerHTML = [
+                    '<div class="hsc-card">',
+                    '<h3 class="hsc-section-title">Manage Home Screen</h3>',
+                    '<p class="textMuted" style="font-size:0.88em;margin-bottom:16px;">Select a user to view and manage their home screen sections. Drag rows to reorder, then click Save and remember to run the program for settings to take effect.</p>',
+                    '<div style="display:flex;align-items:flex-end;gap:10px;margin-bottom:20px;">',
+                    '<div style="flex-grow:1;">',
+                    '<select is="emby-select" id="selManageUser" label="User">',
+                    '<option value="">— Select user —</option>',
+                    userOptions,
+                    '</select>',
+                    '</div>',
+                    '<button type="button" is="emby-button" class="raised btn-neutral" id="btnRefreshManageSections" style="height:36px;min-width:90px;margin-bottom:2px;" disabled>',
+                    '<i class="md-icon" style="margin-right:4px;">refresh</i>Refresh',
+                    '</button>',
+                    '</div>',
+                    '<div id="manSectionList"></div>',
+                    '<div style="margin-top:16px;display:flex;justify-content:flex-end;">',
+                    '<button type="button" is="emby-button" class="raised button-submit" id="btnApplyManage" disabled>',
+                    '<i class="md-icon" style="margin-right:4px;">check</i><span>Apply changes</span>',
+                    '</button>',
+                    '</div>',
+                    '</div>',
+                ].join('');
+
+                var selUser = container.querySelector('#selManageUser');
+                var btnRefresh = container.querySelector('#btnRefreshManageSections');
+                var listEl = container.querySelector('#manSectionList');
+
+                selUser.addEventListener('change', function () {
+                    btnRefresh.disabled = !this.value;
+                    if (this.value) fetchManageSections(view, this.value);
+                });
+
+                btnRefresh.addEventListener('click', function () {
+                    var uid = selUser.value;
+                    if (uid) fetchManageSections(view, uid);
+                });
+
+                container.querySelector('#btnApplyManage').addEventListener('click', function () {
+                    applyManageSections(view);
+                });
+
+                // Container-level drag events — set up once, survive row re-renders
+                var manRafId = null;
+                listEl.addEventListener('dragover', function (e) {
+                    e.preventDefault();
+                    if (manRafId) return;
+                    manRafId = requestAnimationFrame(function () {
+                        var draggingRow = listEl.querySelector('.man-section-row.man-dragging');
+                        if (!draggingRow) { manRafId = null; return; }
+                        var afterEl = getManDragAfterElement(listEl, e.clientY);
+                        var ph = listEl.querySelector('.sort-placeholder');
+                        if (!ph) { ph = document.createElement('div'); ph.className = 'sort-placeholder'; }
+                        if (afterEl == null) { if (ph.nextElementSibling !== null) listEl.appendChild(ph); }
+                        else { if (ph.nextElementSibling !== afterEl) listEl.insertBefore(ph, afterEl); }
+                        manRafId = null;
+                    });
+                });
+
+                listEl.addEventListener('drop', function (e) {
+                    e.preventDefault();
+                    var draggingRow = listEl.querySelector('.man-section-row.man-dragging');
+                    var ph = listEl.querySelector('.sort-placeholder');
+                    if (draggingRow && ph) {
+                        listEl.insertBefore(draggingRow, ph);
+                        ph.remove();
+                    } else if (ph) {
+                        ph.remove();
+                    }
+                    // Sync + Apply enable handled in dragend
+                });
+
+                container.dataset.loaded = '1';
+            })
+            .catch(function () {
+                container.innerHTML = '<p class="textMuted" style="padding:20px;">Failed to load users. Check server connection.</p>';
+            });
+    }
+
+    function fetchManageSections(view, userId) {
+        var container = view.querySelector('#hscManageContainer');
+        if (!container) return;
+        var listEl = container.querySelector('#manSectionList');
+        if (!listEl) return;
+
+        listEl.innerHTML = '<p class="textMuted" style="padding:10px 0;">Loading sections...</p>';
+        container.querySelector('#btnApplyManage').disabled = true;
+
+        var headers = {};
+        var token = window.ApiClient.accessToken();
+        if (token) headers['X-Emby-Token'] = token;
+
+        fetch(window.ApiClient.getUrl('HomeScreenCompanion/Hsc/UserSections', { userId: userId }), { headers: headers })
+            .then(function (r) { return r.json(); })
+            .then(function (result) {
+                currentManageSections = result.Sections || [];
+                renderManageSections(view);
+            })
+            .catch(function () {
+                listEl.innerHTML = '<p class="textMuted" style="padding:10px 0;color:#cc3333;">Failed to load sections.</p>';
+            });
+    }
+
+    function renderManageSections(view) {
+        var container = view.querySelector('#hscManageContainer');
+        if (!container) return;
+        var listEl = container.querySelector('#manSectionList');
+        if (!listEl) return;
+
+        if (currentManageSections.length === 0) {
+            listEl.innerHTML = '<p class="textMuted" style="padding:10px 0;">No sections found for this user.</p>';
+            return;
+        }
+
+        listEl.innerHTML = currentManageSections.map(function (s, i) {
+            var name = s.CustomName || s.Name || s.SectionType || ('Section ' + (i + 1));
+            return [
+                '<div class="man-section-row" draggable="false" data-section-index="' + i + '">',
+                '<span class="drag-handle"><i class="md-icon">drag_indicator</i></span>',
+                '<span style="flex-grow:1;">' + name + '</span>',
+                '<button type="button" is="emby-button" class="man-btn-delete raised" data-section-index="' + i + '" title="Remove section">',
+                '<i class="md-icon">delete</i>',
+                '</button>',
+            ].join('') + '</div>';
+        }).join('');
+
+        listEl.querySelectorAll('.man-section-row').forEach(function (row) {
+            var handle = row.querySelector('.drag-handle');
+
+            handle.addEventListener('mousedown', function () { row.setAttribute('draggable', 'true'); });
+            handle.addEventListener('mouseup',   function () { row.setAttribute('draggable', 'false'); });
+
+            row.addEventListener('dragstart', function (e) {
+                row.classList.add('man-dragging');
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', '');
+                setTimeout(function () { row.style.display = 'none'; }, 0);
+            });
+
+            row.addEventListener('dragend', function () {
+                row.style.display = '';
+                row.classList.remove('man-dragging');
+                row.setAttribute('draggable', 'false');
+                var ph = listEl.querySelector('.sort-placeholder');
+                if (ph) ph.remove();
+
+                // Sync currentManageSections from current DOM order, then enable Apply.
+                // Always run — same pattern as tag entries calling checkFormState in dragend.
+                var domRows = [...listEl.querySelectorAll('.man-section-row')];
+                if (domRows.length > 0) {
+                    var snapshot = currentManageSections.slice();
+                    currentManageSections = domRows.map(function (r) {
+                        return snapshot[parseInt(r.dataset.sectionIndex)];
+                    });
+                    domRows.forEach(function (r, pos) {
+                        r.dataset.sectionIndex = pos;
+                        var delBtn = r.querySelector('.man-btn-delete');
+                        if (delBtn) delBtn.dataset.sectionIndex = pos;
+                    });
+                    var btnApply = container.querySelector('#btnApplyManage');
+                    if (btnApply) btnApply.disabled = false;
+                }
+            });
+
+            row.querySelector('.man-btn-delete').addEventListener('click', function () {
+                currentManageSections.splice(parseInt(this.dataset.sectionIndex), 1);
+                renderManageSections(view);
+                var btnApply = container.querySelector('#btnApplyManage');
+                if (btnApply) btnApply.disabled = false;
+            });
+        });
+    }
+
+    function applyManageSections(view) {
+        var container = view.querySelector('#hscManageContainer');
+        if (!container) return;
+        var selUser = container.querySelector('#selManageUser');
+        var btnApply = container.querySelector('#btnApplyManage');
+        if (!selUser || !selUser.value) return;
+
+        btnApply.disabled = true;
+        var btnSpan = btnApply.querySelector('span');
+        var origText = btnSpan ? btnSpan.textContent : '';
+        if (btnSpan) btnSpan.textContent = 'Applying\u2026';
+
+        var headers = { 'Content-Type': 'application/json' };
+        var token = window.ApiClient.accessToken();
+        if (token) headers['X-Emby-Token'] = token;
+
+        fetch(window.ApiClient.getUrl('HomeScreenCompanion/Hsc/UserSections'), {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify({ UserId: selUser.value, Sections: currentManageSections })
+        })
+            .then(function (r) { return r.json(); })
+            .then(function (result) {
+                if (btnSpan) btnSpan.textContent = origText;
+                if (result.Success) {
+                    window.Dashboard.alert('Home screen layout saved successfully!');
+                } else {
+                    window.Dashboard.alert('Failed to save: ' + (result.Message || 'Unknown error'));
+                    btnApply.disabled = false;
+                }
+            })
+            .catch(function () {
+                if (btnSpan) btnSpan.textContent = origText;
+                window.Dashboard.alert('Error applying changes. Check server logs.');
+                btnApply.disabled = false;
+            });
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
 
     return function (view) {
@@ -2012,6 +2246,25 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     if (hscContainer && !hscContainer.dataset.loaded) {
                         loadHscUsers(view);
                     }
+                }
+            });
+        });
+
+        // ── HSC sub-tab switching (Copy / Manage) ─────────────────────────────
+        view.querySelectorAll('.hsc-sub-tab-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var target = this.getAttribute('data-hsc-tab');
+                view.querySelectorAll('.hsc-sub-tab-btn').forEach(function (b) { b.classList.remove('active'); });
+                this.classList.add('active');
+                view.querySelectorAll('.hsc-sub-tab-content').forEach(function (c) { c.style.display = 'none'; });
+                if (target === 'copy') {
+                    view.querySelector('#hscSubTabCopy').style.display = '';
+                    var hscContainer = view.querySelector('#hscContainer');
+                    if (hscContainer && !hscContainer.dataset.loaded) loadHscUsers(view);
+                } else if (target === 'manage') {
+                    view.querySelector('#hscSubTabManage').style.display = '';
+                    var manageContainer = view.querySelector('#hscManageContainer');
+                    if (manageContainer && !manageContainer.dataset.loaded) loadHscManageTab(view);
                 }
             });
         });

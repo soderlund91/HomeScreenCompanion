@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using MediaBrowser.Model.Entities;
 
 namespace HomeScreenCompanion
 {
@@ -66,5 +67,31 @@ namespace HomeScreenCompanion
         public string LastSyncResult { get; set; } = "";
         public int SectionsCopied { get; set; }
         public List<string> Logs { get; set; } = new List<string>();
+    }
+
+    // Manage: fetch a user's sections
+    [MediaBrowser.Model.Services.Route("/HomeScreenCompanion/Hsc/UserSections", "GET")]
+    public class HscGetUserSectionsRequest : MediaBrowser.Model.Services.IReturn<HscUserSectionsResponse>
+    {
+        public string UserId { get; set; } = "";
+    }
+
+    public class HscUserSectionsResponse
+    {
+        public ContentSection[] Sections { get; set; } = System.Array.Empty<ContentSection>();
+    }
+
+    // Manage: save (reorder/delete) a user's sections
+    [MediaBrowser.Model.Services.Route("/HomeScreenCompanion/Hsc/UserSections", "POST")]
+    public class HscSaveUserSectionsRequest : MediaBrowser.Model.Services.IReturn<HscSaveUserSectionsResponse>
+    {
+        public string UserId { get; set; } = "";
+        public ContentSection[] Sections { get; set; } = System.Array.Empty<ContentSection>();
+    }
+
+    public class HscSaveUserSectionsResponse
+    {
+        public bool Success { get; set; }
+        public string Message { get; set; } = "";
     }
 }
