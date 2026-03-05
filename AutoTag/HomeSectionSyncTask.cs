@@ -104,7 +104,6 @@ namespace HomeScreenCompanion
                     {
                         var targetInternalId = _userManager.GetInternalId(targetIdStr);
 
-                        // Delete existing sections for target user
                         var existing = _userManager.GetHomeSections(targetInternalId, cancellationToken);
                         if (existing?.Sections?.Length > 0)
                         {
@@ -126,7 +125,6 @@ namespace HomeScreenCompanion
                             LogDebug("  No existing sections to delete.");
                         }
 
-                        // Add source sections (copied without Id so Emby assigns new ones)
                         foreach (var section in sourceSections.Sections)
                         {
                             if (debug) LogDebug($"  Add: [{section.SectionType}] \"{section.CustomName ?? section.Name}\"");
@@ -183,7 +181,6 @@ namespace HomeScreenCompanion
             lock (ExecutionLog) { ExecutionLog.Add(msg); if (ExecutionLog.Count > 200) ExecutionLog.RemoveAt(0); }
         }
 
-        // Shallow-copies all ContentSection properties except Id so Emby assigns a new Id on insert.
         private static ContentSection CopySection(ContentSection source)
         {
             var copy = new ContentSection();

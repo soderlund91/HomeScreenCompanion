@@ -111,11 +111,8 @@ namespace HomeScreenCompanion
                 double step = 30.0 / (config.Tags.Count > 0 ? config.Tags.Count : 1);
                 double currentProgress = 0;
 
-                // Cache: seriesInternalId → ett representativt avsnitt.
-                // Byggs lazily vid första träff; delas av alla MediaInfo-regler.
                 var seriesEpisodeCache = new Dictionary<long, BaseItem>();
 
-                // Pass 1: find tags/collections that have an active override entry
                 var activeTagOverrides = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var activeCollectionOverrides = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var tc in config.Tags)
@@ -233,7 +230,6 @@ namespace HomeScreenCompanion
                                     }
                                     else
                                     {
-                                        // Använd ListIds — Embys korrekta API för att hämta playlist-innehåll
                                         children = _libraryManager.GetItemList(new InternalItemsQuery
                                         {
                                             ListIds = new[] { localSourceFolder.InternalId }
@@ -255,7 +251,6 @@ namespace HomeScreenCompanion
 
                                         BaseItem itemToTag = child;
 
-                                        // Packa upp om det är ett PlaylistItem-objekt
                                         if (child.GetType().Name.Contains("PlaylistItem"))
                                         {
                                             try { 
@@ -264,7 +259,6 @@ namespace HomeScreenCompanion
                                             } catch { }
                                         }
 
-                                        // Om det är ett avsnitt, applicera taggen på Serien istället
                                         if (itemToTag.GetType().Name.Contains("Episode"))
                                         {
                                             try { 
@@ -273,12 +267,15 @@ namespace HomeScreenCompanion
                                             } catch { }
                                         }
 
-                                        // Släpp bara igenom Filmer och Serier
                                         if (!itemToTag.GetType().Name.Contains("Movie") && !itemToTag.GetType().Name.Contains("Series"))
                                             continue;
 
                                         var imdb = itemToTag.GetProviderId("Imdb");
-                                        if (!string.IsNullOrEmpty(imdb) && blacklist.Contains(imdb)) continue;
+                                        if (!string.IsNullOrEmpty(imdb) && blacklist.Contains(imdb))
+                                        {
+                                            if (debug) LogDebug($"[BL] {itemToTag.Name} ({imdb}) — blacklisted, skipping");
+                                            continue;
+                                        }
 
                                         if (!matchedLocalItems.Contains(itemToTag))
                                         {
@@ -338,6 +335,7 @@ namespace HomeScreenCompanion
                                     if (effectiveLimit < 10000 && matchedLocalItems.Count >= effectiveLimit) break;
                                 }
                             }
+                            if (debug) LogDebug($"{displayName}: {allItems.Count} items scanned, {matchedLocalItems.Count} matched [MediaInfo]");
                         }
 
                         if (matchedLocalItems.Count > 0)
@@ -401,6 +399,11 @@ namespace HomeScreenCompanion
                     if (toRemove.Count == 0 && toAdd.Count == 0) continue;
 
                     itemsChanged++;
+                    if (debug)
+                    {
+                        foreach (var t in toAdd) LogDebug($"  +tag '{t}' → '{item.Name}'");
+                        foreach (var t in toRemove) LogDebug($"  -tag '{t}' → '{item.Name}'");
+                    }
                     if (!dryRun)
                     {
                         foreach (var t in toRemove) { item.RemoveTag(t); tagsRemoved++; }
@@ -438,12 +441,7 @@ namespace HomeScreenCompanion
                             collCreated++;
                             if (debug) LogDebug($"Created collection '{cName}'  ({desiredIds.Count} items)");
                             if (collectionDescriptions.ContainsKey(cName) || collectionPosters.ContainsKey(cName))
-                            {
-                                var newColl = _libraryManager.GetItemList(new InternalItemsQuery
-                                    { IncludeItemTypes = new[] { "BoxSet" }, Name = cName, Recursive = true }).FirstOrDefault();
-                                if (newColl != null)
-                                    ApplyCollectionMeta(newColl, cName, collectionDescriptions, collectionPosters, debug);
-                            }
+                                ApplyCollectionMeta(createdRef, cName, collectionDescriptions, collectionPosters, debug);
                         }
                     }
                     else
@@ -651,7 +649,6 @@ namespace HomeScreenCompanion
                 return result;
             }
 
-            // Legacy: all conditions must match (AND)
             foreach (var cond in legacy!)
             {
                 if (!EvaluateCriterion(cond, itemToCheck, is4k, is1080, is720, is8k, isSd, isHevc, isAv1, isH264,

@@ -244,7 +244,6 @@ public class HomeScreenCompanionService : IService
 
                 var internalId = _userManager.GetInternalId(request.UserId);
 
-                // Delete all existing sections
                 var existing = _userManager.GetHomeSections(internalId, CancellationToken.None);
                 if (existing?.Sections?.Length > 0)
                 {
@@ -256,7 +255,6 @@ public class HomeScreenCompanionService : IService
                         _userManager.DeleteHomeSections(internalId, idsToDelete, CancellationToken.None);
                 }
 
-                // Re-add in the supplied order (without Id so Emby assigns new ones)
                 if (request.Sections != null)
                 {
                     foreach (var section in request.Sections)

@@ -48,7 +48,6 @@ namespace HomeScreenCompanion
         public string imdb { get; set; }
     }
 
-    // Home Screen Companion DTOs
     public class HscUserDto
     {
         public string Id { get; set; } = "";
@@ -69,7 +68,6 @@ namespace HomeScreenCompanion
         public List<string> Logs { get; set; } = new List<string>();
     }
 
-    // Manage: fetch a user's sections
     [MediaBrowser.Model.Services.Route("/HomeScreenCompanion/Hsc/UserSections", "GET")]
     public class HscGetUserSectionsRequest : MediaBrowser.Model.Services.IReturn<HscUserSectionsResponse>
     {
@@ -81,7 +79,6 @@ namespace HomeScreenCompanion
         public ContentSection[] Sections { get; set; } = System.Array.Empty<ContentSection>();
     }
 
-    // Manage: save (reorder/delete) a user's sections
     [MediaBrowser.Model.Services.Route("/HomeScreenCompanion/Hsc/UserSections", "POST")]
     public class HscSaveUserSectionsRequest : MediaBrowser.Model.Services.IReturn<HscSaveUserSectionsResponse>
     {
