@@ -85,6 +85,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             border: 1px solid rgba(76,175,80,0.35);
         }
 
+        .tag-indicator.schedule.priority-active {
+            color: #1565C0;
+            background: rgba(21,101,192,0.15);
+            border: 1px solid rgba(255,152,0,0.7);
+        }
+
         .tag-indicator.tag {
             color: #FFC107;
             background: rgba(255,193,7,0.15);
@@ -469,21 +475,23 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     });
 
     function parseCriterion(crit) {
-        if (!crit) return { prop: 'Resolution', op: '', val: '', not: false };
+        if (!crit) return { prop: 'Resolution', op: '', val: '', userId: '', not: false };
         var not = crit.charAt(0) === '!';
         if (not) crit = crit.slice(1);
         var parts = crit.split(':');
         if (parts.length === 1) {
             var mapped = MI_CRITERION_MAP[crit];
-            return mapped ? { prop: mapped.prop, op: '', val: mapped.val, not: not } : { prop: '', op: '', val: crit, not: not };
+            return mapped ? { prop: mapped.prop, op: '', val: mapped.val, userId: '', not: not } : { prop: '', op: '', val: crit, userId: '', not: not };
         }
-        if (parts.length === 2) return { prop: parts[0], op: '', val: parts[1], not: not };
-        if (parts.length === 3) return { prop: parts[0], op: parts[1], val: parts[2], not: not };
-        return { prop: 'Resolution', op: '', val: '', not: false };
+        if (parts.length === 2) return { prop: parts[0], op: '', val: parts[1], userId: '', not: not };
+        if (parts.length === 3) return { prop: parts[0], op: parts[1], val: parts[2], userId: '', not: not };
+        if (parts.length === 4) return { prop: parts[0], userId: parts[1], op: parts[2], val: parts[3], not: not };
+        return { prop: 'Resolution', op: '', val: '', userId: '', not: false };
     }
 
-    function buildCriterion(prop, op, val) {
+    function buildCriterion(prop, op, val, userId) {
         if (!prop || val === '') return '';
+        if (userId) return prop + ':' + userId + ':' + op + ':' + val;
         if (op) return prop + ':' + op + ':' + val;
         var key = prop + ':' + val;
         return MI_REVERSE_MAP[key] || (prop + ':' + val);
@@ -495,9 +503,48 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         HDR:        [['HDR', 'HDR (any)'], ['DolbyVision', 'Dolby Vision'], ['HDR10', 'HDR10']],
         AudioFormat: [['Atmos', 'Dolby Atmos'], ['TrueHD', 'Dolby TrueHD'], ['DtsHdMa', 'DTS-HD MA'], ['DTS', 'DTS'], ['AC3', 'Dolby Digital / AC3'], ['AAC', 'AAC']],
         AudioChannels: [['7.1', '7.1+ Surround'], ['5.1', '5.1 Surround'], ['Stereo', 'Stereo'], ['Mono', 'Mono']],
-        MediaType: [['Movie', 'Movie'], ['Series', 'Show / Series']]
+        MediaType: [['Movie', 'Movie'], ['Series', 'Show / Series']],
+        IsPlayed: [['Watched', 'Watched'], ['Unwatched', 'Unwatched']]
     };
-    var MI_NUMERIC_PROPS = ['CommunityRating', 'Year', 'Runtime'];
+    var MI_NUMERIC_PROPS = ['CommunityRating', 'Year', 'Runtime', 'DateAdded', 'DateModified', 'FileSize', 'LastPlayed'];
+    var MI_UNIT_LABELS = { DateAdded: 'days ago', DateModified: 'days ago', LastPlayed: 'days ago', FileSize: 'MB' };
+    var MI_USER_PROPS = ['IsPlayed', 'LastPlayed'];
+    var _miUsers = null;
+    var MI_PRESETS = [
+        { label: 'Resolution', presets: [
+            { name: 'Movies in 4K',
+              build: function() { return [{ Operator:'AND', GroupOperator:'AND', Criteria:['MediaType:Movie', '4K'] }]; } },
+            { name: 'Movies in 1080p',
+              build: function() { return [{ Operator:'AND', GroupOperator:'AND', Criteria:['MediaType:Movie', '1080p'] }]; } },
+            { name: 'Movies below HD (≤720p)',
+              build: function() { return [
+                  { Operator:'AND', GroupOperator:'AND', Criteria:['MediaType:Movie'] },
+                  { Operator:'OR',  GroupOperator:'AND', Criteria:['720p', 'SD'] }
+              ]; } }
+        ]},
+        { label: 'Release Year', presets: [
+            { name: 'Movies from the 1990s',
+              build: function() { return [{ Operator:'AND', GroupOperator:'AND', Criteria:['MediaType:Movie','Year:>=:1990','Year:<=:1999'] }]; } },
+            { name: 'Movies released this year',
+              build: function() { var y = new Date().getFullYear(); return [{ Operator:'AND', GroupOperator:'AND', Criteria:['MediaType:Movie','Year:=:'+y] }]; } },
+            { name: 'Movies released in the last 5 years',
+              build: function() { var y = new Date().getFullYear()-5; return [{ Operator:'AND', GroupOperator:'AND', Criteria:['MediaType:Movie','Year:>=:'+y] }]; } }
+        ]},
+        { label: 'Recently', presets: [
+            { name: 'Recently added (last 30 days)',
+              build: function() { return [{ Operator:'AND', GroupOperator:'AND', Criteria:['DateAdded:<=:30'] }]; } },
+            { name: 'Recently modified (last 7 days)',
+              build: function() { return [{ Operator:'AND', GroupOperator:'AND', Criteria:['DateModified:<=:7'] }]; } },
+            { name: 'Recently played (last 7 days)',
+              build: function() { return [{ Operator:'AND', GroupOperator:'AND', Criteria:['LastPlayed:__any__:<=:7'] }]; } }
+        ]},
+        { label: 'Watch Status', presets: [
+            { name: 'Unwatched movies',
+              build: function() { return [{ Operator:'AND', GroupOperator:'AND', Criteria:['MediaType:Movie','IsPlayed:__any__:=:Unwatched'] }]; } },
+            { name: 'Never played by anyone',
+              build: function() { return [{ Operator:'AND', GroupOperator:'AND', Criteria:['IsPlayed:__all__:=:Unwatched'] }]; } }
+        ]}
+    ];
     var MI_TEXT_PLACEHOLDERS = {
         Title: 'e.g. Batman', Studio: 'e.g. Warner', Genre: 'e.g. Action',
         Actor: 'e.g. Tom Hanks', Director: 'e.g. Nolan', Writer: 'e.g. Tarantino',
@@ -509,7 +556,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             { label: 'Video', props: [['Resolution','Resolution'], ['VideoCodec','Video Codec'], ['HDR','HDR']] },
             { label: 'Audio', props: [['AudioFormat','Audio Format'], ['AudioChannels','Audio Channels'], ['AudioLanguage','Audio Language']] },
             { label: 'Content', props: [['MediaType','Media Type'], ['Tag','Tag'], ['Title','Title'], ['Studio','Studio'], ['Genre','Genre'], ['Actor','Actor / Cast'], ['Director','Director'], ['Writer','Writer'], ['ContentRating','Content Rating'], ['ImdbId','IMDB ID']] },
-            { label: 'Metrics', props: [['CommunityRating','Community Rating'], ['Year','Year'], ['Runtime','Runtime (minutes)']] }
+            { label: 'Metrics', props: [['CommunityRating','Community Rating'], ['Year','Year'], ['Runtime','Runtime (minutes)'], ['DateAdded','Date Added'], ['DateModified','Date Modified'], ['FileSize','File Size (MB)']] },
+            { label: 'Activity', props: [['IsPlayed','Watched / Unwatched'], ['LastPlayed','Last Played']] }
         ];
         return groups.map(function (g) {
             return '<optgroup label="' + g.label + '">' +
@@ -520,7 +568,18 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }).join('');
     }
 
-    function getMiValueHtml(prop, savedOp, savedVal) {
+    function getMiValueHtml(prop, savedOp, savedVal, savedUserId) {
+        var userHtml = '';
+        if (MI_USER_PROPS.indexOf(prop) >= 0) {
+            var specialOpts =
+                '<option value="__any__"' + ('__any__' === savedUserId ? ' selected' : '') + '>Any user</option>' +
+                '<option value="__all__"' + ('__all__' === savedUserId ? ' selected' : '') + '>All users</option>';
+            var uOpts = specialOpts + (_miUsers || []).map(function (u) {
+                return '<option value="' + u.Id + '"' + (u.Id === savedUserId ? ' selected' : '') + '>' + u.Name + '</option>';
+            }).join('');
+            userHtml = '<select class="selMiUser" is="emby-select" style="flex:0 0 auto;min-width:110px;">' + uOpts + '</select>';
+        }
+        var unitLabel = MI_UNIT_LABELS[prop] ? '<span style="margin-left:4px;opacity:.7;white-space:nowrap;">' + MI_UNIT_LABELS[prop] + '</span>' : '';
         if (prop === 'Tag') {
             if (cachedTags.length > 0) {
                 var tagOpts = cachedTags.map(function (t) {
@@ -534,12 +593,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var opts = MI_DROPDOWN_OPTIONS[prop].map(function (pair) {
                 return '<option value="' + pair[0] + '"' + (pair[0] === savedVal ? ' selected' : '') + '>' + pair[1] + '</option>';
             }).join('');
-            return '<select class="selMiValue" is="emby-select" style="flex:1;">' + opts + '</select>';
+            return userHtml + '<select class="selMiValue" is="emby-select" style="flex:1;">' + opts + '</select>';
         }
         if (MI_NUMERIC_PROPS.indexOf(prop) >= 0) {
             var ops = ['=', '>', '>=', '<', '<='];
             var opOpts = ops.map(function (o) {
-                return '<option value="' + o + '"' + (o === (savedOp || '>=') ? ' selected' : '') + '>' + o + '</option>';
+                return '<option value="' + o + '"' + (o === (savedOp || '<=') ? ' selected' : '') + '>' + o + '</option>';
             }).join('');
             var infoTooltip =
                 '<div class="mi-op-info">' +
@@ -551,9 +610,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<tr><td>&lt;</td><td>Less than</td></tr>' +
                 '<tr><td>&lt;=</td><td>Less than or equal</td></tr>' +
                 '</table></div></div>';
-            return '<select class="selMiOp" is="emby-select" style="flex:0 0 64px;">' + opOpts + '</select>' +
+            return userHtml +
+                '<select class="selMiOp" is="emby-select" style="flex:0 0 64px;">' + opOpts + '</select>' +
                 infoTooltip +
-                '<input class="txtMiNum" is="emby-input" type="number" step="0.01" value="' + (savedVal || '') + '" style="flex:1;" />';
+                '<input class="txtMiNum" is="emby-input" type="number" step="0.01" value="' + (savedVal || '') + '" style="flex:1;" />' +
+                unitLabel;
         }
         var ph = MI_TEXT_PLACEHOLDERS[prop] || '';
         return '<input class="txtMiValue" is="emby-input" type="text" placeholder="' + ph + '" value="' + (savedVal || '').replace(/"/g, '&quot;') + '" style="flex:1;" />';
@@ -571,7 +632,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             ' style="border:' + notBorder + '; border-radius:10px; padding:3px 10px; font-size:0.78em; font-weight:bold; cursor:pointer; letter-spacing:0.5px; flex-shrink:0;' +
             ' background:' + notBg + '; color:' + notColor + ';" title="Negate this rule">NOT</button>' +
             '<select class="selMiProperty" is="emby-select" style="flex:0 0 155px;">' + propertyOptionsHtml(prop) + '</select>' +
-            '<div class="mi-value-wrapper" style="flex:1; display:flex; gap:6px; align-items:center;">' + getMiValueHtml(prop, parsed.op, parsed.val) + '</div>' +
+            '<div class="mi-value-wrapper" style="flex:1; display:flex; gap:6px; align-items:center;">' + getMiValueHtml(prop, parsed.op, parsed.val, parsed.userId || '') + '</div>' +
             '<button type="button" class="btnRemoveMiRule" style="background:transparent; border:none; color:#cc3333; cursor:pointer; padding:2px 8px; font-size:1em; flex-shrink:0;" title="Remove rule">✕</button>' +
             '</div>';
     }
@@ -658,7 +719,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var collDescription = tagConfig.CollectionDescription || '';
         var collPosterPath = tagConfig.CollectionPosterPath || '';
 
-        var sourceType = tagConfig.SourceType || "External";
+        var sourceType = tagConfig.SourceType || "";
         var localSources = tagConfig.LocalSources || [];
         if (localSources.length === 0) localSources = [{ id: "", limit: 0 }];
 
@@ -683,7 +744,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
         var indicatorsHtml = '';
         if (intervals.length > 0) {
-            indicatorsHtml += `<span class="tag-indicator schedule"><i class="md-icon" style="font-size:1.1em;">calendar_today</i> Schedule</span>`;
+            var schedPriorityClass = tagConfig.OverrideWhenActive ? ' priority-active' : '';
+            var schedText = tagConfig.OverrideWhenActive ? 'Schedule priority' : 'Schedule';
+            indicatorsHtml += `<span class="tag-indicator schedule${schedPriorityClass}"><i class="md-icon" style="font-size:1.1em;">calendar_today</i> ${schedText}</span>`;
         }
         if (tagConfig.EnableCollection) {
             indicatorsHtml += `<span class="tag-indicator collection"><i class="md-icon" style="font-size:1.1em;">library_books</i> Collection</span>`;
@@ -738,10 +801,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     <div style="margin-bottom: 15px;">
                         <label class="selectLabel">Source Type</label>
                         <select is="emby-select" class="selSourceType" style="width:100%;">
+                            <option value="" ${!sourceType ? 'selected' : ''}>-- Select source type --</option>
                             <option value="External" ${sourceType === 'External' ? 'selected' : ''}>External List (Trakt/MDBList)</option>
                             <option value="LocalCollection" ${sourceType === 'LocalCollection' ? 'selected' : ''}>Local Collection</option>
                             <option value="LocalPlaylist" ${sourceType === 'LocalPlaylist' ? 'selected' : ''}>Local Playlist</option>
-                            <option value="MediaInfo" ${sourceType === 'MediaInfo' ? 'selected' : ''}>Local Media Information</option>
+                            <option value="MediaInfo" ${sourceType === 'MediaInfo' ? 'selected' : ''}>Local Media Information (Smart Playlist)</option>
                         </select>
                     </div>
 
@@ -762,6 +826,19 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                     <div class="source-mediainfo-container" style="display: ${sourceType === 'MediaInfo' ? 'block' : 'none'};">
                         <div class="mediainfo-filter-list">${filterGroupsHtml}</div>
+                        <button type="button" is="emby-button" class="btnPremadeFilters raised btn-neutral" style="width:100%; margin-bottom:6px; background:transparent; border:1px solid var(--line-color); color:var(--theme-text-secondary);"><i class="md-icon" style="margin-right:5px;">auto_awesome</i>Premade filters</button>
+                        <div class="mi-preset-panel" style="display:none; border:1px solid var(--line-color); border-radius:6px; padding:10px 12px; margin-bottom:8px; background:rgba(128,128,128,0.06);">
+                            <div style="font-size:0.8em; color:var(--theme-text-secondary); margin-bottom:10px;">Select a preset to replace the current filters:</div>
+                            ${MI_PRESETS.map(function(cat, ci) {
+                                return '<div style="margin-bottom:10px;">' +
+                                    '<div style="font-size:0.72em; text-transform:uppercase; letter-spacing:1px; color:var(--theme-text-secondary); margin-bottom:5px;">' + cat.label + '</div>' +
+                                    '<div style="display:flex; flex-wrap:wrap; gap:6px;">' +
+                                    cat.presets.map(function(p, pi) {
+                                        return '<button type="button" class="btnApplyMiPreset" data-preset="' + ci + ',' + pi + '"' +
+                                            ' style="border:1.5px solid #000; border-radius:14px; padding:4px 12px; font-size:0.82em; cursor:pointer; background:transparent; color:var(--theme-text-primary);">' + p.name + '</button>';
+                                    }).join('') + '</div></div>';
+                            }).join('')}
+                        </div>
                         <button type="button" is="emby-button" class="btnAddMediaInfoFilter raised" style="width:100%; background:transparent; border:2px dashed rgba(128,128,128,0.4); color:var(--theme-text-secondary); margin-top:4px;"><i class="md-icon" style="margin-right:5px;">add</i>Add Filter</button>
                         <div style="width:110px; margin-top:15px;">
                             <input is="emby-input" class="txtMediaInfoLimit" type="number" label="Max (0=All)" value="${mediaInfoLimit}" min="0" />
@@ -787,9 +864,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     <p style="margin:0 0 15px 0; font-size:0.9em; opacity:0.8;">Define when this tag should be active. If empty, it's always active.</p>
                     <div class="date-list-container">${intervals.map(i => getDateRowHtml(i)).join('')}</div>
                     <button is="emby-button" type="button" class="btnAddDate" style="width:100%; background:transparent; border:2px dashed rgba(128,128,128,0.4); color:var(--theme-text-secondary); margin-top:10px;"><i class="md-icon" style="margin-right:5px;">event</i>Add Schedule Rule</button>
-                    <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:16px;">
+                    <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:16px; ${intervals.length === 0 ? 'opacity:0.4;' : ''}">
                         <label>
-                            <input is="emby-checkbox" type="checkbox" class="chkOverrideWhenActive" ${overrideChecked} />
+                            <input is="emby-checkbox" type="checkbox" class="chkOverrideWhenActive" ${overrideChecked} ${intervals.length === 0 ? 'disabled' : ''} />
                             <span>Priority override when active</span>
                         </label>
                         <div class="fieldDescription">When this entry is in schedule, all other entries sharing the same tag or collection are suppressed — only this entry's items keep the tag and collection.</div>
@@ -902,10 +979,20 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var hasCollection = row.querySelector('.chkEnableCollection').checked;
             var hasHomeSection = row.querySelector('.chkEnableHomeSection').checked;
             var hasTag = row.querySelector('.chkEnableTag').checked;
+            var overrideChk = row.querySelector('.chkOverrideWhenActive');
+            if (overrideChk) {
+                overrideChk.disabled = !hasSchedule;
+                if (!hasSchedule) overrideChk.checked = false;
+                var overrideContainer = overrideChk.closest('.checkboxContainer');
+                if (overrideContainer) overrideContainer.style.opacity = hasSchedule ? '' : '0.4';
+            }
+            var hasOverride = hasSchedule && !!(overrideChk || {}).checked;
 
             var html = '';
             if (hasSchedule) {
-                html += `<span class="tag-indicator schedule"><i class="md-icon" style="font-size:1.1em;">calendar_today</i> Schedule</span>`;
+                var schedPriorityClass = hasOverride ? ' priority-active' : '';
+                var schedText = hasOverride ? 'Schedule priority' : 'Schedule';
+                html += `<span class="tag-indicator schedule${schedPriorityClass}"><i class="md-icon" style="font-size:1.1em;">calendar_today</i> ${schedText}</span>`;
             }
             if (hasCollection) {
                 html += `<span class="tag-indicator collection"><i class="md-icon" style="font-size:1.1em;">library_books</i> Collection</span>`;
@@ -983,6 +1070,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 settingsDiv.style.display = e.target.checked ? 'block' : 'none';
                 updateBadges(row);
             }
+            if (e.target.classList.contains('chkOverrideWhenActive')) {
+                updateBadges(row);
+            }
 
             if (e.target.classList.contains('chkEnableHomeSection')) {
                 if (e.target.checked) {
@@ -1045,6 +1135,21 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 updateBadges(row);
             }
 
+            if (e.target.closest('.btnPremadeFilters')) {
+                var panel = e.target.closest('.source-mediainfo-container').querySelector('.mi-preset-panel');
+                panel.style.display = panel.style.display === 'none' ? '' : 'none';
+                return;
+            }
+            if (e.target.closest('.btnApplyMiPreset')) {
+                var idxParts = e.target.closest('.btnApplyMiPreset').dataset.preset.split(',');
+                var preset = MI_PRESETS[+idxParts[0]].presets[+idxParts[1]];
+                var presetFilters = preset.build();
+                var presetList = e.target.closest('.source-mediainfo-container').querySelector('.mediainfo-filter-list');
+                presetList.innerHTML = presetFilters.map(function(f, i) { return getMediaInfoFilterGroupHtml(f, i, i === 0); }).join('');
+                e.target.closest('.mi-preset-panel').style.display = 'none';
+                setTimeout(checkFormState, 0);
+                return;
+            }
             if (e.target.closest('.btnAddMediaInfoFilter')) {
                 var list = row.querySelector('.mediainfo-filter-list');
                 var idx = list.querySelectorAll('.mediainfo-filter-group').length;
@@ -1523,13 +1628,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var txtVal = rule.querySelector('.txtMiValue');
                     var selOp  = rule.querySelector('.selMiOp');
                     var txtNum = rule.querySelector('.txtMiNum');
+                    var selUser = rule.querySelector('.selMiUser');
                     var val = selVal ? selVal.value : (txtVal ? txtVal.value.trim() : '');
                     var op2 = selOp ? selOp.value : '';
                     var num = txtNum ? txtNum.value.trim() : '';
+                    var userId = selUser ? selUser.value : '';
                     var finalVal = op2 ? num : val;
                     var notBtn = rule.querySelector('.btnNotToggle');
                     var isNot = notBtn && notBtn.dataset.not === '1';
-                    var crit = buildCriterion(prop, op2, finalVal);
+                    var crit = buildCriterion(prop, op2, finalVal, userId);
                     if (crit) criteria.push(isNot ? '!' + crit : crit);
                 });
                 if (criteria.length > 0) miFilters.push({ Operator: operator, Criteria: criteria, GroupOperator: groupOp });
@@ -2086,7 +2193,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             settingsTab.addEventListener('input',  changeHandler, { signal: _signal });
             settingsTab.addEventListener('change', changeHandler, { signal: _signal });
             form.addEventListener('click', (e) => {
-                if (e.target.closest('.btnRemoveUrl, .btnAddUrl, .btnRemoveLocal, .btnAddLocal, .btnRemoveDate, .btnAddDate, .btnRemoveFilterGroup, .btnAddMediaInfoFilter, .btnGroupOpChoice, .btnGroupInnerOpChoice, .btnAddMiRule, .btnRemoveMiRule, .btnRemoveGroup, .day-toggle, .btnRemovePoster')) {
+                if (e.target.closest('.btnRemoveUrl, .btnAddUrl, .btnRemoveLocal, .btnAddLocal, .btnRemoveDate, .btnAddDate, .btnRemoveFilterGroup, .btnAddMediaInfoFilter, .btnGroupOpChoice, .btnGroupInnerOpChoice, .btnAddMiRule, .btnRemoveMiRule, .btnRemoveGroup, .day-toggle, .btnRemovePoster, .btnApplyMiPreset')) {
                     changeHandler();
                 }
             }, { signal: _signal });
@@ -2274,6 +2381,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             checkForUpdates(view);
             refreshStatus(view);
             statusInterval = setInterval(() => refreshStatus(view), 5000);
+            getHseUsers().then(function(users) { _miUsers = users; });
 
             Promise.all([
                 window.ApiClient.getJSON(window.ApiClient.getUrl("Users/" + window.ApiClient.getCurrentUserId() + "/Items", { IncludeItemTypes: "BoxSet", Recursive: true })),
@@ -2459,26 +2567,30 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     if (hscContainer && !hscContainer.dataset.loaded) {
                         loadHscUsers(view);
                     }
+                    var manageContainer = view.querySelector('#hscManageContainer');
+                    if (manageContainer && !manageContainer.dataset.loaded) {
+                        loadHscManageTab(view);
+                    }
                 }
             });
         });
 
-        view.querySelectorAll('.hsc-sub-tab-btn').forEach(function (btn) {
-            btn.addEventListener('click', function () {
-                var target = this.getAttribute('data-hsc-tab');
-                view.querySelectorAll('.hsc-sub-tab-btn').forEach(function (b) { b.classList.remove('active'); });
-                this.classList.add('active');
-                view.querySelectorAll('.hsc-sub-tab-content').forEach(function (c) { c.style.display = 'none'; });
-                if (target === 'copy') {
-                    view.querySelector('#hscSubTabCopy').style.display = '';
-                    var hscContainer = view.querySelector('#hscContainer');
-                    if (hscContainer && !hscContainer.dataset.loaded) loadHscUsers(view);
-                } else if (target === 'manage') {
-                    view.querySelector('#hscSubTabManage').style.display = '';
-                    var manageContainer = view.querySelector('#hscManageContainer');
-                    if (manageContainer && !manageContainer.dataset.loaded) loadHscManageTab(view);
-                }
-            });
+        view.addEventListener('click', function (e) {
+            var btn = e.target.closest('.hsc-sub-tab-btn');
+            if (!btn) return;
+            var target = btn.getAttribute('data-hsc-tab');
+            view.querySelectorAll('.hsc-sub-tab-btn').forEach(function (b) { b.classList.remove('active'); });
+            btn.classList.add('active');
+            view.querySelectorAll('.hsc-sub-tab-content').forEach(function (c) { c.style.display = 'none'; });
+            if (target === 'copy') {
+                view.querySelector('#hscSubTabCopy').style.display = '';
+                var hscContainer = view.querySelector('#hscContainer');
+                if (hscContainer && !hscContainer.dataset.loaded) loadHscUsers(view);
+            } else if (target === 'manage') {
+                view.querySelector('#hscSubTabManage').style.display = '';
+                var manageContainer = view.querySelector('#hscManageContainer');
+                if (manageContainer && !manageContainer.dataset.loaded) loadHscManageTab(view);
+            }
         });
 
         var origStatusInterval = statusInterval;

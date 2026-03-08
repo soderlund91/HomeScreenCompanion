@@ -23,6 +23,7 @@ namespace HomeScreenCompanion
         private readonly ILibraryManager _libraryManager;
         private readonly ICollectionManager _collectionManager;
         private readonly IUserManager _userManager;
+        private readonly IUserDataManager _userDataManager;
         private readonly IHttpClient _httpClient;
         private readonly IJsonSerializer _jsonSerializer;
         private readonly ILogger _logger;
@@ -31,11 +32,12 @@ namespace HomeScreenCompanion
         public static List<string> ExecutionLog { get; } = new List<string>();
         public static bool IsRunning { get; private set; } = false;
 
-        public HomeScreenCompanionTask(ILibraryManager libraryManager, ICollectionManager collectionManager, IUserManager userManager, IHttpClient httpClient, IJsonSerializer jsonSerializer, ILogManager logManager)
+        public HomeScreenCompanionTask(ILibraryManager libraryManager, ICollectionManager collectionManager, IUserManager userManager, IUserDataManager userDataManager, IHttpClient httpClient, IJsonSerializer jsonSerializer, ILogManager logManager)
         {
             _libraryManager = libraryManager;
             _collectionManager = collectionManager;
             _userManager = userManager;
+            _userDataManager = userDataManager;
             _httpClient = httpClient;
             _jsonSerializer = jsonSerializer;
             _logger = logManager.GetLogger("HomeScreenCompanion");
@@ -991,6 +993,48 @@ namespace HomeScreenCompanion
                     _ => false
                 };
             }
+            if (parts.Length == 4)
+            {
+                var prop4 = parts[0]; var userId4 = parts[1]; var op4 = parts[2]; var valStr4 = parts[3];
+                if (userId4 == "__any__" || userId4 == "__all__")
+                {
+                    bool matchAll = userId4 == "__all__";
+                    var allUsers = _userManager.GetUserList(new UserQuery { IsDisabled = false });
+                    if (allUsers == null || allUsers.Length == 0) return false;
+                    if (prop4 == "IsPlayed")
+                    {
+                        bool wantWatched = string.Equals(valStr4, "Watched", StringComparison.OrdinalIgnoreCase);
+                        Func<User, bool> checkPlayed = u => { var ud2 = _userDataManager?.GetUserData(u, item); return ud2 != null && ud2.Played == wantWatched; };
+                        return matchAll ? allUsers.All(checkPlayed) : allUsers.Any(checkPlayed);
+                    }
+                    if (prop4 == "LastPlayed" &&
+                        double.TryParse(valStr4, System.Globalization.NumberStyles.Any,
+                                        System.Globalization.CultureInfo.InvariantCulture, out var daysU))
+                    {
+                        Func<User, bool> checkLp = u => { var ud2 = _userDataManager?.GetUserData(u, item); if (ud2?.LastPlayedDate == null) return false; return ApplyNumericOp((DateTime.UtcNow - ud2.LastPlayedDate.Value).TotalDays, op4, daysU); };
+                        return matchAll ? allUsers.All(checkLp) : allUsers.Any(checkLp);
+                    }
+                    return false;
+                }
+                if (!Guid.TryParse(userId4, out var guid4)) return false;
+                var user4 = _userManager.GetUserById(guid4);
+                if (user4 == null) return false;
+                var ud = _userDataManager?.GetUserData(user4, item);
+                if (ud == null) return false;
+                if (prop4 == "IsPlayed")
+                {
+                    bool wantWatched = string.Equals(valStr4, "Watched", StringComparison.OrdinalIgnoreCase);
+                    return ud.Played == wantWatched;
+                }
+                if (prop4 == "LastPlayed" && ud.LastPlayedDate.HasValue &&
+                    double.TryParse(valStr4, System.Globalization.NumberStyles.Any,
+                                    System.Globalization.CultureInfo.InvariantCulture, out var days4))
+                {
+                    double daysSince4 = (DateTime.UtcNow - ud.LastPlayedDate.Value).TotalDays;
+                    return ApplyNumericOp(daysSince4, op4, days4);
+                }
+                return false;
+            }
             if (parts.Length == 3 && double.TryParse(parts[2],
                 System.Globalization.NumberStyles.Any,
                 System.Globalization.CultureInfo.InvariantCulture, out var num))
@@ -998,21 +1042,16 @@ namespace HomeScreenCompanion
                 double? v = parts[0] switch
                 {
                     "CommunityRating" => (double?)item.CommunityRating,
-                    "Year"    => (double?)item.ProductionYear,
-                    "Runtime" => item.RunTimeTicks.HasValue
-                                 ? (double?)(item.RunTimeTicks.Value / TimeSpan.TicksPerMinute) : null,
+                    "Year"            => (double?)item.ProductionYear,
+                    "Runtime"         => item.RunTimeTicks.HasValue
+                                        ? (double?)(item.RunTimeTicks.Value / TimeSpan.TicksPerMinute) : null,
+                    "DateAdded"       => (double?)(DateTime.UtcNow - item.DateCreated).TotalDays,
+                    "DateModified"    => TryGetDateModified(item),
+                    "FileSize"        => TryGetFileSize(item),
                     _ => null
                 };
                 if (!v.HasValue) return false;
-                return parts[1] switch
-                {
-                    ">"  => v.Value > num,
-                    ">=" => v.Value >= num,
-                    "<"  => v.Value < num,
-                    "<=" => v.Value <= num,
-                    "="  => Math.Abs(v.Value - num) < 0.01,
-                    _ => false
-                };
+                return ApplyNumericOp(v.Value, parts[1], num);
             }
             return c switch
             {
@@ -1053,6 +1092,28 @@ namespace HomeScreenCompanion
             }
             catch { }
             return false;
+        }
+
+        private static bool ApplyNumericOp(double v, string op, double num) => op switch
+        {
+            ">"  => v > num,
+            ">=" => v >= num,
+            "<"  => v < num,
+            "<=" => v <= num,
+            "="  => Math.Abs(v - num) < 0.01,
+            _ => false
+        };
+
+        private static double? TryGetDateModified(BaseItem item)
+        {
+            try { dynamic d = item; DateTime dt = d.DateModified; return (DateTime.UtcNow - dt).TotalDays; }
+            catch { return null; }
+        }
+
+        private static double? TryGetFileSize(BaseItem item)
+        {
+            try { dynamic d = item; long? sz = d.Size; return sz.HasValue ? (double?)(sz.Value / 1048576.0) : null; }
+            catch { return null; }
         }
 
         private void LogSummary(string message, string level = "Info")
