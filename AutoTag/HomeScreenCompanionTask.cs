@@ -32,6 +32,18 @@ namespace HomeScreenCompanion
         public static List<string> ExecutionLog { get; } = new List<string>();
         public static bool IsRunning { get; private set; } = false;
 
+        private struct CachedMediaInfo
+        {
+            public bool Is4k, Is8k, Is1080, Is720, IsSd;
+            public bool IsHevc, IsAv1, IsH264;
+            public bool IsHdr, IsHdr10, IsDv;
+            public bool IsAtmos, IsTrueHd, IsDtsHdMa, IsDts, IsAc3, IsAac;
+            public bool Is71, Is51, IsStereo, IsMono;
+            public HashSet<string> AudioLanguages;
+            public double? DateModifiedDays;
+            public double? FileSizeMb;
+        }
+
         public HomeScreenCompanionTask(ILibraryManager libraryManager, ICollectionManager collectionManager, IUserManager userManager, IUserDataManager userDataManager, IHttpClient httpClient, IJsonSerializer jsonSerializer, ILogManager logManager)
         {
             _libraryManager = libraryManager;
@@ -118,6 +130,56 @@ namespace HomeScreenCompanion
                 double currentProgress = 0;
 
                 var seriesEpisodeCache = new Dictionary<long, BaseItem>();
+
+                // Build shared person cache for all active MediaInfo tags (avoids per-tag DB queries)
+                var personCache = new Dictionary<string, HashSet<long>>(StringComparer.OrdinalIgnoreCase);
+                {
+                    var allPersonCriteria = config.Tags
+                        .Where(t => t.Active && t.SourceType == "MediaInfo")
+                        .SelectMany(t => (t.MediaInfoFilters ?? new List<MediaInfoFilter>())
+                            .SelectMany(f => f.Criteria ?? new List<string>())
+                            .Concat(t.MediaInfoConditions ?? new List<string>()))
+                        .Select(c => c.Length > 0 && c[0] == '!' ? c.Substring(1) : c)
+                        .Distinct(StringComparer.OrdinalIgnoreCase);
+                    foreach (var c in allPersonCriteria)
+                    {
+                        if (personCache.ContainsKey(c)) continue;
+                        var p = c.Split(':');
+                        if (p.Length == 2 && (p[0] == "Actor" || p[0] == "Director" || p[0] == "Writer")
+                            && Enum.TryParse<MediaBrowser.Model.Entities.PersonType>(p[0], out var personTypeEnum))
+                        {
+                            var personItem = _libraryManager.GetItemList(new InternalItemsQuery
+                            {
+                                IncludeItemTypes = new[] { "Person" },
+                                Name = p[1].Trim()
+                            }).FirstOrDefault();
+                            personCache[c] = personItem == null ? new HashSet<long>() :
+                                _libraryManager.GetItemList(new InternalItemsQuery
+                                {
+                                    PersonIds = new[] { personItem.InternalId },
+                                    PersonTypes = new[] { personTypeEnum },
+                                    IncludeItemTypes = new[] { "Movie", "Series" },
+                                    Recursive = true,
+                                    IsVirtualItem = false
+                                }).Select(x => x.InternalId).ToHashSet();
+                        }
+                    }
+                }
+
+                // Build media info cache once for all items (reused across all MediaInfo tags)
+                var mediaInfoCache = new Dictionary<long, CachedMediaInfo>();
+                if (config.Tags.Any(t => t.Active && t.SourceType == "MediaInfo"))
+                {
+                    foreach (var item in allItems)
+                    {
+                        if (item.LocationType != LocationType.FileSystem) continue;
+                        var resolved = ResolveItemForMediaInfo(item, seriesEpisodeCache);
+                        mediaInfoCache[item.InternalId] = ExtractMediaInfo(resolved);
+                    }
+                }
+
+                // User data cache for IsPlayed/LastPlayed (scoped to this Execute() run)
+                var userDataCache = new Dictionary<(Guid, long), (bool Played, DateTimeOffset? LastPlayedDate)>();
 
                 var activeTagOverrides = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var activeCollectionOverrides = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -300,34 +362,6 @@ namespace HomeScreenCompanion
                         }
                         else if (tagConfig.SourceType == "MediaInfo")
                         {
-                            var personCache = new Dictionary<string, HashSet<long>>(StringComparer.OrdinalIgnoreCase);
-                            var allPersonCriteria = (tagConfig.MediaInfoFilters ?? new List<MediaInfoFilter>())
-                                .SelectMany(f => f.Criteria ?? new List<string>())
-                                .Concat(tagConfig.MediaInfoConditions ?? new List<string>());
-                            foreach (var c in allPersonCriteria)
-                            {
-                                if (personCache.ContainsKey(c)) continue;
-                                var p = c.Split(':');
-                                if (p.Length == 2 && (p[0] == "Actor" || p[0] == "Director" || p[0] == "Writer")
-                                    && Enum.TryParse<MediaBrowser.Model.Entities.PersonType>(p[0], out var personTypeEnum))
-                                {
-                                    var personItem = _libraryManager.GetItemList(new InternalItemsQuery
-                                    {
-                                        IncludeItemTypes = new[] { "Person" },
-                                        Name = p[1].Trim()
-                                    }).FirstOrDefault();
-                                    personCache[c] = personItem == null ? new HashSet<long>() :
-                                        _libraryManager.GetItemList(new InternalItemsQuery
-                                        {
-                                            PersonIds = new[] { personItem.InternalId },
-                                            PersonTypes = new[] { personTypeEnum },
-                                            IncludeItemTypes = new[] { "Movie", "Series" },
-                                            Recursive = true,
-                                            IsVirtualItem = false
-                                        }).Select(x => x.InternalId).ToHashSet();
-                                }
-                            }
-
                             foreach (var item in allItems)
                             {
                                 if (item.LocationType != LocationType.FileSystem) continue;
@@ -335,7 +369,8 @@ namespace HomeScreenCompanion
                                 var imdb = item.GetProviderId("Imdb");
                                 if (!string.IsNullOrEmpty(imdb) && blacklist.Contains(imdb)) continue;
 
-                                if (ItemMatchesMediaInfo(item, tagConfig, debug, seriesEpisodeCache, personCache))
+                                CachedMediaInfo? ci = mediaInfoCache.TryGetValue(item.InternalId, out var ciVal) ? ciVal : (CachedMediaInfo?)null;
+                                if (ItemMatchesMediaInfo(item, tagConfig, debug, seriesEpisodeCache, personCache, userDataCache, ci))
                                 {
                                     matchedLocalItems.Add(item);
                                     if (effectiveLimit < 10000 && matchedLocalItems.Count >= effectiveLimit) break;
@@ -818,59 +853,36 @@ namespace HomeScreenCompanion
             return false;
         }
 
-        private bool ItemMatchesMediaInfo(BaseItem item, TagConfig tagConfig, bool debug, Dictionary<long, BaseItem>? seriesEpisodeCache = null, Dictionary<string, HashSet<long>>? personCache = null)
+        private BaseItem ResolveItemForMediaInfo(BaseItem item, Dictionary<long, BaseItem> seriesEpisodeCache)
         {
-            var filters = tagConfig.MediaInfoFilters;
-            var legacy = tagConfig.MediaInfoConditions;
-            bool hasFilters = filters != null && filters.Count > 0;
-            bool hasLegacy = legacy != null && legacy.Count > 0;
-            if (!hasFilters && !hasLegacy) return true;
-
-            BaseItem itemToCheck = item;
-            if (item.GetType().Name.Contains("Series"))
+            if (!item.GetType().Name.Contains("Series")) return item;
+            if (!seriesEpisodeCache.TryGetValue(item.InternalId, out var cached))
             {
-                if (seriesEpisodeCache != null)
+                cached = _libraryManager.GetItemList(new InternalItemsQuery
                 {
-                    if (!seriesEpisodeCache.TryGetValue(item.InternalId, out var cached))
-                    {
-                        cached = _libraryManager.GetItemList(new InternalItemsQuery
-                        {
-                            IncludeItemTypes = new[] { "Episode" },
-                            Parent = item,
-                            Recursive = true,
-                            Limit = 1
-                        }).FirstOrDefault() ?? item;
-                        seriesEpisodeCache[item.InternalId] = cached;
-                    }
-                    itemToCheck = cached;
-                }
-                else
-                {
-                    itemToCheck = _libraryManager.GetItemList(new InternalItemsQuery
-                    {
-                        IncludeItemTypes = new[] { "Episode" },
-                        Parent = item,
-                        Recursive = true,
-                        Limit = 1
-                    }).FirstOrDefault() ?? item;
-                }
+                    IncludeItemTypes = new[] { "Episode" },
+                    Parent = item,
+                    Recursive = true,
+                    Limit = 1
+                }).FirstOrDefault() ?? item;
+                seriesEpisodeCache[item.InternalId] = cached;
             }
+            return cached;
+        }
 
-            bool is4k = false, is1080 = false, is720 = false, is8k = false, isSd = false, isHevc = false, isAv1 = false, isH264 = false;
-            bool isHdr = false, isHdr10 = false, isDv = false, isAtmos = false, isTrueHd = false, isDtsHdMa = false, isDts = false, isAc3 = false, isAac = false;
-            bool is51 = false, is71 = false, isStereo = false, isMono = false;
-            var audioLanguages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
+        private static CachedMediaInfo ExtractMediaInfo(BaseItem itemToCheck)
+        {
+            var info = new CachedMediaInfo { AudioLanguages = new HashSet<string>(StringComparer.OrdinalIgnoreCase) };
             try
             {
                 dynamic dynItem = itemToCheck;
                 try {
                     int defaultWidth = (int)dynItem.Width;
-                    if (defaultWidth >= 7680) is8k = true;
-                    else if (defaultWidth >= 3800) is4k = true;
-                    else if (defaultWidth >= 1900 && !is4k && !is8k) is1080 = true;
-                    else if (defaultWidth >= 1200 && !is1080 && !is4k && !is8k) is720 = true;
-                    else if (defaultWidth > 0 && !is720 && !is1080 && !is4k && !is8k) isSd = true;
+                    if (defaultWidth >= 7680) info.Is8k = true;
+                    else if (defaultWidth >= 3800) info.Is4k = true;
+                    else if (defaultWidth >= 1900 && !info.Is4k && !info.Is8k) info.Is1080 = true;
+                    else if (defaultWidth >= 1200 && !info.Is1080 && !info.Is4k && !info.Is8k) info.Is720 = true;
+                    else if (defaultWidth > 0 && !info.Is720 && !info.Is1080 && !info.Is4k && !info.Is8k) info.IsSd = true;
                 } catch { }
 
                 System.Collections.IEnumerable streams = null;
@@ -897,30 +909,88 @@ namespace HomeScreenCompanion
 
                             if (type.Equals("Video", StringComparison.OrdinalIgnoreCase))
                             {
-                                try { int w = (int)stream.Width; if (w >= 7680) is8k = true; else if (w >= 3800) is4k = true; else if (w >= 1900 && !is4k && !is8k) is1080 = true; else if (w >= 1200 && !is1080 && !is4k && !is8k) is720 = true; else if (w > 0 && !is720 && !is1080 && !is4k && !is8k) isSd = true; } catch { }
-                                if (codec.IndexOf("hevc", StringComparison.OrdinalIgnoreCase) >= 0 || codec.IndexOf("h265", StringComparison.OrdinalIgnoreCase) >= 0) isHevc = true;
-                                if (codec.IndexOf("av1", StringComparison.OrdinalIgnoreCase) >= 0) isAv1 = true;
-                                if (codec.IndexOf("h264", StringComparison.OrdinalIgnoreCase) >= 0 || codec.IndexOf("avc", StringComparison.OrdinalIgnoreCase) >= 0) isH264 = true;
-                                if (profile.IndexOf("dv", StringComparison.OrdinalIgnoreCase) >= 0 || profile.IndexOf("dolby vision", StringComparison.OrdinalIgnoreCase) >= 0) isDv = true;
-                                if (profile.IndexOf("hdr10", StringComparison.OrdinalIgnoreCase) >= 0 || videoRange.IndexOf("hdr10", StringComparison.OrdinalIgnoreCase) >= 0) isHdr10 = true;
-                                if (videoRange.IndexOf("hdr", StringComparison.OrdinalIgnoreCase) >= 0 || profile.IndexOf("hdr", StringComparison.OrdinalIgnoreCase) >= 0) isHdr = true;
+                                try { int w = (int)stream.Width; if (w >= 7680) info.Is8k = true; else if (w >= 3800) info.Is4k = true; else if (w >= 1900 && !info.Is4k && !info.Is8k) info.Is1080 = true; else if (w >= 1200 && !info.Is1080 && !info.Is4k && !info.Is8k) info.Is720 = true; else if (w > 0 && !info.Is720 && !info.Is1080 && !info.Is4k && !info.Is8k) info.IsSd = true; } catch { }
+                                if (codec.IndexOf("hevc", StringComparison.OrdinalIgnoreCase) >= 0 || codec.IndexOf("h265", StringComparison.OrdinalIgnoreCase) >= 0) info.IsHevc = true;
+                                if (codec.IndexOf("av1", StringComparison.OrdinalIgnoreCase) >= 0) info.IsAv1 = true;
+                                if (codec.IndexOf("h264", StringComparison.OrdinalIgnoreCase) >= 0 || codec.IndexOf("avc", StringComparison.OrdinalIgnoreCase) >= 0) info.IsH264 = true;
+                                if (profile.IndexOf("dv", StringComparison.OrdinalIgnoreCase) >= 0 || profile.IndexOf("dolby vision", StringComparison.OrdinalIgnoreCase) >= 0) info.IsDv = true;
+                                if (profile.IndexOf("hdr10", StringComparison.OrdinalIgnoreCase) >= 0 || videoRange.IndexOf("hdr10", StringComparison.OrdinalIgnoreCase) >= 0) info.IsHdr10 = true;
+                                if (videoRange.IndexOf("hdr", StringComparison.OrdinalIgnoreCase) >= 0 || profile.IndexOf("hdr", StringComparison.OrdinalIgnoreCase) >= 0) info.IsHdr = true;
                             }
                             else if (type.Equals("Audio", StringComparison.OrdinalIgnoreCase))
                             {
-                                if (profile.IndexOf("atmos", StringComparison.OrdinalIgnoreCase) >= 0) isAtmos = true;
-                                if (codec.IndexOf("truehd", StringComparison.OrdinalIgnoreCase) >= 0) isTrueHd = true;
-                                if (codec.IndexOf("dts", StringComparison.OrdinalIgnoreCase) >= 0) { isDts = true; if (profile.IndexOf("ma", StringComparison.OrdinalIgnoreCase) >= 0) isDtsHdMa = true; }
-                                if (codec.IndexOf("ac3", StringComparison.OrdinalIgnoreCase) >= 0 || codec.IndexOf("eac3", StringComparison.OrdinalIgnoreCase) >= 0) isAc3 = true;
-                                if (codec.IndexOf("aac", StringComparison.OrdinalIgnoreCase) >= 0) isAac = true;
-                                try { int ch = (int)stream.Channels; if (ch == 1) isMono = true; else if (ch == 2) isStereo = true; else if (ch == 6) is51 = true; else if (ch >= 8) is71 = true; } catch { }
-                                try { var lang = stream.Language?.ToString(); if (!string.IsNullOrWhiteSpace(lang)) audioLanguages.Add(lang); } catch { }
+                                if (profile.IndexOf("atmos", StringComparison.OrdinalIgnoreCase) >= 0) info.IsAtmos = true;
+                                if (codec.IndexOf("truehd", StringComparison.OrdinalIgnoreCase) >= 0) info.IsTrueHd = true;
+                                if (codec.IndexOf("dts", StringComparison.OrdinalIgnoreCase) >= 0) { info.IsDts = true; if (profile.IndexOf("ma", StringComparison.OrdinalIgnoreCase) >= 0) info.IsDtsHdMa = true; }
+                                if (codec.IndexOf("ac3", StringComparison.OrdinalIgnoreCase) >= 0 || codec.IndexOf("eac3", StringComparison.OrdinalIgnoreCase) >= 0) info.IsAc3 = true;
+                                if (codec.IndexOf("aac", StringComparison.OrdinalIgnoreCase) >= 0) info.IsAac = true;
+                                try { int ch = (int)stream.Channels; if (ch == 1) info.IsMono = true; else if (ch == 2) info.IsStereo = true; else if (ch == 6) info.Is51 = true; else if (ch >= 8) info.Is71 = true; } catch { }
+                                try { var lang = stream.Language?.ToString(); if (!string.IsNullOrWhiteSpace(lang)) info.AudioLanguages.Add(lang); } catch { }
                             }
                         }
                         catch { }
                     }
                 }
+
+                info.DateModifiedDays = TryGetDateModified(itemToCheck);
+                info.FileSizeMb = TryGetFileSize(itemToCheck);
             }
             catch { }
+            return info;
+        }
+
+        private bool ItemMatchesMediaInfo(BaseItem item, TagConfig tagConfig, bool debug,
+            Dictionary<long, BaseItem>? seriesEpisodeCache = null,
+            Dictionary<string, HashSet<long>>? personCache = null,
+            Dictionary<(Guid, long), (bool Played, DateTimeOffset? LastPlayedDate)>? userDataCache = null,
+            CachedMediaInfo? cachedInfo = null)
+        {
+            var filters = tagConfig.MediaInfoFilters;
+            var legacy = tagConfig.MediaInfoConditions;
+            bool hasFilters = filters != null && filters.Count > 0;
+            bool hasLegacy = legacy != null && legacy.Count > 0;
+            if (!hasFilters && !hasLegacy) return true;
+
+            BaseItem itemToCheck;
+            bool is4k, is1080, is720, is8k, isSd, isHevc, isAv1, isH264;
+            bool isHdr, isHdr10, isDv, isAtmos, isTrueHd, isDtsHdMa, isDts, isAc3, isAac;
+            bool is51, is71, isStereo, isMono;
+            HashSet<string> audioLanguages;
+            double? cachedDateModifiedDays, cachedFileSizeMb;
+
+            if (cachedInfo.HasValue)
+            {
+                itemToCheck = item; // metadata (Studios, Genres etc.) from original item
+                var ci = cachedInfo.Value;
+                is4k = ci.Is4k; is8k = ci.Is8k; is1080 = ci.Is1080; is720 = ci.Is720; isSd = ci.IsSd;
+                isHevc = ci.IsHevc; isAv1 = ci.IsAv1; isH264 = ci.IsH264;
+                isHdr = ci.IsHdr; isHdr10 = ci.IsHdr10; isDv = ci.IsDv;
+                isAtmos = ci.IsAtmos; isTrueHd = ci.IsTrueHd; isDtsHdMa = ci.IsDtsHdMa;
+                isDts = ci.IsDts; isAc3 = ci.IsAc3; isAac = ci.IsAac;
+                is51 = ci.Is51; is71 = ci.Is71; isStereo = ci.IsStereo; isMono = ci.IsMono;
+                audioLanguages = ci.AudioLanguages ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                cachedDateModifiedDays = ci.DateModifiedDays;
+                cachedFileSizeMb = ci.FileSizeMb;
+            }
+            else
+            {
+                itemToCheck = item;
+                if (item.GetType().Name.Contains("Series"))
+                    itemToCheck = seriesEpisodeCache != null
+                        ? ResolveItemForMediaInfo(item, seriesEpisodeCache)
+                        : (_libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Episode" }, Parent = item, Recursive = true, Limit = 1 }).FirstOrDefault() ?? item);
+
+                var extracted = ExtractMediaInfo(itemToCheck);
+                is4k = extracted.Is4k; is8k = extracted.Is8k; is1080 = extracted.Is1080; is720 = extracted.Is720; isSd = extracted.IsSd;
+                isHevc = extracted.IsHevc; isAv1 = extracted.IsAv1; isH264 = extracted.IsH264;
+                isHdr = extracted.IsHdr; isHdr10 = extracted.IsHdr10; isDv = extracted.IsDv;
+                isAtmos = extracted.IsAtmos; isTrueHd = extracted.IsTrueHd; isDtsHdMa = extracted.IsDtsHdMa;
+                isDts = extracted.IsDts; isAc3 = extracted.IsAc3; isAac = extracted.IsAac;
+                is51 = extracted.Is51; is71 = extracted.Is71; isStereo = extracted.IsStereo; isMono = extracted.IsMono;
+                audioLanguages = extracted.AudioLanguages;
+                cachedDateModifiedDays = extracted.DateModifiedDays;
+                cachedFileSizeMb = extracted.FileSizeMb;
+            }
 
             string mediaType = item.GetType().Name;
             string[] itemTags = item.Tags ?? Array.Empty<string>();
@@ -929,7 +999,8 @@ namespace HomeScreenCompanion
             {
                 bool EvalCrit(string c) => EvaluateCriterion(c, itemToCheck, is4k, is1080, is720, is8k, isSd,
                     isHevc, isAv1, isH264, isHdr, isHdr10, isDv, isAtmos, isTrueHd, isDtsHdMa, isDts,
-                    isAc3, isAac, is51, is71, isStereo, isMono, personCache, audioLanguages, mediaType, itemTags);
+                    isAc3, isAac, is51, is71, isStereo, isMono, personCache, audioLanguages, mediaType, itemTags,
+                    userDataCache, cachedDateModifiedDays, cachedFileSizeMb);
                 bool EvalGroup(MediaInfoFilter f)
                 {
                     if (f.Criteria == null || f.Criteria.Count == 0) return true;
@@ -950,7 +1021,7 @@ namespace HomeScreenCompanion
             {
                 if (!EvaluateCriterion(cond, itemToCheck, is4k, is1080, is720, is8k, isSd, isHevc, isAv1, isH264,
                     isHdr, isHdr10, isDv, isAtmos, isTrueHd, isDtsHdMa, isDts, isAc3, isAac, is51, is71, isStereo, isMono,
-                    personCache, audioLanguages, mediaType, itemTags))
+                    personCache, audioLanguages, mediaType, itemTags, userDataCache, cachedDateModifiedDays, cachedFileSizeMb))
                     return false;
             }
             return true;
@@ -964,7 +1035,10 @@ namespace HomeScreenCompanion
             Dictionary<string, HashSet<long>>? personCache = null,
             HashSet<string>? audioLanguages = null,
             string? mediaType = null,
-            string[]? itemTags = null)
+            string[]? itemTags = null,
+            Dictionary<(Guid, long), (bool Played, DateTimeOffset? LastPlayedDate)>? userDataCache = null,
+            double? cachedDateModifiedDays = null,
+            double? cachedFileSizeMb = null)
         {
             bool negate = cond.Length > 0 && cond[0] == '!';
             if (negate) cond = cond.Substring(1);
@@ -1004,34 +1078,61 @@ namespace HomeScreenCompanion
                     if (prop4 == "IsPlayed")
                     {
                         bool wantWatched = string.Equals(valStr4, "Watched", StringComparison.OrdinalIgnoreCase);
-                        Func<User, bool> checkPlayed = u => { var ud2 = _userDataManager?.GetUserData(u, item); return ud2 != null && ud2.Played == wantWatched; };
+                        Func<User, bool> checkPlayed = u => {
+                            var k = (u.Id, item.InternalId);
+                            if (userDataCache != null && userDataCache.TryGetValue(k, out var cd)) return cd.Played == wantWatched;
+                            var ud2 = _userDataManager?.GetUserData(u, item);
+                            if (userDataCache != null) userDataCache[k] = ud2 == null ? (false, null) : (ud2.Played, ud2.LastPlayedDate);
+                            return ud2 != null && ud2.Played == wantWatched;
+                        };
                         return matchAll ? allUsers.All(checkPlayed) : allUsers.Any(checkPlayed);
                     }
                     if (prop4 == "LastPlayed" &&
                         double.TryParse(valStr4, System.Globalization.NumberStyles.Any,
                                         System.Globalization.CultureInfo.InvariantCulture, out var daysU))
                     {
-                        Func<User, bool> checkLp = u => { var ud2 = _userDataManager?.GetUserData(u, item); if (ud2?.LastPlayedDate == null) return false; return ApplyNumericOp((DateTime.UtcNow - ud2.LastPlayedDate.Value).TotalDays, op4, daysU); };
+                        Func<User, bool> checkLp = u => {
+                            var k = (u.Id, item.InternalId);
+                            DateTimeOffset? lpDate;
+                            if (userDataCache != null && userDataCache.TryGetValue(k, out var cd)) { lpDate = cd.LastPlayedDate; }
+                            else {
+                                var ud2 = _userDataManager?.GetUserData(u, item);
+                                lpDate = ud2?.LastPlayedDate;
+                                if (userDataCache != null) userDataCache[k] = ud2 == null ? (false, (DateTimeOffset?)null) : (ud2.Played, ud2.LastPlayedDate);
+                            }
+                            if (lpDate == null) return false;
+                            return ApplyNumericOp((DateTimeOffset.UtcNow - lpDate.Value).TotalDays, op4, daysU);
+                        };
                         return matchAll ? allUsers.All(checkLp) : allUsers.Any(checkLp);
                     }
                     return false;
                 }
                 if (!Guid.TryParse(userId4, out var guid4)) return false;
-                var user4 = _userManager.GetUserById(guid4);
-                if (user4 == null) return false;
-                var ud = _userDataManager?.GetUserData(user4, item);
-                if (ud == null) return false;
+                var udKey = (guid4, item.InternalId);
+                (bool Played, DateTimeOffset? LastPlayedDate) udResult;
+                if (userDataCache != null && userDataCache.TryGetValue(udKey, out udResult))
+                {
+                    // use cached value; if both fields are default it means user/data was null
+                }
+                else
+                {
+                    var user4 = _userManager.GetUserById(guid4);
+                    if (user4 == null) return false;
+                    var ud = _userDataManager?.GetUserData(user4, item);
+                    if (ud == null) return false;
+                    udResult = (ud.Played, ud.LastPlayedDate);
+                    if (userDataCache != null) userDataCache[udKey] = udResult;
+                }
                 if (prop4 == "IsPlayed")
                 {
                     bool wantWatched = string.Equals(valStr4, "Watched", StringComparison.OrdinalIgnoreCase);
-                    return ud.Played == wantWatched;
+                    return udResult.Played == wantWatched;
                 }
-                if (prop4 == "LastPlayed" && ud.LastPlayedDate.HasValue &&
+                if (prop4 == "LastPlayed" && udResult.LastPlayedDate.HasValue &&
                     double.TryParse(valStr4, System.Globalization.NumberStyles.Any,
                                     System.Globalization.CultureInfo.InvariantCulture, out var days4))
                 {
-                    double daysSince4 = (DateTime.UtcNow - ud.LastPlayedDate.Value).TotalDays;
-                    return ApplyNumericOp(daysSince4, op4, days4);
+                    return ApplyNumericOp((DateTime.UtcNow - udResult.LastPlayedDate.Value).TotalDays, op4, days4);
                 }
                 return false;
             }
@@ -1046,8 +1147,8 @@ namespace HomeScreenCompanion
                     "Runtime"         => item.RunTimeTicks.HasValue
                                         ? (double?)(item.RunTimeTicks.Value / TimeSpan.TicksPerMinute) : null,
                     "DateAdded"       => (double?)(DateTime.UtcNow - item.DateCreated).TotalDays,
-                    "DateModified"    => TryGetDateModified(item),
-                    "FileSize"        => TryGetFileSize(item),
+                    "DateModified"    => cachedDateModifiedDays ?? TryGetDateModified(item),
+                    "FileSize"        => cachedFileSizeMb ?? TryGetFileSize(item),
                     _ => null
                 };
                 if (!v.HasValue) return false;
