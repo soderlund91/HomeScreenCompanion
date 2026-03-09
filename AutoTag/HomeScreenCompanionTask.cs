@@ -131,7 +131,6 @@ namespace HomeScreenCompanion
 
                 var seriesEpisodeCache = new Dictionary<long, BaseItem>();
 
-                // Build shared person cache for all active MediaInfo tags (avoids per-tag DB queries)
                 var personCache = new Dictionary<string, HashSet<long>>(StringComparer.OrdinalIgnoreCase);
                 {
                     var allPersonCriteria = config.Tags
@@ -145,13 +144,17 @@ namespace HomeScreenCompanion
                     {
                         if (personCache.ContainsKey(c)) continue;
                         var p = c.Split(':');
-                        if (p.Length == 2 && (p[0] == "Actor" || p[0] == "Director" || p[0] == "Writer")
+                        if ((p.Length == 2 || (p.Length == 3 && (p[1] == "exact" || p[1] == "contains")))
+                            && (p[0] == "Actor" || p[0] == "Director" || p[0] == "Writer")
                             && Enum.TryParse<MediaBrowser.Model.Entities.PersonType>(p[0], out var personTypeEnum))
                         {
+                            string matchOp = p.Length == 3 ? p[1] : "exact";
+                            string personName = p.Length == 3 ? p[2].Trim() : p[1].Trim();
+                            if (matchOp == "contains") continue;
                             var personItem = _libraryManager.GetItemList(new InternalItemsQuery
                             {
                                 IncludeItemTypes = new[] { "Person" },
-                                Name = p[1].Trim()
+                                Name = personName
                             }).FirstOrDefault();
                             personCache[c] = personItem == null ? new HashSet<long>() :
                                 _libraryManager.GetItemList(new InternalItemsQuery
@@ -166,7 +169,6 @@ namespace HomeScreenCompanion
                     }
                 }
 
-                // Build media info cache once for all items (reused across all MediaInfo tags)
                 var mediaInfoCache = new Dictionary<long, CachedMediaInfo>();
                 if (config.Tags.Any(t => t.Active && t.SourceType == "MediaInfo"))
                 {
@@ -178,8 +180,7 @@ namespace HomeScreenCompanion
                     }
                 }
 
-                // User data cache for IsPlayed/LastPlayed (scoped to this Execute() run)
-                var userDataCache = new Dictionary<(Guid, long), (bool Played, DateTimeOffset? LastPlayedDate)>();
+                var userDataCache = new Dictionary<(Guid, long), (bool Played, DateTimeOffset? LastPlayedDate, int PlayCount)>();
 
                 var activeTagOverrides = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var activeCollectionOverrides = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -552,8 +553,6 @@ namespace HomeScreenCompanion
         private void ManageHomeSections(PluginConfiguration config, CancellationToken cancellationToken)
         {
             bool configChanged = false;
-            // External entries with multiple URLs produce duplicate TagConfigs with the same Name+Tag.
-            // Only the first occurrence should manage a home section.
             var processedHsKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var tc in config.Tags)
@@ -563,7 +562,6 @@ namespace HomeScreenCompanion
                 if (tc.HomeSectionTracked == null)
                     tc.HomeSectionTracked = new List<HomeSectionTracking>();
 
-                // Unique subtitle marker — used to identify our sections when SectionId capture fails
                 var safeTag = string.Concat((tc.Tag ?? tc.Name ?? "").Take(40)
                     .Select(c => char.IsLetterOrDigit(c) || c == '-' || c == '_' ? c : '_'));
                 var sectionMarker = "hsc__" + safeTag;
@@ -590,7 +588,6 @@ namespace HomeScreenCompanion
                     continue;
                 }
 
-                // Skip duplicate TagConfigs that share the same Name+Tag (e.g. multi-URL external entries)
                 var hsKey = (tc.Name ?? "") + "\x1F" + (tc.Tag ?? "");
                 if (!processedHsKeys.Add(hsKey))
                 {
@@ -598,7 +595,6 @@ namespace HomeScreenCompanion
                     continue;
                 }
 
-                // Parse settings JSON
                 Dictionary<string, string> settingsDict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 try
                 {
@@ -607,13 +603,11 @@ namespace HomeScreenCompanion
                 }
                 catch { /* ignore malformed settings */ }
 
-                // Apply default SectionType if not explicitly set (backward compatibility)
                 if (!settingsDict.ContainsKey("SectionType"))
                     settingsDict["SectionType"] = (tc.EnableCollection && !string.IsNullOrEmpty(tc.CollectionName)) ? "boxset" : "items";
 
                 settingsDict.TryGetValue("SectionType", out var sectionType);
 
-                // Resolve ParentId — only needed for boxset sections
                 string resolvedLibraryId = null;
                 if (sectionType == "boxset")
                 {
@@ -645,7 +639,6 @@ namespace HomeScreenCompanion
                     }
                 }
 
-                // For items type, look up the tag's Emby internal ID so Query.TagIds can be set
                 if (sectionType == "items" && !string.IsNullOrEmpty(tc.Tag))
                 {
                     var tagItem = _libraryManager.GetItemList(new InternalItemsQuery
@@ -660,7 +653,6 @@ namespace HomeScreenCompanion
                         LogSummary($"  [HomeSection] Tag '{tc.Tag}' not found in Emby library — section will have no tag filter.", "Warn");
                 }
 
-                // Remove tracking entries for users no longer in the list
                 var removedUsers = tc.HomeSectionTracked.Where(t => !tc.HomeSectionUserIds.Contains(t.UserId)).ToList();
                 foreach (var t in removedUsers)
                 {
@@ -680,12 +672,10 @@ namespace HomeScreenCompanion
                     {
                         var userInternalId = _userManager.GetInternalId(userId);
 
-                        // Delete previously tracked section for this user
                         var tracked = tc.HomeSectionTracked.FirstOrDefault(t => t.UserId == userId);
                         if (tracked != null)
                             DeleteSectionForUser(userInternalId, tracked.SectionId, sectionMarker, tc.HomeSectionSettings, cancellationToken);
 
-                        // Snapshot existing IDs before adding (to capture the new section's ID)
                         var beforeSections = _userManager.GetHomeSections(userInternalId, cancellationToken);
                         var beforeIds = new HashSet<string>(
                             (beforeSections?.Sections ?? Array.Empty<ContentSection>())
@@ -695,14 +685,12 @@ namespace HomeScreenCompanion
                         var newSection = BuildContentSection(settingsDict, resolvedLibraryId);
                         _userManager.AddHomeSection(userInternalId, newSection, cancellationToken);
 
-                        // Capture the new section ID
                         var afterSections = _userManager.GetHomeSections(userInternalId, cancellationToken);
                         var newId = (afterSections?.Sections ?? Array.Empty<ContentSection>())
                             .Where(s => !string.IsNullOrEmpty(s.Id) && !beforeIds.Contains(s.Id))
                             .Select(s => s.Id)
                             .FirstOrDefault() ?? "";
 
-                        // Store real ID if captured, otherwise fall back to the marker (for next-run delete)
                         var trackId = !string.IsNullOrEmpty(newId) ? newId : sectionMarker;
                         if (tracked != null)
                             tracked.SectionId = trackId;
@@ -725,19 +713,16 @@ namespace HomeScreenCompanion
 
         private void DeleteSectionForUser(long userInternalId, string sectionId, string sectionMarker, string settingsJson, CancellationToken cancellationToken)
         {
-            // Real section ID: delete directly
             if (!string.IsNullOrEmpty(sectionId) && !sectionId.StartsWith("hsc__"))
             {
                 _userManager.DeleteHomeSections(userInternalId, new[] { sectionId }, cancellationToken);
                 return;
             }
 
-            // sectionId is empty or is a stored marker — need to look up by subtitle/name
             ContentSection[] allSections;
             try { allSections = _userManager.GetHomeSections(userInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>(); }
             catch { return; }
 
-            // Prefer stored marker; fall back to computed marker
             var marker = (!string.IsNullOrEmpty(sectionId) && sectionId.StartsWith("hsc__")) ? sectionId : sectionMarker;
             if (!string.IsNullOrEmpty(marker))
             {
@@ -751,7 +736,6 @@ namespace HomeScreenCompanion
                 }
             }
 
-            // Last resort: find by CustomName
             try
             {
                 var hint = _jsonSerializer.DeserializeFromString<Dictionary<string, string>>(settingsJson ?? "{}");
@@ -772,7 +756,6 @@ namespace HomeScreenCompanion
             var section = new ContentSection();
             var props = typeof(ContentSection).GetProperties(BindingFlags.Public | BindingFlags.Instance);
 
-            // Set scalar fields (string, bool, int, long, DateTime)
             foreach (var prop in props)
             {
                 if (!prop.CanWrite || prop.Name == "Id" || prop.Name == "ParentId") continue;
@@ -792,7 +775,6 @@ namespace HomeScreenCompanion
                 catch { /* skip malformed value */ }
             }
 
-            // Set string[] array fields (ItemTypes, ExcludedFolders, Monitor)
             foreach (var prop in props)
             {
                 if (!prop.CanWrite || prop.Name == "Id") continue;
@@ -808,7 +790,6 @@ namespace HomeScreenCompanion
                 catch { }
             }
 
-            // Handle nested Query object (e.g. Query.TagIds for Dynamic Media tag filter)
             if (settings.TryGetValue("_queryTagId", out var qTagId) && !string.IsNullOrEmpty(qTagId))
             {
                 var queryProp = props.FirstOrDefault(p => p.Name == "Query");
@@ -828,7 +809,6 @@ namespace HomeScreenCompanion
                 }
             }
 
-            // Inject ParentId (collection/library reference for boxset sections)
             if (!string.IsNullOrEmpty(libraryId))
             {
                 var parentProp = props.FirstOrDefault(p => p.Name == "ParentId" && p.CanWrite && p.PropertyType == typeof(string));
@@ -942,7 +922,7 @@ namespace HomeScreenCompanion
         private bool ItemMatchesMediaInfo(BaseItem item, TagConfig tagConfig, bool debug,
             Dictionary<long, BaseItem>? seriesEpisodeCache = null,
             Dictionary<string, HashSet<long>>? personCache = null,
-            Dictionary<(Guid, long), (bool Played, DateTimeOffset? LastPlayedDate)>? userDataCache = null,
+            Dictionary<(Guid, long), (bool Played, DateTimeOffset? LastPlayedDate, int PlayCount)>? userDataCache = null,
             CachedMediaInfo? cachedInfo = null)
         {
             var filters = tagConfig.MediaInfoFilters;
@@ -1036,7 +1016,7 @@ namespace HomeScreenCompanion
             HashSet<string>? audioLanguages = null,
             string? mediaType = null,
             string[]? itemTags = null,
-            Dictionary<(Guid, long), (bool Played, DateTimeOffset? LastPlayedDate)>? userDataCache = null,
+            Dictionary<(Guid, long), (bool Played, DateTimeOffset? LastPlayedDate, int PlayCount)>? userDataCache = null,
             double? cachedDateModifiedDays = null,
             double? cachedFileSizeMb = null)
         {
@@ -1082,7 +1062,7 @@ namespace HomeScreenCompanion
                             var k = (u.Id, item.InternalId);
                             if (userDataCache != null && userDataCache.TryGetValue(k, out var cd)) return cd.Played == wantWatched;
                             var ud2 = _userDataManager?.GetUserData(u, item);
-                            if (userDataCache != null) userDataCache[k] = ud2 == null ? (false, null) : (ud2.Played, ud2.LastPlayedDate);
+                            if (userDataCache != null) userDataCache[k] = ud2 == null ? (false, null, 0) : (ud2.Played, ud2.LastPlayedDate, ud2.PlayCount);
                             return ud2 != null && ud2.Played == wantWatched;
                         };
                         return matchAll ? allUsers.All(checkPlayed) : allUsers.Any(checkPlayed);
@@ -1098,21 +1078,37 @@ namespace HomeScreenCompanion
                             else {
                                 var ud2 = _userDataManager?.GetUserData(u, item);
                                 lpDate = ud2?.LastPlayedDate;
-                                if (userDataCache != null) userDataCache[k] = ud2 == null ? (false, (DateTimeOffset?)null) : (ud2.Played, ud2.LastPlayedDate);
+                                if (userDataCache != null) userDataCache[k] = ud2 == null ? (false, (DateTimeOffset?)null, 0) : (ud2.Played, ud2.LastPlayedDate, ud2.PlayCount);
                             }
                             if (lpDate == null) return false;
                             return ApplyNumericOp((DateTimeOffset.UtcNow - lpDate.Value).TotalDays, op4, daysU);
                         };
                         return matchAll ? allUsers.All(checkLp) : allUsers.Any(checkLp);
                     }
+                    if (prop4 == "PlayCount" &&
+                        double.TryParse(valStr4, System.Globalization.NumberStyles.Any,
+                                        System.Globalization.CultureInfo.InvariantCulture, out var countU))
+                    {
+                        Func<User, bool> checkPc = u => {
+                            var k = (u.Id, item.InternalId);
+                            int playCount;
+                            if (userDataCache != null && userDataCache.TryGetValue(k, out var cd)) { playCount = cd.PlayCount; }
+                            else {
+                                var ud2 = _userDataManager?.GetUserData(u, item);
+                                playCount = ud2?.PlayCount ?? 0;
+                                if (userDataCache != null) userDataCache[k] = ud2 == null ? (false, (DateTimeOffset?)null, 0) : (ud2.Played, ud2.LastPlayedDate, ud2.PlayCount);
+                            }
+                            return ApplyNumericOp(playCount, op4, countU);
+                        };
+                        return matchAll ? allUsers.All(checkPc) : allUsers.Any(checkPc);
+                    }
                     return false;
                 }
                 if (!Guid.TryParse(userId4, out var guid4)) return false;
                 var udKey = (guid4, item.InternalId);
-                (bool Played, DateTimeOffset? LastPlayedDate) udResult;
+                (bool Played, DateTimeOffset? LastPlayedDate, int PlayCount) udResult;
                 if (userDataCache != null && userDataCache.TryGetValue(udKey, out udResult))
                 {
-                    // use cached value; if both fields are default it means user/data was null
                 }
                 else
                 {
@@ -1120,7 +1116,7 @@ namespace HomeScreenCompanion
                     if (user4 == null) return false;
                     var ud = _userDataManager?.GetUserData(user4, item);
                     if (ud == null) return false;
-                    udResult = (ud.Played, ud.LastPlayedDate);
+                    udResult = (ud.Played, ud.LastPlayedDate, ud.PlayCount);
                     if (userDataCache != null) userDataCache[udKey] = udResult;
                 }
                 if (prop4 == "IsPlayed")
@@ -1134,7 +1130,40 @@ namespace HomeScreenCompanion
                 {
                     return ApplyNumericOp((DateTime.UtcNow - udResult.LastPlayedDate.Value).TotalDays, op4, days4);
                 }
+                if (prop4 == "PlayCount" &&
+                    double.TryParse(valStr4, System.Globalization.NumberStyles.Any,
+                                    System.Globalization.CultureInfo.InvariantCulture, out var count4))
+                {
+                    return ApplyNumericOp(udResult.PlayCount, op4, count4);
+                }
                 return false;
+            }
+            if (parts.Length == 3 && (parts[1] == "contains" || parts[1] == "exact"))
+            {
+                var tProp = parts[0]; var tOp = parts[1]; var tVal = parts[2].Trim();
+                bool exact = tOp == "exact";
+                return tProp switch
+                {
+                    "Title"         => exact ? string.Equals(item.Name, tVal, StringComparison.OrdinalIgnoreCase)
+                                             : item.Name?.IndexOf(tVal, StringComparison.OrdinalIgnoreCase) >= 0,
+                    "Studio"        => exact ? item.Studios != null && item.Studios.Any(s => string.Equals(s, tVal, StringComparison.OrdinalIgnoreCase))
+                                             : MatchesAny(item.Studios, tVal),
+                    "Genre"         => exact ? item.Genres != null && item.Genres.Any(g => string.Equals(g, tVal, StringComparison.OrdinalIgnoreCase))
+                                             : MatchesAny(item.Genres, tVal),
+                    "Tag"           => exact ? itemTags != null && itemTags.Any(t => string.Equals(t, tVal, StringComparison.OrdinalIgnoreCase))
+                                             : itemTags != null && MatchesAny(itemTags, tVal),
+                    "ContentRating" => exact ? string.Equals(item.OfficialRating, tVal, StringComparison.OrdinalIgnoreCase)
+                                             : item.OfficialRating?.IndexOf(tVal, StringComparison.OrdinalIgnoreCase) >= 0,
+                    "AudioLanguage" => exact ? audioLanguages != null && audioLanguages.Contains(tVal)
+                                             : audioLanguages != null && audioLanguages.Any(l => l.IndexOf(tVal, StringComparison.OrdinalIgnoreCase) >= 0),
+                    "Actor"         => exact ? personCache != null && personCache.TryGetValue(c, out var aIds3) && aIds3.Contains(item.InternalId)
+                                             : MatchesPerson(item, tVal, "Actor"),
+                    "Director"      => exact ? personCache != null && personCache.TryGetValue(c, out var dIds3) && dIds3.Contains(item.InternalId)
+                                             : MatchesPerson(item, tVal, "Director"),
+                    "Writer"        => exact ? personCache != null && personCache.TryGetValue(c, out var wIds3) && wIds3.Contains(item.InternalId)
+                                             : MatchesPerson(item, tVal, "Writer"),
+                    _ => false
+                };
             }
             if (parts.Length == 3 && double.TryParse(parts[2],
                 System.Globalization.NumberStyles.Any,

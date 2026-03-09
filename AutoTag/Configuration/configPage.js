@@ -65,6 +65,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             align-items: center;
             gap: 4px;
             font-weight: 500;
+            position: relative;
         }
 
         .tag-indicator.schedule {
@@ -85,10 +86,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             border: 1px solid rgba(76,175,80,0.35);
         }
 
-        .tag-indicator.schedule.priority-active {
-            color: #1565C0;
-            background: rgba(21,101,192,0.15);
-            border: 1px solid rgba(255,152,0,0.7);
+        .tag-indicator.schedule.priority-active::after {
+            content: '';
+            position: absolute;
+            top: -3px;
+            right: -3px;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #f59e0b;
+            box-shadow: 0 0 0 1.5px var(--theme-background, #101010);
         }
 
         .tag-indicator.tag {
@@ -506,9 +513,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         MediaType: [['Movie', 'Movie'], ['Series', 'Show / Series']],
         IsPlayed: [['Watched', 'Watched'], ['Unwatched', 'Unwatched']]
     };
-    var MI_NUMERIC_PROPS = ['CommunityRating', 'Year', 'Runtime', 'DateAdded', 'DateModified', 'FileSize', 'LastPlayed'];
-    var MI_UNIT_LABELS = { DateAdded: 'days ago', DateModified: 'days ago', LastPlayed: 'days ago', FileSize: 'MB' };
-    var MI_USER_PROPS = ['IsPlayed', 'LastPlayed'];
+    var MI_NUMERIC_PROPS = ['CommunityRating', 'Year', 'Runtime', 'DateAdded', 'DateModified', 'FileSize', 'LastPlayed', 'PlayCount'];
+    var MI_UNIT_LABELS = { DateAdded: 'days ago', DateModified: 'days ago', LastPlayed: 'days ago', FileSize: 'MB', PlayCount: 'plays' };
+    var MI_USER_PROPS = ['IsPlayed', 'LastPlayed', 'PlayCount'];
+    var MI_TEXT_MATCH_PROPS = ['Tag', 'Title', 'Studio', 'Genre', 'Actor', 'Director', 'Writer', 'ContentRating', 'AudioLanguage'];
+    var MI_TEXT_MATCH_DEFAULT = {
+        Title: 'contains', Studio: 'contains', Genre: 'contains', Tag: 'contains',
+        Actor: 'exact', Director: 'exact', Writer: 'exact',
+        ContentRating: 'exact', AudioLanguage: 'exact'
+    };
     var _miUsers = null;
     var MI_PRESETS = [
         { label: 'Resolution', presets: [
@@ -557,7 +570,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             { label: 'Audio', props: [['AudioFormat','Audio Format'], ['AudioChannels','Audio Channels'], ['AudioLanguage','Audio Language']] },
             { label: 'Content', props: [['MediaType','Media Type'], ['Tag','Tag'], ['Title','Title'], ['Studio','Studio'], ['Genre','Genre'], ['Actor','Actor / Cast'], ['Director','Director'], ['Writer','Writer'], ['ContentRating','Content Rating'], ['ImdbId','IMDB ID']] },
             { label: 'Metrics', props: [['CommunityRating','Community Rating'], ['Year','Year'], ['Runtime','Runtime (minutes)'], ['DateAdded','Date Added'], ['DateModified','Date Modified'], ['FileSize','File Size (MB)']] },
-            { label: 'Activity', props: [['IsPlayed','Watched / Unwatched'], ['LastPlayed','Last Played']] }
+            { label: 'Activity', props: [['IsPlayed','Watched / Unwatched'], ['LastPlayed','Last Played'], ['PlayCount','Play Count']] }
         ];
         return groups.map(function (g) {
             return '<optgroup label="' + g.label + '">' +
@@ -581,13 +594,18 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }
         var unitLabel = MI_UNIT_LABELS[prop] ? '<span style="margin-left:4px;opacity:.7;white-space:nowrap;">' + MI_UNIT_LABELS[prop] + '</span>' : '';
         if (prop === 'Tag') {
+            var tagTextOp = savedOp || MI_TEXT_MATCH_DEFAULT['Tag'];
+            var tagTextOpHtml = '<select class="selMiTextOp" is="emby-select" style="flex:0 0 100px;">' +
+                '<option value="contains"' + (tagTextOp === 'contains' ? ' selected' : '') + '>Contains</option>' +
+                '<option value="exact"' + (tagTextOp === 'exact' ? ' selected' : '') + '>Exact</option>' +
+                '</select>';
             if (cachedTags.length > 0) {
                 var tagOpts = cachedTags.map(function (t) {
                     return '<option value="' + t.replace(/"/g, '&quot;') + '"' + (t === savedVal ? ' selected' : '') + '>' + t + '</option>';
                 }).join('');
-                return '<select class="selMiValue" is="emby-select" style="flex:1;"><option value="">-- Select tag --</option>' + tagOpts + '</select>';
+                return tagTextOpHtml + '<select class="selMiValue" is="emby-select" style="flex:1;"><option value="">-- Select tag --</option>' + tagOpts + '</select>';
             }
-            return '<input class="txtMiValue" is="emby-input" type="text" placeholder="e.g. 4K" value="' + (savedVal || '').replace(/"/g, '&quot;') + '" style="flex:1;" />';
+            return tagTextOpHtml + '<input class="txtMiValue" is="emby-input" type="text" placeholder="e.g. 4K" value="' + (savedVal || '').replace(/"/g, '&quot;') + '" style="flex:1;" />';
         }
         if (MI_DROPDOWN_OPTIONS[prop]) {
             var opts = MI_DROPDOWN_OPTIONS[prop].map(function (pair) {
@@ -597,8 +615,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }
         if (MI_NUMERIC_PROPS.indexOf(prop) >= 0) {
             var ops = ['=', '>', '>=', '<', '<='];
+            var defaultOp = (prop === 'PlayCount') ? '>=' : '<=';
             var opOpts = ops.map(function (o) {
-                return '<option value="' + o + '"' + (o === (savedOp || '<=') ? ' selected' : '') + '>' + o + '</option>';
+                return '<option value="' + o + '"' + (o === (savedOp || defaultOp) ? ' selected' : '') + '>' + o + '</option>';
             }).join('');
             var infoTooltip =
                 '<div class="mi-op-info">' +
@@ -610,11 +629,21 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<tr><td>&lt;</td><td>Less than</td></tr>' +
                 '<tr><td>&lt;=</td><td>Less than or equal</td></tr>' +
                 '</table></div></div>';
+            var numStep = (prop === 'PlayCount') ? '1' : '0.01';
             return userHtml +
                 '<select class="selMiOp" is="emby-select" style="flex:0 0 64px;">' + opOpts + '</select>' +
                 infoTooltip +
-                '<input class="txtMiNum" is="emby-input" type="number" step="0.01" value="' + (savedVal || '') + '" style="flex:1;" />' +
+                '<input class="txtMiNum" is="emby-input" type="number" step="' + numStep + '" value="' + (savedVal || '') + '" style="flex:1;" />' +
                 unitLabel;
+        }
+        if (MI_TEXT_MATCH_PROPS.indexOf(prop) >= 0) {
+            var textOp = savedOp || MI_TEXT_MATCH_DEFAULT[prop] || 'contains';
+            var textOpHtml = '<select class="selMiTextOp" is="emby-select" style="flex:0 0 100px;">' +
+                '<option value="contains"' + (textOp === 'contains' ? ' selected' : '') + '>Contains</option>' +
+                '<option value="exact"' + (textOp === 'exact' ? ' selected' : '') + '>Exact</option>' +
+                '</select>';
+            var ph = MI_TEXT_PLACEHOLDERS[prop] || '';
+            return textOpHtml + '<input class="txtMiValue" is="emby-input" type="text" placeholder="' + ph + '" value="' + (savedVal || '').replace(/"/g, '&quot;') + '" style="flex:1;" />';
         }
         var ph = MI_TEXT_PLACEHOLDERS[prop] || '';
         return '<input class="txtMiValue" is="emby-input" type="text" placeholder="' + ph + '" value="' + (savedVal || '').replace(/"/g, '&quot;') + '" style="flex:1;" />';
@@ -1458,7 +1487,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
 
 
-    function buildHomeSectionFormHtml(savedSettings, defaultSectionType) {
+    function buildHomeSectionFormHtml(savedSettings, defaultSectionType, defaultName) {
         var s = savedSettings || {};
         var html = '';
 
@@ -1481,7 +1510,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         html += '</div></div>';
 
         var customName = (s.CustomName || '').replace(/"/g, '&quot;');
-        html += '<div style="margin-bottom:12px;"><input is="emby-input" type="text" class="hse-field-str" data-field="CustomName" label="Custom Title" value="' + customName + '"/></div>';
+        var customNamePlaceholder = (defaultName || '').replace(/"/g, '&quot;');
+        html += '<div style="margin-bottom:12px;"><input is="emby-input" type="text" class="hse-field-str" data-field="CustomName" label="Custom Title" value="' + customName + '" placeholder="' + customNamePlaceholder + '"/></div>';
 
         var imgTypeVal = s.ImageType || '';
         html += '<div style="margin-bottom:12px;"><label class="selectLabel">Image Type</label>';
@@ -1561,7 +1591,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 tab.querySelector('.hse-user-list-inner').innerHTML = userHtml || '<em style="opacity:0.5">No users found</em>';
 
                 // Structured section settings form
-                tab.querySelector('.hse-fields-inner').innerHTML = buildHomeSectionFormHtml(savedSettings, defaultSectionType);
+                var defaultTagName = row.querySelector('.txtTagName').value || '';
+                tab.querySelector('.hse-fields-inner').innerHTML = buildHomeSectionFormHtml(savedSettings, defaultSectionType, defaultTagName);
                 wireHomeSectionTypeChange(tab);
 
                 // Mark as fully loaded only after form is in DOM so getUiConfig reads form values
@@ -1629,14 +1660,17 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var selOp  = rule.querySelector('.selMiOp');
                     var txtNum = rule.querySelector('.txtMiNum');
                     var selUser = rule.querySelector('.selMiUser');
+                    var selTextOp = rule.querySelector('.selMiTextOp');
                     var val = selVal ? selVal.value : (txtVal ? txtVal.value.trim() : '');
                     var op2 = selOp ? selOp.value : '';
+                    var textMatchOp = selTextOp ? selTextOp.value : '';
                     var num = txtNum ? txtNum.value.trim() : '';
                     var userId = selUser ? selUser.value : '';
+                    var finalOp = op2 || textMatchOp;
                     var finalVal = op2 ? num : val;
                     var notBtn = rule.querySelector('.btnNotToggle');
                     var isNot = notBtn && notBtn.dataset.not === '1';
-                    var crit = buildCriterion(prop, op2, finalVal, userId);
+                    var crit = buildCriterion(prop, finalOp, finalVal, userId);
                     if (crit) criteria.push(isNot ? '!' + crit : crit);
                 });
                 if (criteria.length > 0) miFilters.push({ Operator: operator, Criteria: criteria, GroupOperator: groupOp });
