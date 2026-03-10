@@ -1423,6 +1423,50 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             row.setAttribute('draggable', 'false');
         });
 
+        handle.addEventListener('touchstart', (e) => {
+            if (localStorage.getItem('HomeScreenCompanion_SortBy') !== 'Manual') return;
+            e.preventDefault();
+            var tagContainer = row.closest('#tagListContainer') || row.parentElement;
+            document.querySelectorAll('.tag-body').forEach(b => b.style.display = 'none');
+            document.querySelectorAll('.expand-icon').forEach(i => i.innerText = 'expand_more');
+            row.classList.add('dragging');
+
+            const onTouchMove = (ev) => {
+                ev.preventDefault();
+                const touch = ev.touches[0];
+                const afterEl = getDragAfterElement(tagContainer, touch.clientY);
+                let ph = tagContainer.querySelector('.sort-placeholder');
+                if (!ph) { ph = document.createElement('div'); ph.className = 'sort-placeholder'; }
+                if (afterEl == null) { if (ph.nextElementSibling !== null) tagContainer.appendChild(ph); }
+                else { if (ph.nextElementSibling !== afterEl) tagContainer.insertBefore(ph, afterEl); }
+            };
+
+            const onTouchEnd = () => {
+                document.removeEventListener('touchmove', onTouchMove);
+                document.removeEventListener('touchend', onTouchEnd);
+                document.removeEventListener('touchcancel', onTouchCancel);
+                row.classList.remove('dragging');
+                const ph = tagContainer.querySelector('.sort-placeholder');
+                if (ph) { tagContainer.insertBefore(row, ph); ph.remove(); }
+                row.classList.add('just-moved');
+                setTimeout(() => { row.classList.remove('just-moved'); }, 2000);
+                setTimeout(checkFormState, 0);
+            };
+
+            const onTouchCancel = () => {
+                document.removeEventListener('touchmove', onTouchMove);
+                document.removeEventListener('touchend', onTouchEnd);
+                document.removeEventListener('touchcancel', onTouchCancel);
+                row.classList.remove('dragging');
+                const ph = tagContainer.querySelector('.sort-placeholder');
+                if (ph) ph.remove();
+            };
+
+            document.addEventListener('touchmove', onTouchMove, { passive: false });
+            document.addEventListener('touchend', onTouchEnd);
+            document.addEventListener('touchcancel', onTouchCancel);
+        }, { passive: false });
+
         row.addEventListener('dragstart', (e) => {
             if (localStorage.getItem('HomeScreenCompanion_SortBy') !== 'Manual') { e.preventDefault(); return; }
 
@@ -2262,6 +2306,57 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
             handle.addEventListener('mousedown', function () { row.setAttribute('draggable', 'true'); });
             handle.addEventListener('mouseup',   function () { row.setAttribute('draggable', 'false'); });
+
+            handle.addEventListener('touchstart', function (e) {
+                e.preventDefault();
+                row.classList.add('man-dragging');
+
+                function onTouchMove(ev) {
+                    ev.preventDefault();
+                    var touch = ev.touches[0];
+                    var afterEl = getManDragAfterElement(listEl, touch.clientY);
+                    var ph = listEl.querySelector('.sort-placeholder');
+                    if (!ph) { ph = document.createElement('div'); ph.className = 'sort-placeholder'; }
+                    if (afterEl == null) { if (ph.nextElementSibling !== null) listEl.appendChild(ph); }
+                    else { if (ph.nextElementSibling !== afterEl) listEl.insertBefore(ph, afterEl); }
+                }
+
+                function onTouchEnd() {
+                    document.removeEventListener('touchmove', onTouchMove);
+                    document.removeEventListener('touchend', onTouchEnd);
+                    document.removeEventListener('touchcancel', onTouchCancel);
+                    row.classList.remove('man-dragging');
+                    var ph = listEl.querySelector('.sort-placeholder');
+                    if (ph) { listEl.insertBefore(row, ph); ph.remove(); }
+                    var domRows = [...listEl.querySelectorAll('.man-section-row')];
+                    if (domRows.length > 0) {
+                        var snapshot = currentManageSections.slice();
+                        currentManageSections = domRows.map(function (r) {
+                            return snapshot[parseInt(r.dataset.sectionIndex)];
+                        });
+                        domRows.forEach(function (r, pos) {
+                            r.dataset.sectionIndex = pos;
+                            var delBtn = r.querySelector('.man-btn-delete');
+                            if (delBtn) delBtn.dataset.sectionIndex = pos;
+                        });
+                        var btnApply = container.querySelector('#btnApplyManage');
+                        if (btnApply) { btnApply.disabled = false; checkFormState(); }
+                    }
+                }
+
+                function onTouchCancel() {
+                    document.removeEventListener('touchmove', onTouchMove);
+                    document.removeEventListener('touchend', onTouchEnd);
+                    document.removeEventListener('touchcancel', onTouchCancel);
+                    row.classList.remove('man-dragging');
+                    var ph = listEl.querySelector('.sort-placeholder');
+                    if (ph) ph.remove();
+                }
+
+                document.addEventListener('touchmove', onTouchMove, { passive: false });
+                document.addEventListener('touchend', onTouchEnd);
+                document.addEventListener('touchcancel', onTouchCancel);
+            }, { passive: false });
 
             row.addEventListener('dragstart', function (e) {
                 row.classList.add('man-dragging');
