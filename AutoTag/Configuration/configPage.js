@@ -460,6 +460,113 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }, { offset: Number.NEGATIVE_INFINITY }).element;
     }
 
+    function readRowAsConfig(row) {
+        var entryLabel = row.querySelector('.txtEntryLabel').value;
+        var tagName = row.querySelector('.txtTagName').value || entryLabel;
+        var active = row.querySelector('.chkTagActive').checked;
+        var blInput = row.querySelector('.txtTagBlacklist');
+        var bl = blInput ? blInput.value.split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; }) : [];
+        var enableTag = row.querySelector('.chkEnableTag').checked;
+        var enableColl = row.querySelector('.chkEnableCollection').checked;
+        var overrideWhenActive = !!(row.querySelector('.chkOverrideWhenActive') || {}).checked;
+        var collName = row.querySelector('.txtCollectionName').value;
+        var collDesc = row.querySelector('.txtCollectionDescription') ? row.querySelector('.txtCollectionDescription').value : '';
+        var collPoster = row.querySelector('.hiddenPosterPath') ? row.querySelector('.hiddenPosterPath').value : '';
+        var st = row.querySelector('.selSourceType').value;
+
+        var intervals = [];
+        row.querySelectorAll('.date-row').forEach(function(dr) {
+            var type = dr.querySelector('.selDateType').value;
+            var s = null, e = null, days = '';
+            if (type === 'SpecificDate') {
+                s = dr.querySelector('.txtFullStartDate').value;
+                e = dr.querySelector('.txtFullEndDate').value;
+            } else if (type === 'EveryYear') {
+                var sM = dr.querySelector('.selStartMonth').value, sD = dr.querySelector('.selStartDay').value;
+                var eM = dr.querySelector('.selEndMonth').value, eD = dr.querySelector('.selEndDay').value;
+                s = '2000-' + sM.padStart(2, '0') + '-' + sD.padStart(2, '0');
+                e = '2000-' + eM.padStart(2, '0') + '-' + eD.padStart(2, '0');
+            } else if (type === 'Weekly') {
+                days = Array.from(dr.querySelectorAll('.day-toggle.active')).map(function(b) { return b.dataset.day; }).join(',');
+            }
+            intervals.push({ Type: type, Start: s || null, End: e || null, DayOfWeek: days });
+        });
+
+        var miFilters = [];
+        row.querySelectorAll('.mediainfo-filter-group').forEach(function(group, gi) {
+            var operator = group.dataset.op || 'AND';
+            var groupOp = gi === 0 ? 'AND' : (group.dataset.groupOp || 'AND');
+            var criteria = [];
+            group.querySelectorAll('.mi-rule').forEach(function(rule) {
+                var prop = (rule.querySelector('.selMiProperty') || {}).value || '';
+                var selVal = rule.querySelector('.selMiValue');
+                var txtVal = rule.querySelector('.txtMiValue');
+                var selOp  = rule.querySelector('.selMiOp');
+                var txtNum = rule.querySelector('.txtMiNum');
+                var selUser = rule.querySelector('.selMiUser');
+                var selTextOp = rule.querySelector('.selMiTextOp');
+                var val = selVal ? selVal.value : (txtVal ? txtVal.value.trim() : '');
+                var op2 = selOp ? selOp.value : '';
+                var textMatchOp = selTextOp ? selTextOp.value : '';
+                var num = txtNum ? txtNum.value.trim() : '';
+                var userId = selUser ? selUser.value : '';
+                var finalOp = op2 || textMatchOp;
+                var finalVal = op2 ? num : val;
+                var notBtn = rule.querySelector('.btnNotToggle');
+                var isNot = notBtn && notBtn.dataset.not === '1';
+                var crit = buildCriterion(prop, finalOp, finalVal, userId);
+                if (crit) criteria.push(isNot ? '!' + crit : crit);
+            });
+            if (criteria.length > 0) miFilters.push({ Operator: operator, Criteria: criteria, GroupOperator: groupOp });
+        });
+
+        var hseTab = row.querySelector('.homescreen-tab');
+        var enableHse = hseTab ? !!(hseTab.querySelector('.chkEnableHomeSection') || {}).checked : false;
+        var hseLibraryId = hseTab && hseTab.dataset.hseLoaded === '1'
+            ? ((hseTab.querySelector('.selHseLibrary') || {}).value || 'auto')
+            : decodeURIComponent((hseTab && hseTab.dataset.hseLibraryid) || 'auto');
+        var hseUserIds = hseTab && hseTab.dataset.hseLoaded === '1'
+            ? Array.from(hseTab.querySelectorAll('.chkHseUser:checked')).map(function(c) { return c.value; })
+            : (function() { try { return JSON.parse(decodeURIComponent((hseTab && hseTab.dataset.hseUserids) || '%5B%5D')); } catch(ex) { return []; } })();
+        var hseSettings = {};
+        if (hseTab && hseTab.dataset.hseLoaded === '1') {
+            hseTab.querySelectorAll('[data-field]').forEach(function(el) {
+                var f = el.dataset.field;
+                var v = el.type === 'checkbox' ? String(el.checked) : el.value;
+                if (v !== '') hseSettings[f] = v;
+            });
+            var itemTypes = Array.from(hseTab.querySelectorAll('.chkHseItemType:checked')).map(function(c) { return c.value; });
+            if (itemTypes.length > 0) hseSettings['ItemTypes'] = JSON.stringify(itemTypes);
+        } else {
+            try { hseSettings = JSON.parse(decodeURIComponent((hseTab && hseTab.dataset.hseSettings) || '%7B%7D')); } catch(ex) {}
+        }
+
+        var urls = [];
+        row.querySelectorAll('.url-row').forEach(function(uRow) {
+            urls.push({ url: uRow.querySelector('.txtTagUrl').value.trim(), limit: parseInt(uRow.querySelector('.txtUrlLimit').value, 10) || 0 });
+        });
+        if (urls.length === 0) urls = [{ url: '', limit: 0 }];
+
+        var localSources = [];
+        row.querySelectorAll('.local-row').forEach(function(lRow) {
+            localSources.push({ id: lRow.querySelector('.selLocalSource').value, limit: parseInt(lRow.querySelector('.txtLocalLimit').value, 10) || 0 });
+        });
+
+        var miLimit = parseInt((row.querySelector('.txtMediaInfoLimit') || {}).value, 10) || 0;
+
+        return {
+            Name: entryLabel, Tag: tagName, Active: active, Blacklist: bl, ActiveIntervals: intervals,
+            EnableTag: enableTag, EnableCollection: enableColl, CollectionName: collName,
+            CollectionDescription: collDesc, CollectionPosterPath: collPoster,
+            OverrideWhenActive: overrideWhenActive, SourceType: st,
+            Urls: urls, LocalSources: localSources, Limit: miLimit,
+            MediaInfoFilters: miFilters, MediaInfoConditions: [],
+            EnableHomeSection: enableHse, HomeSectionLibraryId: hseLibraryId,
+            HomeSectionUserIds: hseUserIds, HomeSectionSettings: JSON.stringify(hseSettings),
+            HomeSectionTracked: [], LastModified: new Date().toISOString()
+        };
+    }
+
     var _formAc = null;
 
     var MI_CRITERION_MAP = {
@@ -810,7 +917,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             });
     }
 
-    function renderTagGroup(tagConfig, container, prepend, index, isNew) {
+    function renderTagGroup(tagConfig, container, prepend, index, isNew, afterRef) {
         var isChecked = tagConfig.Active !== false ? 'checked' : '';
         var tagName = tagConfig.Tag || '';
         var labelName = tagConfig.Name || '';
@@ -896,6 +1003,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 <i class="md-icon expand-icon">${initialIcon}</i>
             </div>
             <div class="tag-body" style="${initialStyle} padding:15px; border-top:1px solid rgba(255,255,255,0.1);">
+                <div style="display:flex; justify-content:flex-end; margin-bottom:4px;">
+                    <button type="button" is="emby-button" class="btnDuplicateRow raised" style="background:transparent; color:var(--theme-text-secondary); font-size:0.82em; padding:0 10px; min-width:0; box-shadow:none;" title="Duplicate this source"><i class="md-icon" style="font-size:1em; margin-right:4px;">content_copy</i><span>Duplicate</span></button>
+                </div>
                 <div class="tag-tabs" style="display: flex; gap: 20px; margin-bottom: 15px; border-bottom: 1px solid rgba(255,255,255,0.1);">
                     <div class="tag-tab active" data-tab="general" style="padding: 8px 0; cursor: pointer; font-weight: bold; border-bottom: 2px solid #52B54B;">Source</div>
                     <div class="tag-tab" data-tab="tag" style="padding: 8px 0; cursor: pointer; opacity: 0.6; font-weight: bold; border-bottom: 2px solid transparent;">Tag</div>
@@ -1083,10 +1193,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             </div>
         </div>`;
 
-        if (prepend) container.insertAdjacentHTML('afterbegin', html);
+        if (afterRef) afterRef.insertAdjacentHTML('afterend', html);
+        else if (prepend) container.insertAdjacentHTML('afterbegin', html);
         else container.insertAdjacentHTML('beforeend', html);
 
-        var newRow = prepend ? container.firstElementChild : container.lastElementChild;
+        var newRow = afterRef ? afterRef.nextElementSibling : (prepend ? container.firstElementChild : container.lastElementChild);
         setupRowEvents(newRow);
 
         if (isNew) {
@@ -1466,6 +1577,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             document.addEventListener('touchend', onTouchEnd);
             document.addEventListener('touchcancel', onTouchCancel);
         }, { passive: false });
+
+        row.querySelector('.btnDuplicateRow').addEventListener('click', () => {
+            var config = readRowAsConfig(row);
+            config.Name = (config.Name || config.Tag || 'Source') + ' (copy)';
+            renderTagGroup(config, row.closest('#tagListContainer'), true, undefined, true);
+            applyFilters(view);
+            setTimeout(checkFormState, 0);
+        });
 
         row.addEventListener('dragstart', (e) => {
             if (localStorage.getItem('HomeScreenCompanion_SortBy') !== 'Manual') { e.preventDefault(); return; }
