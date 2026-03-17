@@ -105,4 +105,68 @@ namespace HomeScreenCompanion
         public string Name { get; set; } = "";
         public string Type { get; set; } = "";
     }
+
+    // AI source DTOs
+
+    public class OpenAiResponse
+    {
+        public List<OpenAiChoice> choices { get; set; } = new List<OpenAiChoice>();
+    }
+
+    public class OpenAiChoice
+    {
+        public OpenAiMessage message { get; set; } = new OpenAiMessage();
+    }
+
+    public class OpenAiMessage
+    {
+        public string role { get; set; } = "";
+        public string content { get; set; } = "";
+    }
+
+    public class GeminiResponse
+    {
+        public List<GeminiCandidate> candidates { get; set; } = new List<GeminiCandidate>();
+    }
+
+    public class GeminiCandidate
+    {
+        public GeminiContent content { get; set; } = new GeminiContent();
+    }
+
+    public class GeminiContent
+    {
+        public List<GeminiPart> parts { get; set; } = new List<GeminiPart>();
+    }
+
+    public class GeminiPart
+    {
+        public string text { get; set; } = "";
+    }
+
+    public class AiListItem
+    {
+        public string title { get; set; } = "";
+        public int? year { get; set; }
+        public string imdb_id { get; set; }
+        public string type { get; set; } = "";
+    }
+
+    [MediaBrowser.Model.Services.Route("/HomeScreenCompanion/TestAiSource", "POST")]
+    public class TestAiSourceRequest : MediaBrowser.Model.Services.IReturn<TestAiSourceResponse>
+    {
+        public string Provider { get; set; } = "OpenAI";
+        public string Prompt { get; set; } = "";
+        public bool IncludeRecentlyWatched { get; set; } = false;
+        public string RecentlyWatchedUserId { get; set; } = "";
+        public int RecentlyWatchedCount { get; set; } = 20;
+    }
+
+    public class TestAiSourceResponse
+    {
+        public bool Success { get; set; }
+        public string Message { get; set; } = "";
+        public int Count { get; set; }
+        public List<string> Preview { get; set; } = new List<string>();
+    }
 }

@@ -175,34 +175,38 @@ namespace HomeScreenCompanion
                         .Distinct(StringComparer.OrdinalIgnoreCase);
                     foreach (var c in allPersonCriteria)
                     {
-                        if (personCache.ContainsKey(c)) continue;
                         var p = c.Split(':');
                         if ((p.Length == 2 || (p.Length == 3 && (p[1] == "exact" || p[1] == "contains")))
                             && (p[0] == "Actor" || p[0] == "Director" || p[0] == "Writer")
                             && Enum.TryParse<MediaBrowser.Model.Entities.PersonType>(p[0], out var personTypeEnum))
                         {
                             string matchOp = p.Length == 3 ? p[1] : "exact";
-                            string personName = p.Length == 3 ? p[2].Trim() : p[1].Trim();
+                            string personNameRaw = p.Length == 3 ? p[2].Trim() : p[1].Trim();
                             if (matchOp == "contains") continue;
-                            var personItem = _libraryManager.GetItemList(new InternalItemsQuery
+                            foreach (var singleName in personNameRaw.Split(',').Select(n => n.Trim()).Where(n => n.Length > 0))
                             {
-                                IncludeItemTypes = new[] { "Person" },
-                                Name = personName
-                            }).FirstOrDefault();
-                            var personTypes = anyEpisodePersonCriteria && p[0] == "Actor"
-                                ? new[] { personTypeEnum, MediaBrowser.Model.Entities.PersonType.GuestStar }
-                                : new[] { personTypeEnum };
-                            personCache[c] = personItem == null ? new HashSet<long>() :
-                                _libraryManager.GetItemList(new InternalItemsQuery
+                                string indivKey = p.Length == 3 ? $"{p[0]}:{p[1]}:{singleName}" : $"{p[0]}:{singleName}";
+                                if (personCache.ContainsKey(indivKey)) continue;
+                                var personItem = _libraryManager.GetItemList(new InternalItemsQuery
                                 {
-                                    PersonIds = new[] { personItem.InternalId },
-                                    PersonTypes = personTypes,
-                                    IncludeItemTypes = anyEpisodePersonCriteria
-                                        ? new[] { "Movie", "Series", "Episode" }
-                                        : new[] { "Movie", "Series" },
-                                    Recursive = true,
-                                    IsVirtualItem = false
-                                }).Select(x => x.InternalId).ToHashSet();
+                                    IncludeItemTypes = new[] { "Person" },
+                                    Name = singleName
+                                }).FirstOrDefault();
+                                var personTypes = anyEpisodePersonCriteria && p[0] == "Actor"
+                                    ? new[] { personTypeEnum, MediaBrowser.Model.Entities.PersonType.GuestStar }
+                                    : new[] { personTypeEnum };
+                                personCache[indivKey] = personItem == null ? new HashSet<long>() :
+                                    _libraryManager.GetItemList(new InternalItemsQuery
+                                    {
+                                        PersonIds = new[] { personItem.InternalId },
+                                        PersonTypes = personTypes,
+                                        IncludeItemTypes = anyEpisodePersonCriteria
+                                            ? new[] { "Movie", "Series", "Episode" }
+                                            : new[] { "Movie", "Series" },
+                                        Recursive = true,
+                                        IsVirtualItem = false
+                                    }).Select(x => x.InternalId).ToHashSet();
+                            }
                         }
                     }
                 }
@@ -495,6 +499,65 @@ namespace HomeScreenCompanion
                                     }
                                 }
                             }
+                        }
+                        else if (tagConfig.SourceType == "AI")
+                        {
+                            var recentlyWatchedContext = BuildRecentlyWatchedContext(tagConfig);
+                            var aiItems = await fetcher.FetchAiList(
+                                tagConfig.AiProvider,
+                                tagConfig.AiPrompt,
+                                config.OpenAiApiKey,
+                                config.GeminiApiKey,
+                                recentlyWatchedContext,
+                                effectiveLimit,
+                                cancellationToken);
+
+                            gs.ListCount = aiItems.Count;
+
+                            foreach (var aiItem in aiItems)
+                            {
+                                if (string.IsNullOrWhiteSpace(aiItem.title)) continue;
+
+                                if (!string.IsNullOrEmpty(aiItem.imdb_id))
+                                {
+                                    var imdbId = aiItem.imdb_id.Trim();
+                                    if (blacklist.Contains(imdbId))
+                                    {
+                                        if (debug) LogDebug($"  Blacklisted: {aiItem.title} ({imdbId})");
+                                        continue;
+                                    }
+
+                                    if (tagConfig.EnableTag && !tagConfig.OnlyCollection)
+                                        TagCacheManager.Instance.AddToCache($"imdb_{imdbId}", tagName);
+
+                                    if (imdbLookup.TryGetValue(imdbId, out var localItems))
+                                    {
+                                        foreach (var localItem in localItems)
+                                        {
+                                            if (!matchedLocalItems.Contains(localItem))
+                                                matchedLocalItems.Add(localItem);
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    // Fallback: title+year match when AI didn't return an IMDB ID
+                                    var titleMatches = FindByTitleAndYear(allItems, aiItem.title, aiItem.year);
+                                    foreach (var localItem in titleMatches)
+                                    {
+                                        var imdb = localItem.GetProviderId("Imdb");
+                                        if (!string.IsNullOrEmpty(imdb) && blacklist.Contains(imdb))
+                                        {
+                                            if (debug) LogDebug($"  Blacklisted: {localItem.Name} ({imdb})");
+                                            continue;
+                                        }
+                                        if (!matchedLocalItems.Contains(localItem))
+                                            matchedLocalItems.Add(localItem);
+                                    }
+                                }
+                            }
+
+                            if (debug) LogDebug($"  AI returned {gs.ListCount} items  ·  {matchedLocalItems.Count} matched in library");
                         }
 
                         gs.MatchCount = matchedLocalItems.Count;
@@ -910,25 +973,29 @@ namespace HomeScreenCompanion
                     .Distinct(StringComparer.OrdinalIgnoreCase);
                 foreach (var c in allCriteria)
                 {
-                    if (personCache.ContainsKey(c)) continue;
                     var p = c.Split(':');
                     if ((p.Length == 2 || (p.Length == 3 && (p[1] == "exact" || p[1] == "contains")))
                         && (p[0] == "Actor" || p[0] == "Director" || p[0] == "Writer")
                         && Enum.TryParse<MediaBrowser.Model.Entities.PersonType>(p[0], out var personTypeEnum))
                     {
                         string matchOp = p.Length == 3 ? p[1] : "exact";
-                        string personName = p.Length == 3 ? p[2].Trim() : p[1].Trim();
+                        string personNameRaw = p.Length == 3 ? p[2].Trim() : p[1].Trim();
                         if (matchOp == "contains") continue;
-                        var personItem = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Person" }, Name = personName }).FirstOrDefault();
-                        personCache[c] = personItem == null ? new HashSet<long>() :
-                            _libraryManager.GetItemList(new InternalItemsQuery
-                            {
-                                PersonIds = new[] { personItem.InternalId },
-                                PersonTypes = new[] { personTypeEnum },
-                                IncludeItemTypes = new[] { "Movie", "Series" },
-                                Recursive = true,
-                                IsVirtualItem = false
-                            }).Select(x => x.InternalId).ToHashSet();
+                        foreach (var singleName in personNameRaw.Split(',').Select(n => n.Trim()).Where(n => n.Length > 0))
+                        {
+                            string indivKey = p.Length == 3 ? $"{p[0]}:{p[1]}:{singleName}" : $"{p[0]}:{singleName}";
+                            if (personCache.ContainsKey(indivKey)) continue;
+                            var personItem = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Person" }, Name = singleName }).FirstOrDefault();
+                            personCache[indivKey] = personItem == null ? new HashSet<long>() :
+                                _libraryManager.GetItemList(new InternalItemsQuery
+                                {
+                                    PersonIds = new[] { personItem.InternalId },
+                                    PersonTypes = new[] { personTypeEnum },
+                                    IncludeItemTypes = new[] { "Movie", "Series" },
+                                    Recursive = true,
+                                    IsVirtualItem = false
+                                }).Select(x => x.InternalId).ToHashSet();
+                        }
                     }
                 }
                 foreach (var item in allItems)
@@ -1021,6 +1088,46 @@ namespace HomeScreenCompanion
                         {
                             matchedLocalItems.Add(item);
                             if (effectiveLimit < 10000 && matchedLocalItems.Count >= effectiveLimit) break;
+                        }
+                    }
+                }
+                else if (tagConfig.SourceType == "AI")
+                {
+                    var recentlyWatchedContext = BuildRecentlyWatchedContext(tagConfig);
+                    var aiItems = await fetcher.FetchAiList(
+                        tagConfig.AiProvider,
+                        tagConfig.AiPrompt,
+                        config.OpenAiApiKey,
+                        config.GeminiApiKey,
+                        recentlyWatchedContext,
+                        effectiveLimit,
+                        cancellationToken);
+
+                    _listCount = aiItems.Count;
+
+                    foreach (var aiItem in aiItems)
+                    {
+                        if (string.IsNullOrWhiteSpace(aiItem.title)) continue;
+
+                        if (!string.IsNullOrEmpty(aiItem.imdb_id))
+                        {
+                            var imdbId = aiItem.imdb_id.Trim();
+                            if (blacklist.Contains(imdbId)) continue;
+                            if (tagConfig.EnableTag && !tagConfig.OnlyCollection)
+                                TagCacheManager.Instance.AddToCache($"imdb_{imdbId}", tagName);
+                            if (imdbLookup.TryGetValue(imdbId, out var localItems))
+                                foreach (var localItem in localItems)
+                                    if (!matchedLocalItems.Contains(localItem)) matchedLocalItems.Add(localItem);
+                        }
+                        else
+                        {
+                            var titleMatches = FindByTitleAndYear(allItems, aiItem.title, aiItem.year);
+                            foreach (var localItem in titleMatches)
+                            {
+                                var imdb = localItem.GetProviderId("Imdb");
+                                if (!string.IsNullOrEmpty(imdb) && blacklist.Contains(imdb)) continue;
+                                if (!matchedLocalItems.Contains(localItem)) matchedLocalItems.Add(localItem);
+                            }
                         }
                     }
                 }
@@ -1780,20 +1887,20 @@ namespace HomeScreenCompanion
                 var prop = parts[0]; var val = parts[1].Trim();
                 return prop switch
                 {
-                    "Studio"        => MatchesAny(item.Studios, val),
-                    "Genre"         => MatchesAny(item.Genres, val),
-                    "Actor"         => personCache != null && personCache.TryGetValue(cond, out var aIds) && aIds.Contains(item.InternalId),
-                    "Director"      => personCache != null && personCache.TryGetValue(cond, out var dIds) && dIds.Contains(item.InternalId),
-                    "Writer"        => personCache != null && personCache.TryGetValue(cond, out var wIds) && wIds.Contains(item.InternalId),
-                    "Title"         => GetTitleName(item)?.IndexOf(val, StringComparison.OrdinalIgnoreCase) >= 0,
-                    "EpisodeTitle"  => MatchesEpisodeTitle(item, val, false),
-                    "Overview"      => item.Overview?.IndexOf(val, StringComparison.OrdinalIgnoreCase) >= 0,
-                    "ContentRating" => string.Equals(item.OfficialRating, val, StringComparison.OrdinalIgnoreCase),
-                    "AudioLanguage" => audioLanguages != null && audioLanguages.Contains(val),
+                    "Studio"        => SplitCommaValues(val).Any(v => MatchesAny(item.Studios, v)),
+                    "Genre"         => SplitCommaValues(val).Any(v => MatchesAny(item.Genres, v)),
+                    "Actor"         => personCache != null && SplitCommaValues(val).Any(n => personCache.TryGetValue("Actor:" + n, out var aIds) && aIds.Contains(item.InternalId)),
+                    "Director"      => personCache != null && SplitCommaValues(val).Any(n => personCache.TryGetValue("Director:" + n, out var dIds) && dIds.Contains(item.InternalId)),
+                    "Writer"        => personCache != null && SplitCommaValues(val).Any(n => personCache.TryGetValue("Writer:" + n, out var wIds) && wIds.Contains(item.InternalId)),
+                    "Title"         => SplitCommaValues(val).Any(v => GetTitleName(item)?.IndexOf(v, StringComparison.OrdinalIgnoreCase) >= 0),
+                    "EpisodeTitle"  => SplitCommaValues(val).Any(v => MatchesEpisodeTitle(item, v, false)),
+                    "Overview"      => SplitCommaValues(val).Any(v => item.Overview?.IndexOf(v, StringComparison.OrdinalIgnoreCase) >= 0),
+                    "ContentRating" => SplitCommaValues(val).Any(v => string.Equals(item.OfficialRating, v, StringComparison.OrdinalIgnoreCase)),
+                    "AudioLanguage" => audioLanguages != null && SplitCommaValues(val).Any(v => audioLanguages.Contains(v)),
                     "MediaType"     => val.Equals("EpisodeIncludeSeries", StringComparison.OrdinalIgnoreCase)
                                         ? item.GetType().Name.Contains("Episode")
                                         : string.Equals(mediaType, val, StringComparison.OrdinalIgnoreCase),
-                    "Tag"           => itemTags != null && MatchesAny(itemTags, val),
+                    "Tag"           => itemTags != null && SplitCommaValues(val).Any(v => MatchesAny(itemTags, v)),
                     "ImdbId"        => MatchesImdbId(item.GetProviderId("Imdb"), val),
                     _ => false
                 };
@@ -1899,27 +2006,27 @@ namespace HomeScreenCompanion
                 bool exact = tOp == "exact";
                 return tProp switch
                 {
-                    "Title"         => exact ? string.Equals(GetTitleName(item), tVal, StringComparison.OrdinalIgnoreCase)
-                                             : GetTitleName(item)?.IndexOf(tVal, StringComparison.OrdinalIgnoreCase) >= 0,
-                    "EpisodeTitle"  => MatchesEpisodeTitle(item, tVal, exact),
-                    "Overview"      => exact ? string.Equals(item.Overview, tVal, StringComparison.OrdinalIgnoreCase)
-                                             : item.Overview?.IndexOf(tVal, StringComparison.OrdinalIgnoreCase) >= 0,
-                    "Studio"        => exact ? item.Studios != null && item.Studios.Any(s => string.Equals(s, tVal, StringComparison.OrdinalIgnoreCase))
-                                             : MatchesAny(item.Studios, tVal),
-                    "Genre"         => exact ? item.Genres != null && item.Genres.Any(g => string.Equals(g, tVal, StringComparison.OrdinalIgnoreCase))
-                                             : MatchesAny(item.Genres, tVal),
-                    "Tag"           => exact ? itemTags != null && itemTags.Any(t => string.Equals(t, tVal, StringComparison.OrdinalIgnoreCase))
-                                             : itemTags != null && MatchesAny(itemTags, tVal),
-                    "ContentRating" => exact ? string.Equals(item.OfficialRating, tVal, StringComparison.OrdinalIgnoreCase)
-                                             : item.OfficialRating?.IndexOf(tVal, StringComparison.OrdinalIgnoreCase) >= 0,
-                    "AudioLanguage" => exact ? audioLanguages != null && audioLanguages.Contains(tVal)
-                                             : audioLanguages != null && audioLanguages.Any(l => l.IndexOf(tVal, StringComparison.OrdinalIgnoreCase) >= 0),
-                    "Actor"         => exact ? personCache != null && personCache.TryGetValue(c, out var aIds3) && aIds3.Contains(item.InternalId)
-                                             : MatchesPerson(item, tVal, "Actor"),
-                    "Director"      => exact ? personCache != null && personCache.TryGetValue(c, out var dIds3) && dIds3.Contains(item.InternalId)
-                                             : MatchesPerson(item, tVal, "Director"),
-                    "Writer"        => exact ? personCache != null && personCache.TryGetValue(c, out var wIds3) && wIds3.Contains(item.InternalId)
-                                             : MatchesPerson(item, tVal, "Writer"),
+                    "Title"         => exact ? SplitCommaValues(tVal).Any(v => string.Equals(GetTitleName(item), v, StringComparison.OrdinalIgnoreCase))
+                                             : SplitCommaValues(tVal).Any(v => GetTitleName(item)?.IndexOf(v, StringComparison.OrdinalIgnoreCase) >= 0),
+                    "EpisodeTitle"  => SplitCommaValues(tVal).Any(v => MatchesEpisodeTitle(item, v, exact)),
+                    "Overview"      => exact ? SplitCommaValues(tVal).Any(v => string.Equals(item.Overview, v, StringComparison.OrdinalIgnoreCase))
+                                             : SplitCommaValues(tVal).Any(v => item.Overview?.IndexOf(v, StringComparison.OrdinalIgnoreCase) >= 0),
+                    "Studio"        => exact ? item.Studios != null && SplitCommaValues(tVal).Any(v => item.Studios.Any(s => string.Equals(s, v, StringComparison.OrdinalIgnoreCase)))
+                                             : SplitCommaValues(tVal).Any(v => MatchesAny(item.Studios, v)),
+                    "Genre"         => exact ? item.Genres != null && SplitCommaValues(tVal).Any(v => item.Genres.Any(g => string.Equals(g, v, StringComparison.OrdinalIgnoreCase)))
+                                             : SplitCommaValues(tVal).Any(v => MatchesAny(item.Genres, v)),
+                    "Tag"           => exact ? itemTags != null && SplitCommaValues(tVal).Any(v => itemTags.Any(t => string.Equals(t, v, StringComparison.OrdinalIgnoreCase)))
+                                             : itemTags != null && SplitCommaValues(tVal).Any(v => MatchesAny(itemTags, v)),
+                    "ContentRating" => exact ? SplitCommaValues(tVal).Any(v => string.Equals(item.OfficialRating, v, StringComparison.OrdinalIgnoreCase))
+                                             : SplitCommaValues(tVal).Any(v => item.OfficialRating?.IndexOf(v, StringComparison.OrdinalIgnoreCase) >= 0),
+                    "AudioLanguage" => exact ? audioLanguages != null && SplitCommaValues(tVal).Any(v => audioLanguages.Contains(v))
+                                             : audioLanguages != null && SplitCommaValues(tVal).Any(v => audioLanguages.Any(l => l.IndexOf(v, StringComparison.OrdinalIgnoreCase) >= 0)),
+                    "Actor"         => exact ? personCache != null && SplitCommaValues(tVal).Any(n => personCache.TryGetValue("Actor:exact:" + n, out var aIds3) && aIds3.Contains(item.InternalId))
+                                             : SplitCommaValues(tVal).Any(n => MatchesPerson(item, n, "Actor")),
+                    "Director"      => exact ? personCache != null && SplitCommaValues(tVal).Any(n => personCache.TryGetValue("Director:exact:" + n, out var dIds3) && dIds3.Contains(item.InternalId))
+                                             : SplitCommaValues(tVal).Any(n => MatchesPerson(item, n, "Director")),
+                    "Writer"        => exact ? personCache != null && SplitCommaValues(tVal).Any(n => personCache.TryGetValue("Writer:exact:" + n, out var wIds3) && wIds3.Contains(item.InternalId))
+                                             : SplitCommaValues(tVal).Any(n => MatchesPerson(item, n, "Writer")),
                     _ => false
                 };
             }
@@ -1957,6 +2064,9 @@ namespace HomeScreenCompanion
         private static bool MatchesAny(string[] values, string search) =>
             values != null && values.Any(v =>
                 v.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0);
+
+        private static string[] SplitCommaValues(string val) =>
+            val.Split(',').Select(v => v.Trim()).Where(v => v.Length > 0).ToArray();
 
         private static bool MatchesImdbId(string? itemImdb, string val) =>
             !string.IsNullOrEmpty(itemImdb) &&
@@ -2081,6 +2191,62 @@ namespace HomeScreenCompanion
         {
             var msg = $"[{DateTime.Now:HH:mm:ss}] [DEBUG] {message}";
             lock (ExecutionLog) { ExecutionLog.Add(msg); }
+        }
+
+        private string BuildRecentlyWatchedContext(TagConfig tagConfig)
+        {
+            if (!tagConfig.AiIncludeRecentlyWatched || string.IsNullOrWhiteSpace(tagConfig.AiRecentlyWatchedUserId))
+                return string.Empty;
+
+            try
+            {
+                if (!Guid.TryParse(tagConfig.AiRecentlyWatchedUserId, out var userGuid)) return string.Empty;
+                var user = _userManager.GetUserById(userGuid);
+                if (user == null) return string.Empty;
+
+                int maxCount = tagConfig.AiRecentlyWatchedCount > 0 ? tagConfig.AiRecentlyWatchedCount : 20;
+
+                var allLibraryItems = _libraryManager.GetItemList(new InternalItemsQuery
+                {
+                    IncludeItemTypes = new[] { "Movie", "Series" },
+                    Recursive = true,
+                    IsVirtualItem = false
+                });
+
+                var playedItems = allLibraryItems
+                    .Select(item => new { item, ud = _userDataManager?.GetUserData(user, item) })
+                    .Where(x => x.ud?.Played == true)
+                    .OrderByDescending(x => x.ud?.LastPlayedDate ?? DateTimeOffset.MinValue)
+                    .Take(maxCount)
+                    .Select(x => x.item)
+                    .ToList();
+
+                if (playedItems.Count == 0) return string.Empty;
+
+                var sb = new System.Text.StringBuilder("The user has recently watched these movies and TV shows (most recent first):\n");
+                foreach (var item in playedItems)
+                {
+                    var yearStr = item.ProductionYear.HasValue ? $" ({item.ProductionYear})" : "";
+                    var typeStr = item.GetType().Name.Contains("Series") ? "show" : "movie";
+                    sb.AppendLine($"- {item.Name}{yearStr} [{typeStr}]");
+                }
+                sb.AppendLine("Use this to personalize your recommendations.");
+                return sb.ToString();
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        private static List<BaseItem> FindByTitleAndYear(List<BaseItem> allItems, string title, int? year)
+        {
+            if (string.IsNullOrWhiteSpace(title)) return new List<BaseItem>();
+            return allItems
+                .Where(i =>
+                    string.Equals(i.Name, title, StringComparison.OrdinalIgnoreCase)
+                    && (year == null || !i.ProductionYear.HasValue || i.ProductionYear == year))
+                .ToList();
         }
 
         private List<string> LoadFileHistory(string filename)

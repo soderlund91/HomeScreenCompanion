@@ -684,6 +684,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
         var miLimit = parseInt((row.querySelector('.txtMediaInfoLimit') || {}).value, 10) || 0;
 
+        var aiProvider = (row.querySelector('.selAiProvider') || {}).value || 'OpenAI';
+        var aiPrompt = (row.querySelector('.txtAiPrompt') || {}).value || '';
+        var aiIncludeRecentlyWatched = !!(row.querySelector('.chkAiRecentlyWatched') || {}).checked;
+        var aiRecentlyWatchedUserId = (row.querySelector('.selAiWatchedUser') || {}).value || '';
+        var aiRecentlyWatchedCount = parseInt((row.querySelector('.txtAiWatchedCount') || {}).value, 10) || 20;
+
         return {
             Name: entryLabel, Tag: tagName, Active: active, Blacklist: bl, ActiveIntervals: intervals,
             EnableTag: enableTag, EnableCollection: enableColl, CollectionName: collName,
@@ -693,7 +699,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             MediaInfoFilters: miFilters, MediaInfoConditions: [],
             EnableHomeSection: enableHse, HomeSectionLibraryId: hseLibraryId,
             HomeSectionUserIds: hseUserIds, HomeSectionSettings: JSON.stringify(hseSettings),
-            HomeSectionTracked: [], LastModified: new Date().toISOString()
+            HomeSectionTracked: [], LastModified: new Date().toISOString(),
+            AiProvider: aiProvider, AiPrompt: aiPrompt,
+            AiIncludeRecentlyWatched: aiIncludeRecentlyWatched,
+            AiRecentlyWatchedUserId: aiRecentlyWatchedUserId,
+            AiRecentlyWatchedCount: aiRecentlyWatchedCount
         };
     }
 
@@ -797,10 +807,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         ]}
     ];
     var MI_TEXT_PLACEHOLDERS = {
-        Title: 'e.g. Batman', EpisodeTitle: 'e.g. Pilot', Overview: 'e.g. heist, time travel',
-        Studio: 'e.g. Warner', Genre: 'e.g. Action',
-        Actor: 'e.g. Tom Hanks', Director: 'e.g. Nolan', Writer: 'e.g. Tarantino',
-        ContentRating: 'e.g. PG-13', ImdbId: 'e.g. tt1234567, tt7654321'
+        Title: 'e.g. Batman, Dark Knight', EpisodeTitle: 'e.g. Pilot, Finale', Overview: 'e.g. heist, time travel',
+        Studio: 'e.g. Warner, Netflix, HBO', Genre: 'e.g. Action, Thriller',
+        Actor: 'e.g. Tom Hanks, Idris Elba', Director: 'e.g. Nolan, Tarantino', Writer: 'e.g. Tarantino, Nolan',
+        ContentRating: 'e.g. PG-13, R', AudioLanguage: 'e.g. eng, swe', ImdbId: 'e.g. tt1234567, tt7654321'
     };
 
     function propertyOptionsHtml(selected) {
@@ -899,6 +909,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         return '<input class="txtMiValue" is="emby-input" type="text" placeholder="' + ph + '" value="' + (savedVal || '').replace(/"/g, '&quot;') + '" style="flex:1;" />';
     }
 
+    function getMiHintHtml(prop) {
+        if (MI_TEXT_MATCH_PROPS.indexOf(prop) < 0 && prop !== 'ImdbId') return '<div class="mi-rule-hint"></div>';
+        var example = MI_TEXT_PLACEHOLDERS[prop] || 'Value1, Value2';
+        return '<div class="mi-rule-hint" style="font-size:0.75em; opacity:0.5; margin-top:2px; padding-right:32px; text-align:right;">Comma-separated — ' + example + '</div>';
+    }
+
     function getMediaInfoRuleHtml(criterion) {
         var parsed = parseCriterion(criterion || '');
         var prop = parsed.prop || 'Resolution';
@@ -906,13 +922,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var notBg = notActive ? 'rgba(200,50,50,0.75)' : 'transparent';
         var notColor = notActive ? '#fff' : '';
         var notBorder = notActive ? '1px solid rgba(200,50,50,0.6)' : '1px solid rgba(128,128,128,0.4)';
-        return '<div class="mi-rule" style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">' +
+        return '<div class="mi-rule" style="margin-bottom:6px;">' +
+            '<div style="display:flex; gap:6px; align-items:center;">' +
             '<button type="button" class="btnNotToggle" data-not="' + (notActive ? '1' : '0') + '"' +
             ' style="border:' + notBorder + '; border-radius:10px; padding:3px 10px; font-size:0.78em; font-weight:bold; cursor:pointer; letter-spacing:0.5px; flex-shrink:0;' +
             ' background:' + notBg + '; color:' + notColor + ';" title="Negate this rule">NOT</button>' +
             '<select class="selMiProperty" is="emby-select" style="flex:0 0 155px;">' + propertyOptionsHtml(prop) + '</select>' +
             '<div class="mi-value-wrapper" style="flex:1; display:flex; gap:6px; align-items:center;">' + getMiValueHtml(prop, parsed.op, parsed.val, parsed.userId || '') + '</div>' +
             '<button type="button" class="btnRemoveMiRule" style="background:transparent; border:none; color:#cc3333; cursor:pointer; padding:2px 8px; font-size:1em; flex-shrink:0;" title="Remove rule">✕</button>' +
+            '</div>' +
+            getMiHintHtml(prop) +
             '</div>';
     }
 
@@ -1065,10 +1084,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
     function getSourceBadgeHtml(st) {
         var map = {
-            'External':        { icon: 'language',      title: 'External List' },
+            'External':        { icon: 'language',       title: 'External List' },
             'LocalCollection': { icon: 'folder_special', title: 'Local Collection' },
             'LocalPlaylist':   { icon: 'playlist_play',  title: 'Local Playlist' },
-            'MediaInfo':       { icon: 'tune',           title: 'Smart Playlist' }
+            'MediaInfo':       { icon: 'tune',           title: 'Smart Playlist' },
+            'AI':              { icon: 'auto_awesome',   title: 'AI created lists' }
         };
         var e = map[st];
         if (!e) return '';
@@ -1186,6 +1206,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <option value="LocalCollection" ${sourceType === 'LocalCollection' ? 'selected' : ''}>Local Collection</option>
                             <option value="LocalPlaylist" ${sourceType === 'LocalPlaylist' ? 'selected' : ''}>Local Playlist</option>
                             <option value="MediaInfo" ${sourceType === 'MediaInfo' ? 'selected' : ''}>Local Media Information (Smart Playlist)</option>
+                            <option value="AI" ${sourceType === 'AI' ? 'selected' : ''}>AI created lists</option>
                         </select>
                     </div>
 
@@ -1242,6 +1263,54 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             </div>
                         </div>
                     </div>
+
+                    <div class="source-ai-container" style="display: ${sourceType === 'AI' ? 'block' : 'none'};">
+                        <div style="margin-bottom: 15px;">
+                            <label class="selectLabel">AI Provider</label>
+                            <select is="emby-select" class="selAiProvider" style="width:100%;">
+                                <option value="OpenAI" ${(tagConfig.AiProvider || 'OpenAI') === 'OpenAI' ? 'selected' : ''}>OpenAI (gpt-4o-mini)</option>
+                                <option value="Gemini" ${(tagConfig.AiProvider || 'OpenAI') === 'Gemini' ? 'selected' : ''}>Google Gemini (gemini-1.5-flash)</option>
+                            </select>
+                        </div>
+
+                        <div class="inputContainer" style="margin-bottom:15px;">
+                            <textarea is="emby-textarea" class="txtAiPrompt" rows="3"
+                                label="Prompt"
+                                style="width:100%; resize:vertical; box-sizing:border-box;"
+                                placeholder="e.g. Give me the best thriller movies from the 2000s">${tagConfig.AiPrompt || ''}</textarea>
+                            <div class="fieldDescription">Write your intent. The system will automatically format the output as a structured movie/show list. You don't need to specify a format.</div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:12px;">
+                            <label>
+                                <input type="checkbox" is="emby-checkbox" class="chkAiRecentlyWatched" ${tagConfig.AiIncludeRecentlyWatched ? 'checked' : ''} />
+                                <span>Include recently watched for personalization</span>
+                            </label>
+                            <div class="fieldDescription">Prepends the selected user's watch history to the AI prompt, enabling "Recommended for you" style lists.</div>
+                        </div>
+
+                        <div class="ai-recently-watched-options" style="display: ${tagConfig.AiIncludeRecentlyWatched ? 'block' : 'none'}; margin-top:10px; padding-left:10px; border-left:2px solid rgba(128,128,128,0.3);">
+                            <div style="margin-bottom:10px;">
+                                <label class="selectLabel">User for watch history</label>
+                                <select is="emby-select" class="selAiWatchedUser" style="width:100%;">
+                                    <option value="">-- Select user --</option>
+                                    ${(_miUsers || []).map(function(u) { return '<option value="' + u.Id + '"' + (u.Id === (tagConfig.AiRecentlyWatchedUserId || '') ? ' selected' : '') + '>' + u.Name + '</option>'; }).join('')}
+                                </select>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                                <label style="font-size:0.9em; white-space:nowrap; margin:0;">Recent items to include</label>
+                                <input is="emby-input" class="txtAiWatchedCount" type="number" value="${tagConfig.AiRecentlyWatchedCount || 20}" min="5" max="100" style="width:80px;" />
+                            </div>
+                        </div>
+
+                        <div style="margin-top:15px;">
+                            <button type="button" is="emby-button" class="raised btnTestAiSource btn-neutral" style="background:transparent; border:1px solid rgba(128,128,128,0.4); color:var(--theme-text-secondary);">
+                                <i class="md-icon" style="margin-right:5px;">science</i>Test AI Source
+                            </button>
+                            <span class="ai-test-result" style="margin-left:10px; font-size:0.85em; opacity:0.7;"></span>
+                        </div>
+                    </div>
+
                 </div>
 
             <div class="tab-content tagname-tab" style="display:none;">
@@ -1432,6 +1501,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 row.querySelector('.source-external-container').style.display = type === 'External' ? 'block' : 'none';
                 row.querySelector('.source-local-container').style.display = (type === 'LocalCollection' || type === 'LocalPlaylist') ? 'block' : 'none';
                 row.querySelector('.source-mediainfo-container').style.display = type === 'MediaInfo' ? 'block' : 'none';
+                row.querySelector('.source-ai-container').style.display = type === 'AI' ? 'block' : 'none';
 
                 if (type === 'MediaInfo') {
                     var miList = row.querySelector('.mediainfo-filter-list');
@@ -1448,8 +1518,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
             
             if (e.target.classList.contains('selMiProperty')) {
-                var wrapper = e.target.closest('.mi-rule').querySelector('.mi-value-wrapper');
-                wrapper.innerHTML = getMiValueHtml(e.target.value, '', '');
+                var miRule = e.target.closest('.mi-rule');
+                miRule.querySelector('.mi-value-wrapper').innerHTML = getMiValueHtml(e.target.value, '', '');
+                var existingHint = miRule.querySelector('.mi-rule-hint');
+                if (existingHint) existingHint.outerHTML = getMiHintHtml(e.target.value);
             }
             if (e.target.classList.contains('selMiValue')) {
                 var miRule = e.target.closest('.mi-rule');
@@ -1532,6 +1604,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             if (hseDetails) hseDetails.style.display = this.checked ? 'block' : 'none';
             updateBadges(row);
         });
+
+        var chkAiWatched = row.querySelector('.chkAiRecentlyWatched');
+        if (chkAiWatched) {
+            chkAiWatched.addEventListener('change', function () {
+                var opts = row.querySelector('.ai-recently-watched-options');
+                if (opts) opts.style.display = this.checked ? 'block' : 'none';
+            });
+        }
 
         row.querySelector('.btnAddUrl').addEventListener('click', () => {
             row.querySelector('.url-list-container').insertAdjacentHTML('beforeend', getUrlRowHtml('', 0));
@@ -1755,6 +1835,44 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/TestUrl", { Url: url, Limit: 1000 })).then(result => {
                     window.Dashboard.alert(result.Message);
                 }).finally(() => btnTest.disabled = false);
+            }
+
+            var btnTestAi = e.target.closest('.btnTestAiSource');
+            if (btnTestAi) {
+                var aiContainer = btnTestAi.closest('.source-ai-container');
+                var aiProvider = (aiContainer.querySelector('.selAiProvider') || {}).value || 'OpenAI';
+                var aiPrompt = ((aiContainer.querySelector('.txtAiPrompt') || {}).value || '').trim();
+                var aiIncludeWatched = !!(aiContainer.querySelector('.chkAiRecentlyWatched') || {}).checked;
+                var aiWatchedUserId = aiIncludeWatched ? ((aiContainer.querySelector('.selAiWatchedUser') || {}).value || '') : '';
+                var aiWatchedCount = parseInt(((aiContainer.querySelector('.txtAiWatchedCount') || {}).value || '20'), 10) || 20;
+                var resultSpan = aiContainer.querySelector('.ai-test-result');
+
+                if (!aiPrompt) { if (resultSpan) resultSpan.textContent = 'Please enter a prompt first.'; return; }
+
+                btnTestAi.disabled = true;
+                if (resultSpan) resultSpan.textContent = 'Testing...';
+
+                fetch(window.ApiClient.getUrl('HomeScreenCompanion/TestAiSource'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-MediaBrowser-Token': window.ApiClient.accessToken() },
+                    body: JSON.stringify({
+                        Provider: aiProvider,
+                        Prompt: aiPrompt,
+                        IncludeRecentlyWatched: aiIncludeWatched,
+                        RecentlyWatchedUserId: aiWatchedUserId,
+                        RecentlyWatchedCount: aiWatchedCount
+                    })
+                }).then(function(r) { return r.json(); })
+                .then(function(result) {
+                    if (resultSpan) resultSpan.textContent = result.Success ? result.Message : ('Failed: ' + result.Message);
+                    if (result.Success && result.Preview && result.Preview.length > 0) {
+                        window.Dashboard.alert('AI returned ' + result.Count + ' items:\n\n' + result.Preview.join('\n'));
+                    } else if (!result.Success) {
+                        window.Dashboard.alert('AI test failed:\n' + result.Message);
+                    }
+                }).catch(function(err) {
+                    if (resultSpan) resultSpan.textContent = 'Error: ' + err.message;
+                }).finally(function() { btnTestAi.disabled = false; });
             }
         });
 
@@ -2279,6 +2397,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 if (forComparison && !pushedLocal) {
                     flatTags.push(Object.assign({}, baseTag, { Url: "", Limit: 0, LocalSourceId: "" }));
                 }
+            } else if (st === 'AI') {
+                var aiLimitVal = parseInt((row.querySelector('.txtMediaInfoLimit') || {}).value, 10) || 0;
+                flatTags.push(Object.assign({}, baseTag, {
+                    Url: "", Limit: aiLimitVal, LocalSourceId: "",
+                    AiProvider: (row.querySelector('.selAiProvider') || {}).value || 'OpenAI',
+                    AiPrompt: (row.querySelector('.txtAiPrompt') || {}).value || '',
+                    AiIncludeRecentlyWatched: !!(row.querySelector('.chkAiRecentlyWatched') || {}).checked,
+                    AiRecentlyWatchedUserId: (row.querySelector('.selAiWatchedUser') || {}).value || '',
+                    AiRecentlyWatchedCount: parseInt(((row.querySelector('.txtAiWatchedCount') || {}).value || '20'), 10) || 20
+                }));
             } else {
                 var miLimitVal = parseInt((row.querySelector('.txtMediaInfoLimit') || {}).value, 10) || 0;
                 flatTags.push(Object.assign({}, baseTag, { Url: "", Limit: miLimitVal, LocalSourceId: "" }));
@@ -2292,6 +2420,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         return {
             TraktClientId: view.querySelector('#txtTraktClientId').value,
             MdblistApiKey: view.querySelector('#txtMdblistApiKey').value,
+            OpenAiApiKey: (view.querySelector('#txtOpenAiApiKey') || {}).value || '',
+            GeminiApiKey: (view.querySelector('#txtGeminiApiKey') || {}).value || '',
             ExtendedConsoleOutput: view.querySelector('#chkExtendedConsoleOutput').checked,
             DryRunMode: view.querySelector('#chkDryRunMode').checked,
             Tags: flatTags,
@@ -2361,18 +2491,19 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var fSrcMI      = view.querySelector('#chkFilterSrcMediaInfo')?.checked;
         var fSrcColl    = view.querySelector('#chkFilterSrcCollection')?.checked;
         var fSrcPlay    = view.querySelector('#chkFilterSrcPlaylist')?.checked;
+        var fSrcAI      = view.querySelector('#chkFilterSrcAI')?.checked;
         var fActive     = view.querySelector('#chkFilterActive')?.checked;
         var fInactive   = view.querySelector('#chkFilterInactive')?.checked;
 
         var anyFeature  = fTag || fColl || fSched || fHome;
-        var anySrc      = fSrcExt || fSrcMI || fSrcColl || fSrcPlay;
+        var anySrc      = fSrcExt || fSrcMI || fSrcColl || fSrcPlay || fSrcAI;
         var anyStatus   = fActive || fInactive;
 
         // Update button appearance
         var btn = view.querySelector('#btnFilterDropdown');
         var lbl = view.querySelector('#filterDropdownLabel');
         if (btn && lbl) {
-            var activeCount = [fTag, fColl, fSched, fHome, fSrcExt, fSrcMI, fSrcColl, fSrcPlay, fActive, fInactive].filter(Boolean).length;
+            var activeCount = [fTag, fColl, fSched, fHome, fSrcExt, fSrcMI, fSrcColl, fSrcPlay, fSrcAI, fActive, fInactive].filter(Boolean).length;
             lbl.textContent = activeCount > 0 ? 'Filter (' + activeCount + ')' : 'Filter';
             btn.classList.toggle('active', activeCount > 0);
         }
@@ -2395,7 +2526,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             if (anySrc) {
                 var src = row.querySelector('.selSourceType')?.value || '';
                 matchesSrc = (fSrcExt && src === 'External') || (fSrcMI && src === 'MediaInfo') ||
-                             (fSrcColl && src === 'LocalCollection') || (fSrcPlay && src === 'LocalPlaylist');
+                             (fSrcColl && src === 'LocalCollection') || (fSrcPlay && src === 'LocalPlaylist') ||
+                             (fSrcAI && src === 'AI');
             }
 
             var matchesStatus = true;
@@ -2455,12 +2587,18 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     Limit: t.Limit || 0,
                     EnableHomeSection: t.EnableHomeSection || false, HomeSectionLibraryId: t.HomeSectionLibraryId || 'auto',
                     HomeSectionUserIds: t.HomeSectionUserIds || [], HomeSectionSettings: t.HomeSectionSettings || '{}',
-                    HomeSectionTracked: t.HomeSectionTracked || []
+                    HomeSectionTracked: t.HomeSectionTracked || [],
+                    AiProvider: t.AiProvider || 'OpenAI',
+                    AiPrompt: t.AiPrompt || '',
+                    AiIncludeRecentlyWatched: t.AiIncludeRecentlyWatched || false,
+                    AiRecentlyWatchedUserId: t.AiRecentlyWatchedUserId || '',
+                    AiRecentlyWatchedCount: t.AiRecentlyWatchedCount || 20
                 };
             }
             if (t.SourceType === 'External' && t.Url) grouped[key].Urls.push({ url: t.Url, limit: t.Limit });
             if ((t.SourceType === 'LocalCollection' || t.SourceType === 'LocalPlaylist') && t.LocalSourceId) grouped[key].LocalSources.push({ id: t.LocalSourceId, limit: t.Limit });
             if (t.SourceType === 'MediaInfo') grouped[key].Limit = t.Limit;
+            if (t.SourceType === 'AI') grouped[key].Limit = t.Limit;
         });
         return grouped;
     }
@@ -3001,6 +3139,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                                 <label class="filter-chk-row"><input type="checkbox" id="chkFilterSrcMediaInfo" /><span>Local Media Information</span></label>
                                 <label class="filter-chk-row"><input type="checkbox" id="chkFilterSrcCollection" /><span>Local Collection</span></label>
                                 <label class="filter-chk-row"><input type="checkbox" id="chkFilterSrcPlaylist" /><span>Local Playlist</span></label>
+                                <label class="filter-chk-row"><input type="checkbox" id="chkFilterSrcAI" /><span>AI created lists</span></label>
                                 <div class="filter-dropdown-divider"></div>
                                 <div class="filter-dropdown-label">Status</div>
                                 <label class="filter-chk-row"><input type="checkbox" id="chkFilterActive" /><span style="display:flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;border-radius:50%;background:#52B54B;flex-shrink:0;"></span>Active</span></label>
@@ -3034,7 +3173,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                     ['#chkFilterTag','#chkFilterCollection','#chkFilterSchedule','#chkFilterHomeScreen',
                      '#chkFilterSrcExternal','#chkFilterSrcMediaInfo','#chkFilterSrcCollection','#chkFilterSrcPlaylist',
-                     '#chkFilterActive','#chkFilterInactive'
+                     '#chkFilterSrcAI','#chkFilterActive','#chkFilterInactive'
                     ].forEach(id => view.querySelector(id).addEventListener('change', () => applyFilters(view)));
 
                     var dropBtn   = view.querySelector('#btnFilterDropdown');
@@ -3081,6 +3220,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             var config = JSON.parse(e.target.result);
                             view.querySelector('#txtTraktClientId').value = config.TraktClientId || '';
                             view.querySelector('#txtMdblistApiKey').value = config.MdblistApiKey || '';
+                            var oaEl = view.querySelector('#txtOpenAiApiKey'); if (oaEl) oaEl.value = config.OpenAiApiKey || '';
+                            var gmEl = view.querySelector('#txtGeminiApiKey'); if (gmEl) gmEl.value = config.GeminiApiKey || '';
                             view.querySelector('#chkExtendedConsoleOutput').checked = config.ExtendedConsoleOutput || false;
                             view.querySelector('#chkDryRunMode').checked = config.DryRunMode || false;
 
@@ -3140,6 +3281,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var container = view.querySelector('#tagListContainer'); container.innerHTML = '';
                     view.querySelector('#txtTraktClientId').value = config.TraktClientId || '';
                     view.querySelector('#txtMdblistApiKey').value = config.MdblistApiKey || '';
+                    var oaElInit = view.querySelector('#txtOpenAiApiKey'); if (oaElInit) oaElInit.value = config.OpenAiApiKey || '';
+                    var gmElInit = view.querySelector('#txtGeminiApiKey'); if (gmElInit) gmElInit.value = config.GeminiApiKey || '';
                     view.querySelector('#chkExtendedConsoleOutput').checked = config.ExtendedConsoleOutput || false;
                     view.querySelector('#chkDryRunMode').checked = config.DryRunMode || false;
                     if (view.querySelector('#txtSearchTags')) {
@@ -3148,7 +3291,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     }
                     ['#chkFilterTag','#chkFilterCollection','#chkFilterSchedule','#chkFilterHomeScreen',
                      '#chkFilterSrcExternal','#chkFilterSrcMediaInfo','#chkFilterSrcCollection','#chkFilterSrcPlaylist',
-                     '#chkFilterActive','#chkFilterInactive'
+                     '#chkFilterSrcAI','#chkFilterActive','#chkFilterInactive'
                     ].forEach(id => { var el = view.querySelector(id); if (el) el.checked = false; });
                     var lbl = view.querySelector('#filterDropdownLabel'); if (lbl) lbl.textContent = 'Filter';
                     var btn = view.querySelector('#btnFilterDropdown'); if (btn) btn.classList.remove('active');
@@ -3315,6 +3458,30 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     }
                 }
             });
+        });
+
+        view.addEventListener('change', function (e) {
+            var cb = e.target.closest('.chkShowApiKey');
+            if (!cb) return;
+            var input = view.querySelector('#' + cb.dataset.target);
+            if (input) input.type = cb.checked ? 'text' : 'password';
+        });
+
+        view.addEventListener('click', function (e) {
+            var header = e.target.closest('.settings-panel-toggle');
+            if (header) {
+                var panel = header.closest('.settings-panel');
+                if (panel) {
+                    var body = panel.querySelector('.settings-panel-body');
+                    var chevron = header.querySelector('.settings-panel-chevron');
+                    if (body) {
+                        var isOpen = body.style.display !== 'none';
+                        body.style.display = isOpen ? 'none' : 'block';
+                        if (chevron) chevron.style.transform = isOpen ? '' : 'rotate(180deg)';
+                    }
+                }
+                return;
+            }
         });
 
         view.addEventListener('click', function (e) {

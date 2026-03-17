@@ -8,6 +8,8 @@ namespace HomeScreenCompanion
     {
         public string TraktClientId { get; set; } = "";
         public string MdblistApiKey { get; set; } = "";
+        public string OpenAiApiKey { get; set; } = "";
+        public string GeminiApiKey { get; set; } = "";
         public bool ExtendedConsoleOutput { get; set; } = false;
         public bool DryRunMode { get; set; } = false;
         public List<TagConfig> Tags { get; set; } = new List<TagConfig>();
@@ -26,12 +28,19 @@ namespace HomeScreenCompanion
         public string Tag { get; set; } = "";
         public string Url { get; set; } = "";
         public int Limit { get; set; } = 50;
-        
+
         public string SourceType { get; set; } = "External";
         public string LocalSourceId { get; set; } = "";
         public List<string> LocalSources { get; set; } = new List<string>();
         public List<string> MediaInfoConditions { get; set; } = new List<string>();
         public List<MediaInfoFilter> MediaInfoFilters { get; set; } = new List<MediaInfoFilter>();
+
+        // AI source settings
+        public string AiProvider { get; set; } = "OpenAI";
+        public string AiPrompt { get; set; } = "";
+        public bool AiIncludeRecentlyWatched { get; set; } = false;
+        public string AiRecentlyWatchedUserId { get; set; } = "";
+        public int AiRecentlyWatchedCount { get; set; } = 20;
         
         public List<string> Blacklist { get; set; } = new List<string>();
         public List<DateInterval> ActiveIntervals { get; set; } = new List<DateInterval>();

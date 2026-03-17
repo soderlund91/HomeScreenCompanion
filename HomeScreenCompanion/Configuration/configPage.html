@@ -872,22 +872,63 @@
 
             <div id="tabSettings" class="page-tab-content" style="display:none;">
 
-                <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.05em; color: #52B54B; text-transform: uppercase; letter-spacing: 1px;">Basic Settings</h3>
-                <div class="inputContainer">
-                    <input is="emby-input" type="text" id="txtTraktClientId" label="Trakt Client ID" />
-                    <div class="fieldDescription">
-                        Create app at <a href="https://trakt.tv/oauth/applications" target="_blank" class="help-link">Trakt.tv</a>.
+                <div class="advanced-section settings-panel" style="margin-bottom: 15px;">
+                    <div class="advanced-header settings-panel-toggle">
+                        <i class="md-icon" style="margin-right: 10px; color: #52B54B;">link</i>
+                        <span style="font-size: 1.05em; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: #52B54B;">External list settings</span>
+                        <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s;">expand_more</i>
+                    </div>
+                    <div class="advanced-body settings-panel-body">
+                        <div class="inputContainer">
+                            <input is="emby-input" type="password" id="txtTraktClientId" label="Trakt Client ID" />
+                            <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
+                                <input type="checkbox" class="chkShowApiKey" data-target="txtTraktClientId" style="margin:0;" /> Show
+                            </label>
+                            <div class="fieldDescription">
+                                Create app at <a href="https://trakt.tv/oauth/applications" target="_blank" class="help-link">Trakt.tv</a>.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer" style="margin-top: 15px;">
+                            <input is="emby-input" type="password" id="txtMdblistApiKey" label="MDBList API Key" />
+                            <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
+                                <input type="checkbox" class="chkShowApiKey" data-target="txtMdblistApiKey" style="margin:0;" /> Show
+                            </label>
+                            <div class="fieldDescription">
+                                Get key at <a href="https://mdblist.com/preferences/" target="_blank" class="help-link">MDBList Preferences</a>.
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <div class="inputContainer">
-                    <input is="emby-input" type="text" id="txtMdblistApiKey" label="MDBList API Key" />
-                    <div class="fieldDescription">
-                        Get key at <a href="https://mdblist.com/preferences/" target="_blank" class="help-link">MDBList Preferences</a>.
+                <div class="advanced-section settings-panel" style="margin-bottom: 25px;">
+                    <div class="advanced-header settings-panel-toggle">
+                        <i class="md-icon" style="margin-right: 10px; color: #52B54B;">auto_awesome</i>
+                        <span style="font-size: 1.05em; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: #52B54B;">AI Settings</span>
+                        <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s;">expand_more</i>
+                    </div>
+                    <div class="advanced-body settings-panel-body">
+                        <div class="inputContainer">
+                            <input is="emby-input" type="password" id="txtOpenAiApiKey" label="OpenAI API Key" />
+                            <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
+                                <input type="checkbox" class="chkShowApiKey" data-target="txtOpenAiApiKey" style="margin:0;" /> Show
+                            </label>
+                            <div class="fieldDescription">
+                                Used for AI created lists via ChatGPT (gpt-4o-mini). Get your key at <a href="https://platform.openai.com/api-keys" target="_blank" class="help-link">platform.openai.com</a>.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer" style="margin-top: 15px;">
+                            <input is="emby-input" type="password" id="txtGeminiApiKey" label="Google Gemini API Key" />
+                            <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
+                                <input type="checkbox" class="chkShowApiKey" data-target="txtGeminiApiKey" style="margin:0;" /> Show
+                            </label>
+                            <div class="fieldDescription">
+                                Used for AI created lists via Gemini (gemini-1.5-flash). Get your key at <a href="https://aistudio.google.com/app/apikey" target="_blank" class="help-link">Google AI Studio</a>.
+                            </div>
+                        </div>
                     </div>
                 </div>
-
-                <hr style="border-color: var(--line-color); margin: 25px 0;" />
 
                 <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.05em; color: #52B54B; text-transform: uppercase; letter-spacing: 1px;">Advanced Settings</h3>
                 <div class="checkboxContainer checkboxContainer-withDescription">
@@ -981,7 +1022,7 @@
         </div>
 
         <div style="margin-top: 5em; padding-top: 2em; border-top: 1px solid var(--line-color); text-align: center; color: var(--theme-text-secondary);">
-            <p style="margin-bottom: 5px; font-weight: bold;">Home Screen Companion v3.1.3.0</p>
+            <p style="margin-bottom: 5px; font-weight: bold;">Home Screen Companion v3.2.0.0</p>
             <div style="display: flex; justify-content: center; margin-bottom: 15px;">
                 <a href="https://github.com/soderlund91/HomeScreenCompanion/tree/main" target="_blank" class="simple-link">
                     <i class="md-icon" style="font-size:1.2em;">link</i>
@@ -1028,15 +1069,18 @@
                 <div class="help-step">
                     <div class="step-num">1</div>
                     <div class="step-text">
-                        <strong>Enter API Keys</strong> — go to the <strong>Settings</strong> tab.
+                        <strong>Enter API Keys</strong> — go to the <strong>Settings</strong> tab. Only add keys for the services you intend to use.
                         <div class="info-box" style="margin-top:6px;">
                             <div style="margin-bottom:8px;">
                                 <strong>Trakt:</strong> <a href="https://trakt.tv/oauth/applications" target="_blank" class="help-link">trakt.tv/oauth/applications</a>
                                 → New App → set Redirect URI to <code>http://localhost</code>. Copy the <em>Client ID</em>.
                             </div>
-                            <div style="border-top:1px dashed #444; padding-top:8px;">
+                            <div style="border-top:1px dashed #444; padding-top:8px; margin-bottom:8px;">
                                 <strong>MDBList:</strong> <a href="https://mdblist.com/preferences/" target="_blank" class="help-link">mdblist.com/preferences</a>
                                 → scroll to "API Access".
+                            </div>
+                            <div style="border-top:1px dashed #444; padding-top:8px;">
+                                <strong>OpenAI / Gemini:</strong> only needed for <em>AI created lists</em> sources. Keys are stored hidden — use the <em>Show</em> toggle to reveal them.
                             </div>
                         </div>
                     </div>
@@ -1071,6 +1115,10 @@
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:#52B54B;">tune</i> MediaInfo</div>
                         Filter your library by technical properties — codec, resolution, HDR, audio format, genre, actors, ratings, and user activity (watched status, last played, play count).
+                    </div>
+                    <div class="src-card">
+                        <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:#52B54B;">auto_awesome</i> AI created lists</div>
+                        Write a plain-language prompt (e.g. <em>"Best sci-fi films from the 90s"</em>) and let <strong>OpenAI</strong> or <strong>Google Gemini</strong> generate the list. Optionally prepend a user's recent watch history so the AI can personalise recommendations. Requires an OpenAI or Gemini API key in Settings.
                     </div>
                 </div>
 
@@ -1171,7 +1219,7 @@
                     <i class="md-icon help-section-icon">analytics</i>
                     <span>MediaInfo Filters</span>
                 </div>
-                <div class="step-text" style="margin-bottom:12px; font-size:0.92em;">Build filter rules from five property categories. Rules within a group use AND/OR logic; the <strong>NOT</strong> toggle inverts any rule. Numeric properties support <code>=&nbsp; &gt;&nbsp; &ge;&nbsp; &lt;&nbsp; &le;</code>. Activity properties can be scoped to <em>any user</em>, <em>all users</em>, or a specific user.</div>
+                <div class="step-text" style="margin-bottom:12px; font-size:0.92em;">Build filter rules from five property categories. Rules within a group use AND/OR logic; the <strong>NOT</strong> toggle inverts any rule. Numeric properties support <code>=&nbsp; &gt;&nbsp; &ge;&nbsp; &lt;&nbsp; &le;</code>. Activity properties can be scoped to <em>any user</em>, <em>all users</em>, or a specific user. Text fields support <strong>comma-separated values</strong> — entering multiple values matches any one of them (OR logic).</div>
                 <div class="mi-help-grid" style="grid-template-columns: repeat(3, 1fr);">
                     <div class="mi-help-col">
                         <div class="mi-help-category">Video</div>
@@ -1179,11 +1227,11 @@
                     </div>
                     <div class="mi-help-col">
                         <div class="mi-help-category">Audio</div>
-                        Format (Atmos, DTS-HD MA, TrueHD, AC3…), Channels (stereo, surround, mono), Audio Language
+                        Format (Atmos, DTS-HD MA, TrueHD, AC3…), Channels (stereo, surround, mono), Audio Language — comma-separated (e.g. eng, swe)
                     </div>
                     <div class="mi-help-col">
                         <div class="mi-help-category">Content</div>
-                        Genre, Actor/Cast, Director, Writer, Studio, Title, Tag, Content Rating, IMDB ID (comma-separated list supported)
+                        Genre, Actor/Cast, Director, Writer, Studio, Title, Overview, Tag, Content Rating, IMDB ID — all support comma-separated values (e.g. <em>Netflix, HBO</em> or <em>Tom Hanks, Idris Elba</em>)
                     </div>
                     <div class="mi-help-col">
                         <div class="mi-help-category">Metrics</div>
@@ -1221,11 +1269,23 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">key</i>
-                    <div><strong>Trakt Client ID</strong> — Required for External sources pointing to Trakt lists. Create a new app at <a href="https://trakt.tv/oauth/applications" target="_blank" class="help-link">trakt.tv/oauth/applications</a>, set Redirect URI to <code>http://localhost</code>, and copy the Client ID into the <strong>Settings</strong> tab.</div>
+                    <div><strong>Trakt Client ID</strong> — Required for External sources pointing to Trakt lists. Create a new app at <a href="https://trakt.tv/oauth/applications" target="_blank" class="help-link">trakt.tv/oauth/applications</a>, set Redirect URI to <code>http://localhost</code>, and copy the Client ID. Found under <em>External list settings</em> in the Settings tab.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">vpn_key</i>
-                    <div><strong>MDBList API Key</strong> — Required for MDBList sources. Obtain it from <a href="https://mdblist.com/preferences/" target="_blank" class="help-link">mdblist.com/preferences</a> under "API Access".</div>
+                    <div><strong>MDBList API Key</strong> — Required for MDBList sources. Obtain it from <a href="https://mdblist.com/preferences/" target="_blank" class="help-link">mdblist.com/preferences</a> under "API Access". Found under <em>External list settings</em> in the Settings tab.</div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">auto_awesome</i>
+                    <div><strong>OpenAI API Key</strong> — Required for AI created lists using ChatGPT (gpt-4o-mini). Get a key at <a href="https://platform.openai.com/api-keys" target="_blank" class="help-link">platform.openai.com</a>. Found under <em>AI Settings</em> in the Settings tab.</div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">auto_awesome</i>
+                    <div><strong>Google Gemini API Key</strong> — Required for AI created lists using Gemini (gemini-1.5-flash). Get a key at <a href="https://aistudio.google.com/app/apikey" target="_blank" class="help-link">Google AI Studio</a>. Found under <em>AI Settings</em> in the Settings tab.</div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">visibility_off</i>
+                    <div><strong>API key visibility</strong> — All API key fields are hidden by default. Use the <em>Show</em> checkbox next to each field to reveal the value. The checkbox resets to hidden every time the page is loaded.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">bug_report</i>
@@ -1281,15 +1341,15 @@
 
                 <div class="help-section"><i class="md-icon help-section-icon">local_movies</i>Content</div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Media Type</span> — Movie, Series, or Episode. When <b>Episode</b> is selected, all filters evaluate against individual episodes and tags are applied directly to each matching episode.</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Tag</span> — matches items that already have a specific Emby tag applied</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Title</span> — matches the movie or series name. When Media Type = Episode, matches the parent series name.</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Title (Episode)</span> — matches the episode's own title. Use together with Media Type = Episode.</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Overview</span> — searches the plot description/summary for keywords or phrases</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Studio</span> — production studio name</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Genre</span> — e.g. Action, Drama, Comedy</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Actor / Cast</span> — name of a cast member (exact match recommended)</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Director</span> / <span class="mi-help-prop">Writer</span> — crew members</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Content Rating</span> — e.g. PG-13, TV-MA (exact match)</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Tag</span> — matches items that already have a specific Emby tag applied. Comma-separated: <i>4K, HDR</i> matches items tagged with either.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Title</span> — matches the movie or series name. When Media Type = Episode, matches the parent series name. Comma-separated: <i>Batman, Dark Knight</i> matches either title.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Title (Episode)</span> — matches the episode's own title. Use together with Media Type = Episode. Comma-separated for multiple episode titles.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Overview</span> — searches the plot description/summary for keywords or phrases. Comma-separated: <i>Christmas, heist</i> matches if <em>either</em> word appears in the overview.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Studio</span> — production studio name. Comma-separated: <i>Netflix, HBO</i> matches items from either studio.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Genre</span> — e.g. Action, Drama, Comedy. Comma-separated: <i>Action, Thriller</i> matches items in either genre.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Actor / Cast</span> — name of a cast member (exact match recommended). Comma-separated: <i>Tom Hanks, Idris Elba</i> matches items featuring either actor.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Director</span> / <span class="mi-help-prop">Writer</span> — crew members. Comma-separated for multiple names.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Content Rating</span> — e.g. PG-13, TV-MA (exact match). Comma-separated: <i>PG-13, R</i> matches either rating.</div></div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">IMDB ID</span> — one or more comma-separated IDs, e.g. <i>tt0468569, tt1375666</i></div></div>
 
                 <div class="help-section"><i class="md-icon help-section-icon">bar_chart</i>Metrics</div>

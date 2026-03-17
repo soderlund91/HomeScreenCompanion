@@ -1,6 +1,7 @@
 ﻿using MediaBrowser.Common.Net;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.Querying;
 using MediaBrowser.Model.Serialization;
 using MediaBrowser.Model.Services;
 using MediaBrowser.Model.Users;
@@ -94,12 +95,16 @@ public class HomeScreenCompanionService : IService
         private readonly IHttpClient _httpClient;
         private readonly IJsonSerializer _jsonSerializer;
         private readonly IUserManager _userManager;
+        private readonly ILibraryManager _libraryManager;
+        private readonly IUserDataManager _userDataManager;
 
-        public HomeScreenCompanionService(IHttpClient httpClient, IJsonSerializer jsonSerializer, IUserManager userManager)
+        public HomeScreenCompanionService(IHttpClient httpClient, IJsonSerializer jsonSerializer, IUserManager userManager, ILibraryManager libraryManager, IUserDataManager userDataManager)
         {
             _httpClient = httpClient;
             _jsonSerializer = jsonSerializer;
             _userManager = userManager;
+            _libraryManager = libraryManager;
+            _userDataManager = userDataManager;
         }
 
         public object Get(VersionRequest request)
@@ -244,6 +249,92 @@ public class HomeScreenCompanionService : IService
                 return new RunEntryResponse { Success = false, Message = "Task not initialized" };
             var (success, message) = await task.RunSingleEntryAsync(request.EntryName, CancellationToken.None);
             return new RunEntryResponse { Success = success, Message = message };
+        }
+
+        public async Task<object> Post(TestAiSourceRequest request)
+        {
+            var config = Plugin.Instance?.Configuration;
+            if (config == null)
+                return new TestAiSourceResponse { Success = false, Message = "Plugin config not found." };
+
+            if (string.IsNullOrWhiteSpace(request.Prompt))
+                return new TestAiSourceResponse { Success = false, Message = "Prompt is required." };
+
+            string recentlyWatchedContext = "";
+            if (request.IncludeRecentlyWatched && !string.IsNullOrWhiteSpace(request.RecentlyWatchedUserId))
+            {
+                try
+                {
+                    if (Guid.TryParse(request.RecentlyWatchedUserId, out var userGuid))
+                    {
+                        var user = _userManager.GetUserById(userGuid);
+                        if (user != null)
+                        {
+                            int maxCount = request.RecentlyWatchedCount > 0 ? request.RecentlyWatchedCount : 20;
+                            var allLibItems = _libraryManager.GetItemList(new MediaBrowser.Controller.Entities.InternalItemsQuery
+                            {
+                                IncludeItemTypes = new[] { "Movie", "Series" },
+                                Recursive = true,
+                                IsVirtualItem = false
+                            });
+
+                            var playedItems = allLibItems
+                                .Select(item => new { item, ud = _userDataManager?.GetUserData(user, item) })
+                                .Where(x => x.ud?.Played == true)
+                                .OrderByDescending(x => x.ud?.LastPlayedDate ?? System.DateTimeOffset.MinValue)
+                                .Take(maxCount)
+                                .Select(x => x.item)
+                                .ToList();
+
+                            if (playedItems.Count > 0)
+                            {
+                                var sb = new System.Text.StringBuilder("The user has recently watched these movies and TV shows (most recent first):\n");
+                                foreach (var item in playedItems)
+                                {
+                                    var yearStr = item.ProductionYear.HasValue ? $" ({item.ProductionYear})" : "";
+                                    var typeStr = item.GetType().Name.Contains("Series") ? "show" : "movie";
+                                    sb.AppendLine($"- {item.Name}{yearStr} [{typeStr}]");
+                                }
+                                sb.AppendLine("Use this to personalize your recommendations.");
+                                recentlyWatchedContext = sb.ToString();
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            var fetcher = new ListFetcher(_httpClient, _jsonSerializer);
+            try
+            {
+                var aiItems = await fetcher.FetchAiList(
+                    request.Provider,
+                    request.Prompt,
+                    config.OpenAiApiKey,
+                    config.GeminiApiKey,
+                    recentlyWatchedContext,
+                    20,
+                    CancellationToken.None);
+
+                if (aiItems == null || aiItems.Count == 0)
+                    return new TestAiSourceResponse { Success = false, Message = "No items returned. Check your API key and prompt." };
+
+                var preview = aiItems.Take(5)
+                    .Select(i => string.IsNullOrEmpty(i.imdb_id) ? i.title : $"{i.title} — {i.imdb_id}")
+                    .ToList();
+
+                return new TestAiSourceResponse
+                {
+                    Success = true,
+                    Count = aiItems.Count,
+                    Message = $"AI returned {aiItems.Count} items.",
+                    Preview = preview
+                };
+            }
+            catch (Exception ex)
+            {
+                return new TestAiSourceResponse { Success = false, Message = $"Error: {ex.Message}" };
+            }
         }
 
         public object Get(HscGetStatusRequest request)
