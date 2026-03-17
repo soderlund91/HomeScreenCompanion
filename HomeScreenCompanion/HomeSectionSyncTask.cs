@@ -216,7 +216,7 @@ namespace HomeScreenCompanion
         private void LogSummary(string message, string level = "Info")
         {
             var msg = $"[{DateTime.Now:HH:mm:ss}] {message}";
-            lock (ExecutionLog) { ExecutionLog.Add(msg); if (ExecutionLog.Count > 200) ExecutionLog.RemoveAt(0); }
+            lock (ExecutionLog) { ExecutionLog.Add(msg); }
             if (level == "Error") _logger.Error($"[Home Screen] {message}");
             else if (level == "Warn") _logger.Warn($"[Home Screen] {message}");
             else _logger.Info($"[Home Screen] {message}");
@@ -225,7 +225,7 @@ namespace HomeScreenCompanion
         private void LogDebug(string message)
         {
             var msg = $"[{DateTime.Now:HH:mm:ss}] [DEBUG] {message}";
-            lock (ExecutionLog) { ExecutionLog.Add(msg); if (ExecutionLog.Count > 200) ExecutionLog.RemoveAt(0); }
+            lock (ExecutionLog) { ExecutionLog.Add(msg); }
         }
 
         private static ContentSection CopySection(ContentSection source)

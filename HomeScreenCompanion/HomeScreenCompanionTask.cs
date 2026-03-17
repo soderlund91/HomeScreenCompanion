@@ -819,7 +819,8 @@ namespace HomeScreenCompanion
 
                 LogSummary("══════════════════════════════════════════════════");
                 LogSummary("Summary");
-                LogSummary($"  Tags:          +{totalTagsAdded} added,  -{totalTagsRemoved} removed");
+                if (statsList.Any(g => g.EnableTag))
+                    LogSummary($"  Tags:          +{totalTagsAdded} added,  -{totalTagsRemoved} removed");
                 LogSummary($"  Collections:   {totalCollCreated} created,   {totalCollUpdated} updated,   {collDeleted} removed");
                 LogSummary($"  Home sections: {totalHsSynced} synced,    {totalHsRemoved} removed");
                 LogSummary($"  Done in {elapsedStr}  ·  {finalStatus}");
@@ -1021,6 +1022,8 @@ namespace HomeScreenCompanion
 
             // Apply tags (scoped to this entry's tag only)
             int tagsAdded = 0, tagsRemoved = 0;
+            var _dbgTagAdded = debug ? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase) : null;
+            var _dbgTagRemoved = debug ? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase) : null;
             var matchedIds = new HashSet<Guid>(matchedLocalItems.Select(i => i.Id));
             int updateCount = 0;
             foreach (var item in allItems)
@@ -1029,6 +1032,14 @@ namespace HomeScreenCompanion
                 bool shouldHave = tagConfig.EnableTag && !tagConfig.OnlyCollection && matchedIds.Contains(item.Id);
                 bool hasTag = existingTags.Contains(tagName);
                 if (shouldHave == hasTag) continue;
+                if (debug)
+                {
+                    var _tagYr = item.ProductionYear.HasValue ? $" ({item.ProductionYear})" : "";
+                    var _tagTp = item.GetType().Name.Contains("Series") ? "Series" : "Movie";
+                    string _itemLabel = $"{item.Name}{_tagYr}  [{_tagTp}]";
+                    if (shouldHave) { if (!_dbgTagAdded!.ContainsKey(tagName)) _dbgTagAdded[tagName] = new List<string>(); _dbgTagAdded[tagName].Add(_itemLabel); }
+                    else { if (!_dbgTagRemoved!.ContainsKey(tagName)) _dbgTagRemoved[tagName] = new List<string>(); _dbgTagRemoved[tagName].Add(_itemLabel); }
+                }
                 if (!dryRun)
                 {
                     if (shouldHave) item.AddTag(tagName); else item.RemoveTag(tagName);
@@ -1037,6 +1048,72 @@ namespace HomeScreenCompanion
                     if (++updateCount % 25 == 0) await Task.Yield();
                 }
                 if (shouldHave) tagsAdded++; else tagsRemoved++;
+            }
+
+            // Episode cleanup: remove stale tags from episodes; for MediaInfo episode-targeting configs also tag matching episodes
+            {
+                bool targetsEpisodes = tagConfig.SourceType == "MediaInfo" && tagConfig.EnableTag && !tagConfig.OnlyCollection && TagConfigTargetsEpisodes(tagConfig);
+                var matchedEpisodeIds = new HashSet<Guid>();
+                var allEpisodeItemsMap = new Dictionary<Guid, BaseItem>();
+                if (targetsEpisodes)
+                {
+                    foreach (var ep in _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Episode" }, Recursive = true, IsVirtualItem = false }))
+                    {
+                        if (ep.LocationType != LocationType.FileSystem) continue;
+                        if (ItemMatchesMediaInfo(ep, tagConfig, debug, seriesEpisodeCache, personCache, userDataCache, null, preloadedUsers, seriesLastPlayedCache))
+                        {
+                            matchedEpisodeIds.Add(ep.Id);
+                            allEpisodeItemsMap.TryAdd(ep.Id, ep);
+                        }
+                    }
+                }
+                foreach (var ep in _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Episode" }, Tags = new[] { tagName }, Recursive = true, IsVirtualItem = false }))
+                    allEpisodeItemsMap.TryAdd(ep.Id, ep);
+                foreach (var ep in allEpisodeItemsMap.Values)
+                {
+                    bool shouldHaveEp = tagConfig.EnableTag && !tagConfig.OnlyCollection && matchedEpisodeIds.Contains(ep.Id);
+                    bool hasTagEp = new HashSet<string>(ep.Tags, StringComparer.OrdinalIgnoreCase).Contains(tagName);
+                    if (shouldHaveEp == hasTagEp) continue;
+                    if (debug)
+                    {
+                        var _epYr = ep.ProductionYear.HasValue ? $" ({ep.ProductionYear})" : "";
+                        string _epLabel = $"{ep.Name}{_epYr}  [Episode]";
+                        if (shouldHaveEp) { if (!_dbgTagAdded!.ContainsKey(tagName)) _dbgTagAdded[tagName] = new List<string>(); _dbgTagAdded[tagName].Add(_epLabel); }
+                        else { if (!_dbgTagRemoved!.ContainsKey(tagName)) _dbgTagRemoved[tagName] = new List<string>(); _dbgTagRemoved[tagName].Add(_epLabel); }
+                    }
+                    if (!dryRun)
+                    {
+                        if (shouldHaveEp) ep.AddTag(tagName); else ep.RemoveTag(tagName);
+                        try { _libraryManager.UpdateItem(ep, ep.Parent, ItemUpdateType.MetadataEdit, null); }
+                        catch { }
+                        if (++updateCount % 25 == 0) await Task.Yield();
+                    }
+                    if (shouldHaveEp) tagsAdded++; else tagsRemoved++;
+                }
+            }
+
+            if (debug && (_dbgTagAdded!.Count > 0 || _dbgTagRemoved!.Count > 0))
+            {
+                LogDebug("── Tags ──────────────────────────────────────────");
+                var _allTagNames = _dbgTagAdded!.Keys.Concat(_dbgTagRemoved!.Keys).Distinct(StringComparer.OrdinalIgnoreCase);
+                foreach (var _tName in _allTagNames)
+                {
+                    LogDebug($"  {_tName}");
+                    var _added = _dbgTagAdded.GetValueOrDefault(_tName) ?? new List<string>();
+                    var _removed = _dbgTagRemoved.GetValueOrDefault(_tName) ?? new List<string>();
+                    int _shown = 0;
+                    foreach (var _lbl in _added)
+                    {
+                        if (_shown >= 30) { LogDebug($"    ... and {_added.Count - _shown} more added"); break; }
+                        LogDebug($"    + {_lbl}"); _shown++;
+                    }
+                    _shown = 0;
+                    foreach (var _lbl in _removed)
+                    {
+                        if (_shown >= 30) { LogDebug($"    ... and {_removed.Count - _shown} more removed"); break; }
+                        LogDebug($"    - {_lbl}"); _shown++;
+                    }
+                }
             }
 
             // Apply collection (scoped to this entry's collection only)
@@ -1113,7 +1190,8 @@ namespace HomeScreenCompanion
 
             LogSummary("══════════════════════════════════════════════════");
             LogSummary("Summary");
-            LogSummary($"  Tags:          +{tagsAdded} added,  -{tagsRemoved} removed");
+            if (tagConfig.EnableTag && !tagConfig.OnlyCollection)
+                LogSummary($"  Tags:          +{tagsAdded} added,  -{tagsRemoved} removed");
             if (tagConfig.EnableCollection)
                 LogSummary($"  Collections:   {(_collCreated ? 1 : 0)} created,   {(!_collCreated && collResult > 0 ? 1 : 0)} updated");
             if (tagConfig.EnableHomeSection)
@@ -1963,14 +2041,14 @@ namespace HomeScreenCompanion
         private void LogSummary(string message, string level = "Info")
         {
             var msg = $"[{DateTime.Now:HH:mm:ss}] {message}";
-            lock (ExecutionLog) { ExecutionLog.Add(msg); if (ExecutionLog.Count > 200) ExecutionLog.RemoveAt(0); }
+            lock (ExecutionLog) { ExecutionLog.Add(msg); }
             if (level == "Error") _logger.Error(message); else if (level == "Warn") _logger.Warn(message); else _logger.Info(message);
         }
 
         private void LogDebug(string message)
         {
             var msg = $"[{DateTime.Now:HH:mm:ss}] [DEBUG] {message}";
-            lock (ExecutionLog) { ExecutionLog.Add(msg); if (ExecutionLog.Count > 200) ExecutionLog.RemoveAt(0); }
+            lock (ExecutionLog) { ExecutionLog.Add(msg); }
         }
 
         private List<string> LoadFileHistory(string filename)
