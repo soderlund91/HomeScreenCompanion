@@ -878,7 +878,7 @@
                         <span style="font-size: 1.05em; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: #52B54B;">External list settings</span>
                         <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s;">expand_more</i>
                     </div>
-                    <div class="advanced-body settings-panel-body">
+                    <div class="advanced-body settings-panel-body" style="display:none;">
                         <div class="inputContainer">
                             <input is="emby-input" type="password" id="txtTraktClientId" label="Trakt Client ID" />
                             <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
@@ -907,7 +907,7 @@
                         <span style="font-size: 1.05em; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: #52B54B;">AI Settings</span>
                         <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s;">expand_more</i>
                     </div>
-                    <div class="advanced-body settings-panel-body">
+                    <div class="advanced-body settings-panel-body" style="display:none;">
                         <div class="inputContainer">
                             <input is="emby-input" type="password" id="txtOpenAiApiKey" label="OpenAI API Key" />
                             <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
@@ -924,7 +924,7 @@
                                 <input type="checkbox" class="chkShowApiKey" data-target="txtGeminiApiKey" style="margin:0;" /> Show
                             </label>
                             <div class="fieldDescription">
-                                Used for AI created lists via Gemini (gemini-1.5-flash). Get your key at <a href="https://aistudio.google.com/app/apikey" target="_blank" class="help-link">Google AI Studio</a>.
+                                Used for AI created lists via Gemini (gemini-3-flash-preview). Get your key at <a href="https://aistudio.google.com/app/apikey" target="_blank" class="help-link">Google AI Studio</a>.
                             </div>
                         </div>
                     </div>
@@ -1281,7 +1281,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">auto_awesome</i>
-                    <div><strong>Google Gemini API Key</strong> — Required for AI created lists using Gemini (gemini-1.5-flash). Get a key at <a href="https://aistudio.google.com/app/apikey" target="_blank" class="help-link">Google AI Studio</a>. Found under <em>AI Settings</em> in the Settings tab.</div>
+                    <div><strong>Google Gemini API Key</strong> — Required for AI created lists using Gemini (gemini-3-flash-preview). Get a key at <a href="https://aistudio.google.com/app/apikey" target="_blank" class="help-link">Google AI Studio</a>. Found under <em>AI Settings</em> in the Settings tab.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">visibility_off</i>

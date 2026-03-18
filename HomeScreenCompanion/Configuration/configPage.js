@@ -632,16 +632,17 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var selUser = rule.querySelector('.selMiUser');
                 var selTextOp = rule.querySelector('.selMiTextOp');
                 var val = selVal ? selVal.value : (txtVal ? txtVal.value.trim() : '');
+                // MediaType:Episode + "Include parent series" → save as EpisodeIncludeSeries
+                if (prop === 'MediaType' && val === 'Episode') {
+                    var incParentChk = rule.querySelector('.chkIncludeParentSeries');
+                    if (incParentChk && incParentChk.checked) val = 'EpisodeIncludeSeries';
+                }
                 var op2 = selOp ? selOp.value : '';
                 var textMatchOp = selTextOp ? selTextOp.value : '';
                 var num = txtNum ? txtNum.value.trim() : '';
                 var userId = selUser ? selUser.value : '';
                 var finalOp = op2 || textMatchOp;
                 var finalVal = op2 ? num : val;
-                if (prop === 'MediaType' && finalVal === 'Episode') {
-                    var chkIps = rule.querySelector('.chkIncludeParentSeries');
-                    if (chkIps && chkIps.checked) finalVal = 'EpisodeIncludeSeries';
-                }
                 var notBtn = rule.querySelector('.btnNotToggle');
                 var isNot = notBtn && notBtn.dataset.not === '1';
                 var crit = buildCriterion(prop, finalOp, finalVal, userId);
@@ -703,7 +704,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             AiProvider: aiProvider, AiPrompt: aiPrompt,
             AiIncludeRecentlyWatched: aiIncludeRecentlyWatched,
             AiRecentlyWatchedUserId: aiRecentlyWatchedUserId,
-            AiRecentlyWatchedCount: aiRecentlyWatchedCount
+            AiRecentlyWatchedCount: aiRecentlyWatchedCount,
+            TagTargetEpisode:        !!(row.querySelector('.chkTagTargetEpisode')  || {}).checked,
+            TagTargetSeason:         !!(row.querySelector('.chkTagTargetSeason')   || {}).checked,
+            TagTargetSeries:         !!(row.querySelector('.chkTagTargetSeries')   || {}).checked,
+            CollectionTargetEpisode: !!(row.querySelector('.chkCollTargetEpisode') || {}).checked,
+            CollectionTargetSeason:  !!(row.querySelector('.chkCollTargetSeason')  || {}).checked,
+            CollectionTargetSeries:  !!(row.querySelector('.chkCollTargetSeries')  || {}).checked,
+            MediaInfoTargetEpisode: false, MediaInfoTargetSeason: false, MediaInfoTargetSeries: false,
+            MediaInfoTargetType: '', MediaInfoSeasonMode: false
         };
     }
 
@@ -859,14 +868,18 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         if (MI_DROPDOWN_OPTIONS[prop]) {
             if (prop === 'MediaType') {
                 var dispVal = (savedVal === 'EpisodeIncludeSeries') ? 'Episode' : (savedVal || '');
-                var ipsChecked = (savedVal === 'EpisodeIncludeSeries');
                 var mtOpts = MI_DROPDOWN_OPTIONS['MediaType'].map(function (pair) {
                     return '<option value="' + pair[0] + '"' + (pair[0] === dispVal ? ' selected' : '') + '>' + pair[1] + '</option>';
                 }).join('');
-                var showCb = (dispVal === 'Episode') ? 'flex' : 'none';
-                return '<select class="selMiValue" is="emby-select" style="flex:1;">' + mtOpts + '</select>' +
-                    '<label class="mi-include-parent" style="display:' + showCb + ';align-items:center;gap:6px;white-space:nowrap;font-size:0.85em;opacity:.85;">' +
-                    '<input type="checkbox" class="chkIncludeParentSeries"' + (ipsChecked ? ' checked' : '') + '> Include parent series</label>';
+                var includeParentChecked = (savedVal === 'EpisodeIncludeSeries') ? 'checked' : '';
+                var includeParentDisplay = (dispVal === 'Episode') ? 'flex' : 'none';
+                return '<div style="display:flex; flex-direction:column; gap:5px; flex:1;">' +
+                    '<div style="display:flex; flex-direction:row; align-items:center; gap:12px;">' +
+                    '<select class="selMiValue" is="emby-select" style="flex:1;">' + mtOpts + '</select>' +
+                    '<label class="mi-include-parent" style="display:' + includeParentDisplay + '; align-items:center; gap:6px; font-size:0.85em; cursor:pointer; white-space:nowrap;">' +
+                    '<input type="checkbox" is="emby-checkbox" class="chkIncludeParentSeries" ' + includeParentChecked + '> Include parent series</label>' +
+                    '</div>' +
+                    '</div>';
             }
             var opts = MI_DROPDOWN_OPTIONS[prop].map(function (pair) {
                 return '<option value="' + pair[0] + '"' + (pair[0] === savedVal ? ' selected' : '') + '>' + pair[1] + '</option>';
@@ -1017,16 +1030,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var selUser = rule.querySelector('.selMiUser');
                 var selTextOp = rule.querySelector('.selMiTextOp');
                 var val = selVal ? selVal.value : (txtVal ? txtVal.value.trim() : '');
+                if (prop === 'MediaType' && val === 'Episode') {
+                    var incParentChk = rule.querySelector('.chkIncludeParentSeries');
+                    if (incParentChk && incParentChk.checked) val = 'EpisodeIncludeSeries';
+                }
                 var op2 = selOp ? selOp.value : '';
                 var textMatchOp = selTextOp ? selTextOp.value : '';
                 var num = txtNum ? txtNum.value.trim() : '';
                 var userId = selUser ? selUser.value : '';
                 var finalOp = op2 || textMatchOp;
                 var finalVal = op2 ? num : val;
-                if (prop === 'MediaType' && finalVal === 'Episode') {
-                    var chkIps = rule.querySelector('.chkIncludeParentSeries');
-                    if (chkIps && chkIps.checked) finalVal = 'EpisodeIncludeSeries';
-                }
                 var notBtn = rule.querySelector('.btnNotToggle');
                 var isNot = notBtn && notBtn.dataset.not === '1';
                 var crit = buildCriterion(prop, finalOp, finalVal, userId);
@@ -1119,6 +1132,17 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         if (localSources.length === 0) localSources = [{ id: "", limit: 0 }];
 
         var mediaInfoLimit = tagConfig.Limit || 0;
+        var aiLimit = tagConfig.Limit || 0;
+        // Backwards compat: legacy single-target → derive separate tag + collection targets
+        var _legacyTarget = tagConfig.MediaInfoTargetType || (tagConfig.MediaInfoSeasonMode ? 'Season' : '');
+        // Tag output targets
+        var _tagTargetEp  = tagConfig.TagTargetEpisode  || tagConfig.MediaInfoTargetEpisode || _legacyTarget === 'Episode';
+        var _tagTargetSea = tagConfig.TagTargetSeason   || tagConfig.MediaInfoTargetSeason  || _legacyTarget === 'Season';
+        var _tagTargetSer = tagConfig.TagTargetSeries   || tagConfig.MediaInfoTargetSeries  || _legacyTarget === 'Series';
+        // Collection output targets
+        var _collTargetEp  = tagConfig.CollectionTargetEpisode || tagConfig.MediaInfoTargetEpisode || _legacyTarget === 'Episode';
+        var _collTargetSea = tagConfig.CollectionTargetSeason  || tagConfig.MediaInfoTargetSeason  || _legacyTarget === 'Season';
+        var _collTargetSer = tagConfig.CollectionTargetSeries  || tagConfig.MediaInfoTargetSeries  || _legacyTarget === 'Series';
 
         var enableHomeSection = tagConfig.EnableHomeSection ? 'checked' : '';
         var homeSectionLibraryId = encodeURIComponent(tagConfig.HomeSectionLibraryId || 'auto');
@@ -1226,7 +1250,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     </div>
 
                     <div class="source-mediainfo-container" style="display: ${sourceType === 'MediaInfo' ? 'block' : 'none'};">
-                        <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+                        <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap;">
                             <label style="font-size:0.9em; white-space:nowrap; margin:0;">Max items</label>
                             <input is="emby-input" class="txtMediaInfoLimit" type="number" value="${mediaInfoLimit}" min="0" style="width:90px;" />
                             <button type="button" is="emby-button" class="btnMiHelp raised" style="margin-left:auto; background:transparent; border:1px solid rgba(128,128,128,0.35); color:var(--theme-text-secondary); font-size:0.82em; padding:0 10px; min-width:0;"><i class="md-icon" style="font-size:1em; margin-right:4px;">help_outline</i><span>How to (filter guide)</span></button>
@@ -1303,7 +1327,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             </div>
                         </div>
 
-                        <div style="margin-top:15px;">
+                        <div style="display:flex; align-items:center; gap:12px; margin-top:15px; margin-bottom:15px;">
+                            <label style="font-size:0.9em; white-space:nowrap; margin:0;">Max items</label>
+                            <input is="emby-input" class="txtAiLimit" type="number" value="${aiLimit}" min="0" style="width:90px;" />
+                            <span style="font-size:0.8em; opacity:0.5;">0 = no limit. Injected into the prompt automatically.</span>
+                        </div>
+
+                        <div style="margin-top:0;">
                             <button type="button" is="emby-button" class="raised btnTestAiSource btn-neutral" style="background:transparent; border:1px solid rgba(128,128,128,0.4); color:var(--theme-text-secondary);">
                                 <i class="md-icon" style="margin-right:5px;">science</i>Test AI Source
                             </button>
@@ -1324,6 +1354,23 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     <div class="tag-settings" style="margin-left: 20px; padding-left: 15px; border-left: 2px solid var(--line-color); margin-top: 10px; display: ${tagConfig.EnableTag !== false ? 'block' : 'none'};">
                         <div class="inputContainer" style="flex-grow:1;"><input is="emby-input" class="txtTagName" type="text" label="Tag Name" value="${tagName}" placeholder="${labelName}" /></div>
                         <p style="margin:5px 0 0 0; font-size:0.9em; opacity:0.7;">The tag that will be applied to matched items in Emby.</p>
+                        <div class="mi-tag-target-section" style="margin-top:14px; display:${sourceType === 'MediaInfo' ? 'block' : 'none'};">
+                            <div style="font-size:0.85em; opacity:0.6; margin-bottom:6px;">For TV shows, tag at level:</div>
+                            <div style="display:flex; flex-direction:row; align-items:center; gap:20px;">
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap;">
+                                    <input type="checkbox" is="emby-checkbox" class="chkTagTargetSeries" ${_tagTargetSer ? 'checked' : ''} />
+                                    <span>Series</span>
+                                </label>
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap;">
+                                    <input type="checkbox" is="emby-checkbox" class="chkTagTargetSeason" ${_tagTargetSea ? 'checked' : ''} />
+                                    <span>Season</span>
+                                </label>
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap;">
+                                    <input type="checkbox" is="emby-checkbox" class="chkTagTargetEpisode" ${_tagTargetEp ? 'checked' : ''} />
+                                    <span>Episode</span>
+                                </label>
+                            </div>
+                        </div>
                     </div>
             </div>
 
@@ -1383,6 +1430,23 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <div style="display:flex; gap:6px; margin-top:6px;">
                                 <input class="txtPosterUrl" is="emby-input" type="url" placeholder="https://example.com/poster.jpg" style="flex:1;" />
                                 <button type="button" is="emby-button" class="btnLoadPosterUrl raised btn-neutral">Load</button>
+                            </div>
+                        </div>
+                        <div class="mi-coll-target-section" style="margin-top:14px; display:${sourceType === 'MediaInfo' ? 'block' : 'none'};">
+                            <div style="font-size:0.85em; opacity:0.6; margin-bottom:6px;">For TV shows, add to collection at level:</div>
+                            <div style="display:flex; flex-direction:row; align-items:center; gap:20px;">
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap;">
+                                    <input type="checkbox" is="emby-checkbox" class="chkCollTargetSeries" ${_collTargetSer ? 'checked' : ''} />
+                                    <span>Series</span>
+                                </label>
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap;">
+                                    <input type="checkbox" is="emby-checkbox" class="chkCollTargetSeason" ${_collTargetSea ? 'checked' : ''} />
+                                    <span>Season</span>
+                                </label>
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap;">
+                                    <input type="checkbox" is="emby-checkbox" class="chkCollTargetEpisode" ${_collTargetEp ? 'checked' : ''} />
+                                    <span>Episode</span>
+                                </label>
                             </div>
                         </div>
                     </div>
@@ -1503,7 +1567,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 row.querySelector('.source-mediainfo-container').style.display = type === 'MediaInfo' ? 'block' : 'none';
                 row.querySelector('.source-ai-container').style.display = type === 'AI' ? 'block' : 'none';
 
-                if (type === 'MediaInfo') {
+                var isMi = type === 'MediaInfo';
+                row.querySelectorAll('.mi-tag-target-section, .mi-coll-target-section').forEach(function(s) {
+                    s.style.display = isMi ? 'block' : 'none';
+                });
+                if (isMi) {
                     var miList = row.querySelector('.mediainfo-filter-list');
                     if (miList && miList.querySelectorAll('.mediainfo-filter-group').length === 0) {
                         miList.insertAdjacentHTML('beforeend', getMediaInfoFilterGroupHtml({ Operator: 'AND', Criteria: [], GroupOperator: 'AND' }, 0, true));
@@ -1524,12 +1592,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 if (existingHint) existingHint.outerHTML = getMiHintHtml(e.target.value);
             }
             if (e.target.classList.contains('selMiValue')) {
-                var miRule = e.target.closest('.mi-rule');
-                if (miRule) {
-                    var propSel = miRule.querySelector('.selMiProperty');
-                    if (propSel && propSel.value === 'MediaType') {
-                        var ipLabel = miRule.querySelector('.mi-include-parent');
-                        if (ipLabel) ipLabel.style.display = (e.target.value === 'Episode') ? 'flex' : 'none';
+                var _miRule = e.target.closest('.mi-rule');
+                if (_miRule) {
+                    var _prop = (_miRule.querySelector('.selMiProperty') || {}).value;
+                    if (_prop === 'MediaType') {
+                        var _incParent = _miRule.querySelector('.mi-include-parent');
+                        if (_incParent) _incParent.style.display = e.target.value === 'Episode' ? 'flex' : 'none';
                     }
                 }
             }
@@ -2335,10 +2403,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var userId = selUser ? selUser.value : '';
                     var finalOp = op2 || textMatchOp;
                     var finalVal = op2 ? num : val;
-                    if (prop === 'MediaType' && finalVal === 'Episode') {
-                        var chkIps = rule.querySelector('.chkIncludeParentSeries');
-                        if (chkIps && chkIps.checked) finalVal = 'EpisodeIncludeSeries';
-                    }
                     var notBtn = rule.querySelector('.btnNotToggle');
                     var isNot = notBtn && notBtn.dataset.not === '1';
                     var crit = buildCriterion(prop, finalOp, finalVal, userId);
@@ -2373,6 +2437,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 Name: entryLabel, Tag: name, Active: active, Blacklist: bl, ActiveIntervals: intervals,
                 EnableTag: enableTagChk, EnableCollection: enableColl, CollectionName: collName, CollectionDescription: collDescription, CollectionPosterPath: collPoster, OnlyCollection: false, OverrideWhenActive: overrideWhenActive, LastModified: currentLastMod,
                 SourceType: st, MediaInfoFilters: miFilters, MediaInfoConditions: [],
+                TagTargetEpisode:        !!(row.querySelector('.chkTagTargetEpisode')  || {}).checked,
+                TagTargetSeason:         !!(row.querySelector('.chkTagTargetSeason')   || {}).checked,
+                TagTargetSeries:         !!(row.querySelector('.chkTagTargetSeries')   || {}).checked,
+                CollectionTargetEpisode: !!(row.querySelector('.chkCollTargetEpisode') || {}).checked,
+                CollectionTargetSeason:  !!(row.querySelector('.chkCollTargetSeason')  || {}).checked,
+                CollectionTargetSeries:  !!(row.querySelector('.chkCollTargetSeries')  || {}).checked,
+                MediaInfoTargetEpisode: false, MediaInfoTargetSeason: false, MediaInfoTargetSeries: false,
+                MediaInfoTargetType: '', MediaInfoSeasonMode: false,
                 EnableHomeSection: enableHse, HomeSectionLibraryId: hseLibraryId, HomeSectionUserIds: hseUserIds,
                 HomeSectionSettings: JSON.stringify(hseSettings), HomeSectionTracked: hseTracked
             };
@@ -2398,7 +2470,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     flatTags.push(Object.assign({}, baseTag, { Url: "", Limit: 0, LocalSourceId: "" }));
                 }
             } else if (st === 'AI') {
-                var aiLimitVal = parseInt((row.querySelector('.txtMediaInfoLimit') || {}).value, 10) || 0;
+                var aiLimitVal = parseInt((row.querySelector('.txtAiLimit') || {}).value, 10) || 0;
                 flatTags.push(Object.assign({}, baseTag, {
                     Url: "", Limit: aiLimitVal, LocalSourceId: "",
                     AiProvider: (row.querySelector('.selAiProvider') || {}).value || 'OpenAI',
@@ -2592,7 +2664,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     AiPrompt: t.AiPrompt || '',
                     AiIncludeRecentlyWatched: t.AiIncludeRecentlyWatched || false,
                     AiRecentlyWatchedUserId: t.AiRecentlyWatchedUserId || '',
-                    AiRecentlyWatchedCount: t.AiRecentlyWatchedCount || 20
+                    AiRecentlyWatchedCount: t.AiRecentlyWatchedCount || 20,
+                    TagTargetEpisode: t.TagTargetEpisode || false,
+                    TagTargetSeason:  t.TagTargetSeason  || false,
+                    TagTargetSeries:  t.TagTargetSeries  || false,
+                    CollectionTargetEpisode: t.CollectionTargetEpisode || false,
+                    CollectionTargetSeason:  t.CollectionTargetSeason  || false,
+                    CollectionTargetSeries:  t.CollectionTargetSeries  || false
                 };
             }
             if (t.SourceType === 'External' && t.Url) grouped[key].Urls.push({ url: t.Url, limit: t.Limit });

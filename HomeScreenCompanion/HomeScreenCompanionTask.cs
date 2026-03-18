@@ -141,6 +141,7 @@ namespace HomeScreenCompanion
                 var fetcher = new ListFetcher(_httpClient, _jsonSerializer);
                 var desiredTagsMap = new Dictionary<Guid, HashSet<string>>();
                 var allScannedEpisodeItems = new Dictionary<Guid, BaseItem>();
+                var allScannedSeasonItems = new Dictionary<Guid, BaseItem>();
                 var desiredCollectionsMap = new Dictionary<string, HashSet<long>>(StringComparer.OrdinalIgnoreCase);
                 var collectionDescriptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 var collectionPosters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -310,6 +311,8 @@ namespace HomeScreenCompanion
                         int effectiveLimit = tagConfig.Limit <= 0 ? 10000 : tagConfig.Limit;
                         var blacklist = new HashSet<string>(tagConfig.Blacklist ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
                         var matchedLocalItems = new List<BaseItem>();
+                        List<BaseItem> tagOutputItems = matchedLocalItems;
+                        List<BaseItem> collectionOutputItems = matchedLocalItems;
                         int matchCount = 0;
 
                         if (string.IsNullOrEmpty(tagConfig.SourceType) || tagConfig.SourceType == "External")
@@ -480,9 +483,44 @@ namespace HomeScreenCompanion
                                 foreach (var ep in itemsToScan)
                                     allScannedEpisodeItems.TryAdd(ep.Id, ep);
                             }
+                            // Redirect matched items to the selected output level (tag and collection independently)
+                            tagOutputItems = matchedLocalItems;
+                            collectionOutputItems = matchedLocalItems;
+                            {
+                                bool scannedEpisodes = TagConfigTargetsEpisodes(tagConfig);
+                                var (tEp, tSea, tSer) = EffectiveTagTargets(tagConfig);
+                                var (cEp, cSea, cSer) = EffectiveCollectionTargets(tagConfig);
+
+                                List<BaseItem> BuildOutputList(bool ep, bool sea, bool ser, bool anyNew)
+                                {
+                                    if (!anyNew) return matchedLocalItems.ToList();
+                                    var list = new List<BaseItem>();
+                                    var seriesOnly = matchedLocalItems.Where(i => i.GetType().Name.Contains("Series")).ToList();
+                                    if (scannedEpisodes)
+                                    {
+                                        // Collapse up: episodes → season/series
+                                        if (ep) list.AddRange(matchedLocalItems);
+                                        if (sea) { var s = ResolveParentSeasons(matchedLocalItems); if (debug) LogDebug($"  Season ↑: {matchedLocalItems.Count} eps → {s.Count}"); list.AddRange(s); foreach (var x in s) allScannedSeasonItems.TryAdd(x.Id, x); }
+                                        if (ser) { var s = ResolveParentSeries(matchedLocalItems); if (debug) LogDebug($"  Series ↑: {matchedLocalItems.Count} eps → {s.Count}"); list.AddRange(s); }
+                                    }
+                                    else
+                                    {
+                                        // Expand down: series → seasons/episodes; movies stay as-is for any target
+                                        var movies = matchedLocalItems.Where(i => !i.GetType().Name.Contains("Series")).ToList();
+                                        if (ser) list.AddRange(matchedLocalItems);
+                                        if (sea) { var s = ResolveChildSeasons(seriesOnly); if (debug) LogDebug($"  Season ↓: {seriesOnly.Count} series → {s.Count}"); list.AddRange(s); foreach (var x in s) allScannedSeasonItems.TryAdd(x.Id, x); list.AddRange(movies); }
+                                        if (ep)  { var e = ResolveChildEpisodes(seriesOnly); if (debug) LogDebug($"  Episode ↓: {seriesOnly.Count} series → {e.Count}"); list.AddRange(e); foreach (var x in e) allScannedEpisodeItems.TryAdd(x.Id, x); list.AddRange(movies); }
+                                    }
+                                    return list;
+                                }
+
+                                tagOutputItems        = BuildOutputList(tEp, tSea, tSer, tEp || tSea || tSer);
+                                collectionOutputItems = BuildOutputList(cEp, cSea, cSer, cEp || cSea || cSer);
+                            }
                             if (debug)
                             {
-                                LogDebug($"  Scanned {itemsToScan.Count} items  ·  {matchedLocalItems.Count} matched");
+                                var _dbgItems = tagOutputItems.Count >= collectionOutputItems.Count ? tagOutputItems : collectionOutputItems;
+                                LogDebug($"  Scanned {itemsToScan.Count} items  ·  {matchedLocalItems.Count} matched  (tag→{tagOutputItems.Count}, coll→{collectionOutputItems.Count})");
                                 if (matchedLocalItems.Count > 0)
                                 {
                                     LogDebug("  Matched items:");
@@ -493,6 +531,7 @@ namespace HomeScreenCompanion
                                         var _miYr = _mi.ProductionYear.HasValue ? $" ({_mi.ProductionYear})" : "";
                                         var _miTp = _mi.GetType().Name.Contains("Series") ? "Series"
                                                   : _mi.GetType().Name.Contains("Episode") ? "Episode"
+                                                  : _mi.GetType().Name.Contains("Season") ? "Season"
                                                   : "Movie";
                                         LogDebug($"    {_mi.Name}{_miYr}  [{_miTp}]");
                                         _miShown++;
@@ -560,32 +599,32 @@ namespace HomeScreenCompanion
                             if (debug) LogDebug($"  AI returned {gs.ListCount} items  ·  {matchedLocalItems.Count} matched in library");
                         }
 
-                        gs.MatchCount = matchedLocalItems.Count;
-                        if (matchedLocalItems.Count > 0)
+                        // For non-episode sources tagOutputItems == collectionOutputItems == matchedLocalItems
+                        var allOutputIds = new HashSet<Guid>(tagOutputItems.Select(i => i.Id));
+                        foreach (var id in collectionOutputItems.Select(i => i.Id)) allOutputIds.Add(id);
+                        gs.MatchCount = allOutputIds.Count;
+                        matchCount += allOutputIds.Count;
+
+                        if (tagConfig.EnableTag && !tagConfig.OnlyCollection)
                         {
-                            foreach (var localItem in matchedLocalItems)
+                            foreach (var localItem in tagOutputItems)
                             {
-                                matchCount++;
-                                if (tagConfig.EnableTag && !tagConfig.OnlyCollection)
-                                {
-                                    if (!desiredTagsMap.ContainsKey(localItem.Id))
-                                        desiredTagsMap[localItem.Id] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                                    desiredTagsMap[localItem.Id].Add(tagName);
+                                if (!desiredTagsMap.ContainsKey(localItem.Id))
+                                    desiredTagsMap[localItem.Id] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                                desiredTagsMap[localItem.Id].Add(tagName);
 
-                                    var imdb = localItem.GetProviderId("Imdb");
-                                    if (!string.IsNullOrEmpty(imdb) && tagConfig.SourceType != "External")
-                                    {
-                                        TagCacheManager.Instance.AddToCache($"imdb_{imdb}", tagName);
-                                    }
-                                }
-
-                                if (tagConfig.EnableCollection)
-                                {
-                                    if (!desiredCollectionsMap.ContainsKey(cName))
-                                        desiredCollectionsMap[cName] = new HashSet<long>();
-                                    desiredCollectionsMap[cName].Add(localItem.InternalId);
-                                }
+                                var imdb = localItem.GetProviderId("Imdb");
+                                if (!string.IsNullOrEmpty(imdb) && tagConfig.SourceType != "External")
+                                    TagCacheManager.Instance.AddToCache($"imdb_{imdb}", tagName);
                             }
+                        }
+
+                        if (tagConfig.EnableCollection)
+                        {
+                            if (!desiredCollectionsMap.ContainsKey(cName))
+                                desiredCollectionsMap[cName] = new HashSet<long>();
+                            foreach (var localItem in collectionOutputItems)
+                                desiredCollectionsMap[cName].Add(localItem.InternalId);
                         }
                     }
                     catch (Exception ex)
@@ -620,6 +659,17 @@ namespace HomeScreenCompanion
                     });
                     foreach (var ep in taggedEpisodes)
                         allScannedEpisodeItems.TryAdd(ep.Id, ep);
+
+                    // Collect seasons that currently carry managed tags for cleanup
+                    var taggedSeasons = _libraryManager.GetItemList(new InternalItemsQuery
+                    {
+                        IncludeItemTypes = new[] { "Season" },
+                        Tags = new[] { managedTag },
+                        Recursive = true,
+                        IsVirtualItem = false
+                    });
+                    foreach (var s in taggedSeasons)
+                        allScannedSeasonItems.TryAdd(s.Id, s);
                 }
 
                 int tagsAdded = 0, tagsRemoved = 0, itemsChanged = 0, updateCount = 0;
@@ -684,6 +734,40 @@ namespace HomeScreenCompanion
                         foreach (var t in toAdd) { item.AddTag(t); tagsAdded++; tagAddedByTag[t] = tagAddedByTag.GetValueOrDefault(t) + 1; }
                         try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); }
                         catch (Exception ex) { LogSummary($"  ! Failed to save tags for '{item.Name}': {ex.Message}", "Warn"); }
+                        if (++updateCount % 25 == 0)
+                            await Task.Yield();
+                    }
+                    else
+                    {
+                        tagsAdded += toAdd.Count; tagsRemoved += toRemove.Count;
+                        foreach (var t in toAdd) tagAddedByTag[t] = tagAddedByTag.GetValueOrDefault(t) + 1;
+                        foreach (var t in toRemove) tagRemovedByTag[t] = tagRemovedByTag.GetValueOrDefault(t) + 1;
+                    }
+                }
+                foreach (var item in allScannedSeasonItems.Values)
+                {
+                    var existingTags = new HashSet<string>(item.Tags, StringComparer.OrdinalIgnoreCase);
+                    var targetTags = desiredTagsMap.ContainsKey(item.Id) ? desiredTagsMap[item.Id] : new HashSet<string>();
+
+                    var toRemove = existingTags.Where(t => managedTags.Contains(t) && !targetTags.Contains(t) && !failedFetches.Contains(t)).ToList();
+                    var toAdd = targetTags.Where(t => !existingTags.Contains(t)).ToList();
+
+                    if (toRemove.Count == 0 && toAdd.Count == 0) continue;
+
+                    itemsChanged++;
+                    if (debug)
+                    {
+                        var _tagYr = item.ProductionYear.HasValue ? $" ({item.ProductionYear})" : "";
+                        string _itemLabel = $"{item.Name}{_tagYr}  [Season]";
+                        foreach (var t in toAdd) { if (!_dbgTagAdded!.ContainsKey(t)) _dbgTagAdded[t] = new List<string>(); _dbgTagAdded[t].Add(_itemLabel); }
+                        foreach (var t in toRemove) { if (!_dbgTagRemoved!.ContainsKey(t)) _dbgTagRemoved[t] = new List<string>(); _dbgTagRemoved[t].Add(_itemLabel); }
+                    }
+                    if (!dryRun)
+                    {
+                        foreach (var t in toRemove) { item.RemoveTag(t); tagsRemoved++; tagRemovedByTag[t] = tagRemovedByTag.GetValueOrDefault(t) + 1; }
+                        foreach (var t in toAdd) { item.AddTag(t); tagsAdded++; tagAddedByTag[t] = tagAddedByTag.GetValueOrDefault(t) + 1; }
+                        try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); }
+                        catch (Exception ex) { LogSummary($"  ! Failed to save tags for season '{item.Name}': {ex.Message}", "Warn"); }
                         if (++updateCount % 25 == 0)
                             await Task.Yield();
                     }
@@ -1011,6 +1095,8 @@ namespace HomeScreenCompanion
             int effectiveLimit = tagConfig.Limit <= 0 ? 10000 : tagConfig.Limit;
             var blacklist = new HashSet<string>(tagConfig.Blacklist ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
             var matchedLocalItems = new List<BaseItem>();
+            List<BaseItem> tagOutputItems = matchedLocalItems;
+            List<BaseItem> collectionOutputItems = matchedLocalItems;
             int _listCount = 0;
 
             try
@@ -1090,6 +1176,38 @@ namespace HomeScreenCompanion
                             if (effectiveLimit < 10000 && matchedLocalItems.Count >= effectiveLimit) break;
                         }
                     }
+                    // Redirect matched items to the selected output level (tag and collection independently)
+                    tagOutputItems = matchedLocalItems;
+                    collectionOutputItems = matchedLocalItems;
+                    {
+                        bool scannedEpisodes = TagConfigTargetsEpisodes(tagConfig);
+                        var (tEp, tSea, tSer) = EffectiveTagTargets(tagConfig);
+                        var (cEp, cSea, cSer) = EffectiveCollectionTargets(tagConfig);
+
+                        List<BaseItem> BuildOutputList(bool ep, bool sea, bool ser, bool anyNew)
+                        {
+                            if (!anyNew) return matchedLocalItems.ToList();
+                            var list = new List<BaseItem>();
+                            var seriesOnly = matchedLocalItems.Where(i => i.GetType().Name.Contains("Series")).ToList();
+                            if (scannedEpisodes)
+                            {
+                                if (ep) list.AddRange(matchedLocalItems);
+                                if (sea) list.AddRange(ResolveParentSeasons(matchedLocalItems));
+                                if (ser) list.AddRange(ResolveParentSeries(matchedLocalItems));
+                            }
+                            else
+                            {
+                                var movies = matchedLocalItems.Where(i => !i.GetType().Name.Contains("Series")).ToList();
+                                if (ser) list.AddRange(matchedLocalItems);
+                                if (sea) { list.AddRange(ResolveChildSeasons(seriesOnly)); list.AddRange(movies); }
+                                if (ep)  { list.AddRange(ResolveChildEpisodes(seriesOnly)); list.AddRange(movies); }
+                            }
+                            return list;
+                        }
+
+                        tagOutputItems        = BuildOutputList(tEp, tSea, tSer, tEp || tSea || tSer);
+                        collectionOutputItems = BuildOutputList(cEp, cSea, cSer, cEp || cSea || cSer);
+                    }
                 }
                 else if (tagConfig.SourceType == "AI")
                 {
@@ -1143,7 +1261,7 @@ namespace HomeScreenCompanion
             int tagsAdded = 0, tagsRemoved = 0;
             var _dbgTagAdded = debug ? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase) : null;
             var _dbgTagRemoved = debug ? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase) : null;
-            var matchedIds = new HashSet<Guid>(matchedLocalItems.Select(i => i.Id));
+            var matchedIds = new HashSet<Guid>(tagOutputItems.Select(i => i.Id));
             int updateCount = 0;
             foreach (var item in allItems)
             {
@@ -1211,6 +1329,49 @@ namespace HomeScreenCompanion
                 }
             }
 
+            // Season cleanup: remove stale tags from seasons; for season-mode configs also tag matching seasons
+            {
+                bool targetsSeason = tagConfig.SourceType == "MediaInfo" && tagConfig.EnableTag && !tagConfig.OnlyCollection && TagConfigTargetsSeason(tagConfig);
+                var matchedSeasonIds = new HashSet<Guid>();
+                var allSeasonItemsMap = new Dictionary<Guid, BaseItem>();
+                if (targetsSeason)
+                {
+                    var allEpisodes = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Episode" }, Recursive = true, IsVirtualItem = false });
+                    var matchingEpisodes = allEpisodes
+                        .Where(ep => ep.LocationType == LocationType.FileSystem
+                                  && ItemMatchesMediaInfo(ep, tagConfig, debug, seriesEpisodeCache, personCache, userDataCache, null, preloadedUsers, seriesLastPlayedCache))
+                        .ToList();
+                    foreach (var season in ResolveParentSeasons(matchingEpisodes))
+                    {
+                        matchedSeasonIds.Add(season.Id);
+                        allSeasonItemsMap.TryAdd(season.Id, season);
+                    }
+                }
+                foreach (var s in _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Season" }, Tags = new[] { tagName }, Recursive = true, IsVirtualItem = false }))
+                    allSeasonItemsMap.TryAdd(s.Id, s);
+                foreach (var season in allSeasonItemsMap.Values)
+                {
+                    bool shouldHaveSeason = tagConfig.EnableTag && !tagConfig.OnlyCollection && matchedSeasonIds.Contains(season.Id);
+                    bool hasTagSeason = new HashSet<string>(season.Tags, StringComparer.OrdinalIgnoreCase).Contains(tagName);
+                    if (shouldHaveSeason == hasTagSeason) continue;
+                    if (debug)
+                    {
+                        var _sYr = season.ProductionYear.HasValue ? $" ({season.ProductionYear})" : "";
+                        string _sLabel = $"{season.Name}{_sYr}  [Season]";
+                        if (shouldHaveSeason) { if (!_dbgTagAdded!.ContainsKey(tagName)) _dbgTagAdded[tagName] = new List<string>(); _dbgTagAdded[tagName].Add(_sLabel); }
+                        else { if (!_dbgTagRemoved!.ContainsKey(tagName)) _dbgTagRemoved[tagName] = new List<string>(); _dbgTagRemoved[tagName].Add(_sLabel); }
+                    }
+                    if (!dryRun)
+                    {
+                        if (shouldHaveSeason) season.AddTag(tagName); else season.RemoveTag(tagName);
+                        try { _libraryManager.UpdateItem(season, season.Parent, ItemUpdateType.MetadataEdit, null); }
+                        catch { }
+                        if (++updateCount % 25 == 0) await Task.Yield();
+                    }
+                    if (shouldHaveSeason) tagsAdded++; else tagsRemoved++;
+                }
+            }
+
             if (debug && (_dbgTagAdded!.Count > 0 || _dbgTagRemoved!.Count > 0))
             {
                 LogDebug("── Tags ──────────────────────────────────────────");
@@ -1239,11 +1400,11 @@ namespace HomeScreenCompanion
             int collResult = 0;
             bool _collCreated = false;
             int _collItemsAdded = 0, _collItemsRemoved = 0;
-            if (tagConfig.EnableCollection && matchedLocalItems.Count > 0 && !dryRun)
+            if (tagConfig.EnableCollection && collectionOutputItems.Count > 0 && !dryRun)
             {
                 try
                 {
-                    var desiredIds = matchedIds.Select(id => allItems.FirstOrDefault(i => i.Id == id)?.InternalId ?? 0).Where(id => id != 0).ToHashSet();
+                    var desiredIds = collectionOutputItems.Select(i => i.InternalId).ToHashSet();
                     var existingColl = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = cName, Recursive = true }).FirstOrDefault();
                     if (existingColl == null)
                     {
@@ -2111,15 +2272,140 @@ namespace HomeScreenCompanion
             return fromFilters.Concat(fromConditions);
         }
 
-        private static bool TagConfigTargetsEpisodes(TagConfig tagConfig)
+        // Returns the legacy single target type for backwards compat (MediaInfoTargetType or MediaInfoSeasonMode)
+        private static string EffectiveLegacyTargetType(TagConfig tagConfig)
         {
-            return GetAllCriteria(tagConfig).Any(c =>
-                c.TrimStart('!').StartsWith("MediaType:Episode", StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrEmpty(tagConfig.MediaInfoTargetType))
+                return tagConfig.MediaInfoTargetType;
+            if (tagConfig.MediaInfoSeasonMode && tagConfig.SourceType == "MediaInfo")
+                return "Season";
+            return "";
         }
+
+        // Effective tag output targets (new fields → old MediaInfoTarget* → legacy string)
+        private static (bool ep, bool sea, bool ser) EffectiveTagTargets(TagConfig tc)
+        {
+            if (tc.TagTargetEpisode || tc.TagTargetSeason || tc.TagTargetSeries)
+                return (tc.TagTargetEpisode, tc.TagTargetSeason, tc.TagTargetSeries);
+            if (tc.MediaInfoTargetEpisode || tc.MediaInfoTargetSeason || tc.MediaInfoTargetSeries)
+                return (tc.MediaInfoTargetEpisode, tc.MediaInfoTargetSeason, tc.MediaInfoTargetSeries);
+            var leg = EffectiveLegacyTargetType(tc);
+            return (leg == "Episode", leg == "Season", leg == "Series");
+        }
+
+        // Effective collection output targets (same fallback chain)
+        private static (bool ep, bool sea, bool ser) EffectiveCollectionTargets(TagConfig tc)
+        {
+            if (tc.CollectionTargetEpisode || tc.CollectionTargetSeason || tc.CollectionTargetSeries)
+                return (tc.CollectionTargetEpisode, tc.CollectionTargetSeason, tc.CollectionTargetSeries);
+            if (tc.MediaInfoTargetEpisode || tc.MediaInfoTargetSeason || tc.MediaInfoTargetSeries)
+                return (tc.MediaInfoTargetEpisode, tc.MediaInfoTargetSeason, tc.MediaInfoTargetSeries);
+            var leg = EffectiveLegacyTargetType(tc);
+            return (leg == "Episode", leg == "Season", leg == "Series");
+        }
+
+        // Returns true if episodes should be scanned — driven ONLY by filter criteria, not tab checkboxes
+        private static bool TagConfigTargetsEpisodes(TagConfig tagConfig) =>
+            GetAllCriteria(tagConfig).Any(c =>
+                c.TrimStart('!').StartsWith("MediaType:Episode", StringComparison.OrdinalIgnoreCase));
 
         private static bool TagConfigIncludesParentSeries(TagConfig tagConfig) =>
             GetAllCriteria(tagConfig).Any(c =>
                 c.TrimStart('!').Equals("MediaType:EpisodeIncludeSeries", StringComparison.OrdinalIgnoreCase));
+
+        private static bool TagConfigTargetsSeason(TagConfig tagConfig)
+        {
+            var (_, tSea, _) = EffectiveTagTargets(tagConfig);
+            var (_, cSea, _) = EffectiveCollectionTargets(tagConfig);
+            return tSea || cSea;
+        }
+
+        private List<BaseItem> ResolveParentSeasons(IEnumerable<BaseItem> matchedEpisodes)
+        {
+            var seasonIds = new HashSet<long>();
+            var seasons = new List<BaseItem>();
+            foreach (var ep in matchedEpisodes)
+            {
+                var parent = ep.Parent;
+                if (parent != null && parent.GetType().Name.Contains("Season"))
+                {
+                    if (seasonIds.Add(parent.InternalId))
+                        seasons.Add(parent);
+                }
+            }
+            return seasons;
+        }
+
+        private List<BaseItem> ResolveParentSeries(IEnumerable<BaseItem> matchedEpisodes)
+        {
+            var seriesIds = new HashSet<long>();
+            var seriesList = new List<BaseItem>();
+            foreach (var ep in matchedEpisodes)
+            {
+                BaseItem? seriesItem = null;
+                var parent = ep.Parent;
+                if (parent != null)
+                {
+                    if (parent.GetType().Name.Contains("Series"))
+                        seriesItem = parent;
+                    else if (parent.GetType().Name.Contains("Season") && parent.Parent != null && parent.Parent.GetType().Name.Contains("Series"))
+                        seriesItem = parent.Parent;
+                }
+                if (seriesItem != null && seriesIds.Add(seriesItem.InternalId))
+                    seriesList.Add(seriesItem);
+            }
+            return seriesList;
+        }
+
+        // Expand down: series → all child seasons (Season.Parent = Series)
+        private List<BaseItem> ResolveChildSeasons(IEnumerable<BaseItem> matchedSeries)
+        {
+            var seriesIds = new HashSet<long>(matchedSeries
+                .Where(i => i.GetType().Name.Contains("Series"))
+                .Select(i => i.InternalId));
+            if (seriesIds.Count == 0) return new List<BaseItem>();
+
+            var seasonIds = new HashSet<long>();
+            var seasons = new List<BaseItem>();
+            var allSeasons = _libraryManager.GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = new[] { "Season" },
+                Recursive = true,
+                IsVirtualItem = false
+            });
+            foreach (var s in allSeasons)
+            {
+                var parentId = s.Parent?.InternalId ?? 0;
+                if (parentId != 0 && seriesIds.Contains(parentId) && seasonIds.Add(s.InternalId))
+                    seasons.Add(s);
+            }
+            return seasons;
+        }
+
+        // Expand down: series → all child episodes (Episode.Parent = Season, Season.Parent = Series)
+        private List<BaseItem> ResolveChildEpisodes(IEnumerable<BaseItem> matchedSeries)
+        {
+            var seriesIds = new HashSet<long>(matchedSeries
+                .Where(i => i.GetType().Name.Contains("Series"))
+                .Select(i => i.InternalId));
+            if (seriesIds.Count == 0) return new List<BaseItem>();
+
+            var episodeIds = new HashSet<long>();
+            var episodes = new List<BaseItem>();
+            var allEpisodes = _libraryManager.GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = new[] { "Episode" },
+                Recursive = true,
+                IsVirtualItem = false
+            });
+            foreach (var ep in allEpisodes)
+            {
+                var seriesId = ep.Parent?.Parent?.InternalId ?? 0;
+                if (seriesId != 0 && seriesIds.Contains(seriesId) && episodeIds.Add(ep.InternalId))
+                    episodes.Add(ep);
+            }
+            return episodes;
+        }
 
         private static string? ExtractTitleContains(TagConfig tagConfig)
         {

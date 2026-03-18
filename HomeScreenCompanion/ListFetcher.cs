@@ -41,7 +41,7 @@ namespace HomeScreenCompanion
 
             if (url.Contains("mdblist.com"))
             {
-                return await FetchMdblist(url, mdbApiKey, cancellationToken);
+                return await FetchMdblist(url, mdbApiKey, limit, cancellationToken);
             }
             else
             {
@@ -49,32 +49,39 @@ namespace HomeScreenCompanion
             }
         }
 
-        private async Task<List<ExternalItemDto>> FetchMdblist(string listUrl, string apiKey, CancellationToken cancellationToken)
+        private async Task<List<ExternalItemDto>> FetchMdblist(string listUrl, string apiKey, int limit, CancellationToken cancellationToken)
         {
             var cleanUrl = listUrl.Trim().TrimEnd('/');
             if (!cleanUrl.EndsWith("/json")) cleanUrl += "/json";
-            var apiUrl = $"{cleanUrl}?apikey={apiKey}&_={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
-            try
+
+            const int pageSize = 1000;
+            var all = new List<ExternalItemDto>();
+            int offset = 0;
+
+            while (true)
             {
-                using (var stream = await _httpClient.Get(new HttpRequestOptions { Url = apiUrl, CancellationToken = cancellationToken }))
+                var apiUrl = $"{cleanUrl}?apikey={apiKey}&limit={pageSize}&offset={offset}&_={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+                try
                 {
-                    var result = _jsonSerializer.DeserializeFromStream<List<MdbListItem>>(stream);
-                    if (result != null)
+                    using (var stream = await _httpClient.Get(new HttpRequestOptions { Url = apiUrl, CancellationToken = cancellationToken }))
                     {
-                        return result
+                        var result = _jsonSerializer.DeserializeFromStream<List<MdbListItem>>(stream);
+                        if (result == null || result.Count == 0) break;
+
+                        var page = result
                             .Where(x => !string.IsNullOrEmpty(x.imdb_id))
-                            .Select(x => new ExternalItemDto
-                            {
-                                Name = x.title,
-                                Imdb = x.imdb_id,
-                                Tmdb = null
-                            })
-                            .ToList();
+                            .Select(x => new ExternalItemDto { Name = x.title, Imdb = x.imdb_id, Tmdb = null });
+                        all.AddRange(page);
+
+                        if (result.Count < pageSize) break;
+                        if (limit < 10000 && all.Count >= limit) break;
+                        offset += pageSize;
                     }
                 }
+                catch { break; }
             }
-            catch { }
-            return new List<ExternalItemDto>();
+
+            return all;
         }
 
         private async Task<List<ExternalItemDto>> FetchTrakt(string rawUrl, string clientId, int limit, CancellationToken cancellationToken)
@@ -233,7 +240,7 @@ namespace HomeScreenCompanion
 
         private async Task<string> CallGemini(string apiKey, string userMessage, CancellationToken cancellationToken)
         {
-            var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={apiKey}";
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}";
             var requestBody = $"{{" +
                 $"\"systemInstruction\":{{\"parts\":[{{\"text\":{EscapeJsonString(AiSystemPrompt)}}}]}}," +
                 $"\"contents\":[{{\"role\":\"user\",\"parts\":[{{\"text\":{EscapeJsonString(userMessage)}}}]}}]" +

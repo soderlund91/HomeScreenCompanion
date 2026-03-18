@@ -52,6 +52,22 @@ namespace HomeScreenCompanion
         public string CollectionDescription { get; set; } = "";
         public string CollectionPosterPath { get; set; } = "";
         public bool OnlyCollection { get; set; } = false;
+        // Legacy fields — kept for backwards compat, never written by new code
+        public bool MediaInfoSeasonMode { get; set; } = false;
+        public string MediaInfoTargetType { get; set; } = "";
+        public bool MediaInfoTargetEpisode { get; set; } = false;
+        public bool MediaInfoTargetSeason { get; set; } = false;
+        public bool MediaInfoTargetSeries { get; set; } = false;
+
+        // Tag output targets (what level to tag when scanning episodes)
+        public bool TagTargetEpisode { get; set; } = false;
+        public bool TagTargetSeason  { get; set; } = false;
+        public bool TagTargetSeries  { get; set; } = false;
+
+        // Collection output targets (what level to add to collection when scanning episodes)
+        public bool CollectionTargetEpisode { get; set; } = false;
+        public bool CollectionTargetSeason  { get; set; } = false;
+        public bool CollectionTargetSeries  { get; set; } = false;
 
         public bool EnableHomeSection { get; set; } = false;
         public List<string> HomeSectionUserIds { get; set; } = new List<string>();
