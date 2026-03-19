@@ -1349,8 +1349,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         <div style="margin-bottom: 15px;">
                             <label class="selectLabel">AI Provider</label>
                             <select is="emby-select" class="selAiProvider" style="width:100%;">
-                                <option value="OpenAI" ${(tagConfig.AiProvider || 'OpenAI') === 'OpenAI' ? 'selected' : ''}>OpenAI (gpt-4o-mini)</option>
-                                <option value="Gemini" ${(tagConfig.AiProvider || 'OpenAI') === 'Gemini' ? 'selected' : ''}>Google Gemini (gemini-1.5-flash)</option>
+                                <option value="OpenAI" ${(tagConfig.AiProvider || 'OpenAI') === 'OpenAI' ? 'selected' : ''}>OpenAI (ChatGPT)</option>
+                                <option value="Gemini" ${(tagConfig.AiProvider || 'OpenAI') === 'Gemini' ? 'selected' : ''}>Google Gemini</option>
                             </select>
                         </div>
 
@@ -1410,7 +1410,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     </div>
                     <div class="tag-settings" style="margin-left: 20px; padding-left: 15px; border-left: 2px solid var(--line-color); margin-top: 10px; display: ${tagConfig.EnableTag !== false ? 'block' : 'none'};">
                         <div class="inputContainer" style="flex-grow:1;"><input is="emby-input" class="txtTagName" type="text" label="Tag Name" value="${tagName}" placeholder="${labelName}" /></div>
-                        <div class="mi-tag-target-section" style="margin-top:14px; display:${sourceType === 'MediaInfo' ? 'block' : 'none'};">
+                        <div class="mi-tag-target-section" style="margin-top:14px;">
                             <div style="font-size:0.85em; opacity:0.6; margin-bottom:6px;">For TV shows, choose what level to tag: (If none selected defaults to Series)</div>
                             <div style="display:flex; flex-direction:row; align-items:center; gap:20px;">
                                 <label style="display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap;">
@@ -1458,7 +1458,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <div class="fieldDescription">Leave empty to use Display Name.</div>
                         </div>
 
-                        <div class="mi-coll-target-section" style="margin-top:10px; display:${sourceType === 'MediaInfo' ? 'block' : 'none'};">
+                        <div class="mi-coll-target-section" style="margin-top:10px;">
                             <div style="font-size:0.85em; opacity:0.6; margin-bottom:6px;">For TV shows, choose what level to add to collection: (If none selected defaults to Series)</div>
                             <div style="display:flex; flex-direction:row; align-items:center; gap:20px;">
                                 <label style="display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap;">
@@ -1625,9 +1625,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 row.querySelector('.source-ai-container').style.display = type === 'AI' ? 'block' : 'none';
 
                 var isMi = type === 'MediaInfo';
-                row.querySelectorAll('.mi-tag-target-section, .mi-coll-target-section').forEach(function(s) {
-                    s.style.display = isMi ? 'block' : 'none';
-                });
                 if (isMi) {
                     var miList = row.querySelector('.mediainfo-filter-list');
                     if (miList && miList.querySelectorAll('.mediainfo-filter-group').length === 0) {

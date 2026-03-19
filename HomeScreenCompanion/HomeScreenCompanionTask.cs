@@ -493,7 +493,7 @@ namespace HomeScreenCompanion
 
                                 List<BaseItem> BuildOutputList(bool ep, bool sea, bool ser, bool anyNew)
                                 {
-                                    if (!anyNew) return matchedLocalItems.ToList();
+                                    if (!anyNew) return scannedEpisodes ? ResolveParentSeries(matchedLocalItems) : matchedLocalItems.ToList();
                                     var list = new List<BaseItem>();
                                     var seriesOnly = matchedLocalItems.Where(i => i.GetType().Name.Contains("Series")).ToList();
                                     if (scannedEpisodes)
@@ -599,7 +599,28 @@ namespace HomeScreenCompanion
                             if (debug) LogDebug($"  AI returned {gs.ListCount} items  ·  {matchedLocalItems.Count} matched in library");
                         }
 
-                        // For non-episode sources tagOutputItems == collectionOutputItems == matchedLocalItems
+                        // For non-MediaInfo sources, apply output level selection (expand down from Series/Movie)
+                        if (tagConfig.SourceType != "MediaInfo")
+                        {
+                            var (tEp, tSea, tSer) = EffectiveTagTargets(tagConfig);
+                            var (cEp, cSea, cSer) = EffectiveCollectionTargets(tagConfig);
+
+                            List<BaseItem> BuildNonMiOutputList(bool ep, bool sea, bool ser, bool any)
+                            {
+                                if (!any) return matchedLocalItems.ToList();
+                                var list = new List<BaseItem>();
+                                var seriesOnly = matchedLocalItems.Where(i => i.GetType().Name.Contains("Series")).ToList();
+                                var movies = matchedLocalItems.Where(i => !i.GetType().Name.Contains("Series")).ToList();
+                                if (ser) list.AddRange(matchedLocalItems);
+                                if (sea) { var s = ResolveChildSeasons(seriesOnly); list.AddRange(s); foreach (var x in s) allScannedSeasonItems.TryAdd(x.Id, x); list.AddRange(movies); }
+                                if (ep)  { var e = ResolveChildEpisodes(seriesOnly); list.AddRange(e); foreach (var x in e) allScannedEpisodeItems.TryAdd(x.Id, x); list.AddRange(movies); }
+                                return list;
+                            }
+
+                            tagOutputItems        = BuildNonMiOutputList(tEp, tSea, tSer, tEp || tSea || tSer);
+                            collectionOutputItems = BuildNonMiOutputList(cEp, cSea, cSer, cEp || cSea || cSer);
+                        }
+
                         var allOutputIds = new HashSet<Guid>(tagOutputItems.Select(i => i.Id));
                         foreach (var id in collectionOutputItems.Select(i => i.Id)) allOutputIds.Add(id);
                         gs.MatchCount = allOutputIds.Count;
@@ -1186,7 +1207,7 @@ namespace HomeScreenCompanion
 
                         List<BaseItem> BuildOutputList(bool ep, bool sea, bool ser, bool anyNew)
                         {
-                            if (!anyNew) return matchedLocalItems.ToList();
+                            if (!anyNew) return scannedEpisodes ? ResolveParentSeries(matchedLocalItems) : matchedLocalItems.ToList();
                             var list = new List<BaseItem>();
                             var seriesOnly = matchedLocalItems.Where(i => i.GetType().Name.Contains("Series")).ToList();
                             if (scannedEpisodes)
@@ -1257,6 +1278,28 @@ namespace HomeScreenCompanion
                 return (false, $"Error: {ex.Message}");
             }
 
+            // For non-MediaInfo sources, apply output level selection (expand down from Series/Movie)
+            if (tagConfig.SourceType != "MediaInfo")
+            {
+                var (tEp, tSea, tSer) = EffectiveTagTargets(tagConfig);
+                var (cEp, cSea, cSer) = EffectiveCollectionTargets(tagConfig);
+
+                List<BaseItem> BuildNonMiOutput(bool ep, bool sea, bool ser, bool any)
+                {
+                    if (!any) return matchedLocalItems.ToList();
+                    var list = new List<BaseItem>();
+                    var seriesOnly = matchedLocalItems.Where(i => i.GetType().Name.Contains("Series")).ToList();
+                    var movies = matchedLocalItems.Where(i => !i.GetType().Name.Contains("Series")).ToList();
+                    if (ser) list.AddRange(matchedLocalItems);
+                    if (sea) { var s = ResolveChildSeasons(seriesOnly); list.AddRange(s); list.AddRange(movies); }
+                    if (ep)  { var e = ResolveChildEpisodes(seriesOnly); list.AddRange(e); list.AddRange(movies); }
+                    return list;
+                }
+
+                tagOutputItems        = BuildNonMiOutput(tEp, tSea, tSer, tEp || tSea || tSer);
+                collectionOutputItems = BuildNonMiOutput(cEp, cSea, cSer, cEp || cSea || cSer);
+            }
+
             // Apply tags (scoped to this entry's tag only)
             int tagsAdded = 0, tagsRemoved = 0;
             var _dbgTagAdded = debug ? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase) : null;
@@ -1287,17 +1330,32 @@ namespace HomeScreenCompanion
                 if (shouldHave) tagsAdded++; else tagsRemoved++;
             }
 
-            // Episode cleanup: remove stale tags from episodes; for MediaInfo episode-targeting configs also tag matching episodes
+            // Episode cleanup: remove stale tags from episodes; also tag matching episodes when episode-level targeting is active
             {
-                bool targetsEpisodes = tagConfig.SourceType == "MediaInfo" && tagConfig.EnableTag && !tagConfig.OnlyCollection && TagConfigTargetsEpisodes(tagConfig);
+                var (tEpClean, _, _) = EffectiveTagTargets(tagConfig);
+                bool targetsEpisodes = tagConfig.EnableTag && !tagConfig.OnlyCollection &&
+                    ((tagConfig.SourceType == "MediaInfo" && TagConfigTargetsEpisodes(tagConfig)) ||
+                     (tagConfig.SourceType != "MediaInfo" && tEpClean));
                 var matchedEpisodeIds = new HashSet<Guid>();
                 var allEpisodeItemsMap = new Dictionary<Guid, BaseItem>();
                 if (targetsEpisodes)
                 {
-                    foreach (var ep in _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Episode" }, Recursive = true, IsVirtualItem = false }))
+                    if (tagConfig.SourceType == "MediaInfo" && TagConfigTargetsEpisodes(tagConfig))
                     {
-                        if (ep.LocationType != LocationType.FileSystem) continue;
-                        if (ItemMatchesMediaInfo(ep, tagConfig, debug, seriesEpisodeCache, personCache, userDataCache, null, preloadedUsers, seriesLastPlayedCache))
+                        foreach (var ep in _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Episode" }, Recursive = true, IsVirtualItem = false }))
+                        {
+                            if (ep.LocationType != LocationType.FileSystem) continue;
+                            if (ItemMatchesMediaInfo(ep, tagConfig, debug, seriesEpisodeCache, personCache, userDataCache, null, preloadedUsers, seriesLastPlayedCache))
+                            {
+                                matchedEpisodeIds.Add(ep.Id);
+                                allEpisodeItemsMap.TryAdd(ep.Id, ep);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Non-MediaInfo: episodes were already resolved into tagOutputItems
+                        foreach (var ep in tagOutputItems.Where(i => i.GetType().Name.Contains("Episode")))
                         {
                             matchedEpisodeIds.Add(ep.Id);
                             allEpisodeItemsMap.TryAdd(ep.Id, ep);
@@ -1329,22 +1387,36 @@ namespace HomeScreenCompanion
                 }
             }
 
-            // Season cleanup: remove stale tags from seasons; for season-mode configs also tag matching seasons
+            // Season cleanup: remove stale tags from seasons; also tag matching seasons when season-level targeting is active
             {
-                bool targetsSeason = tagConfig.SourceType == "MediaInfo" && tagConfig.EnableTag && !tagConfig.OnlyCollection && TagConfigTargetsSeason(tagConfig);
+                var (_, tSeaClean, _) = EffectiveTagTargets(tagConfig);
+                bool targetsSeason = tagConfig.EnableTag && !tagConfig.OnlyCollection &&
+                    ((tagConfig.SourceType == "MediaInfo" && TagConfigTargetsSeason(tagConfig)) ||
+                     (tagConfig.SourceType != "MediaInfo" && tSeaClean));
                 var matchedSeasonIds = new HashSet<Guid>();
                 var allSeasonItemsMap = new Dictionary<Guid, BaseItem>();
                 if (targetsSeason)
                 {
-                    var allEpisodes = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Episode" }, Recursive = true, IsVirtualItem = false });
-                    var matchingEpisodes = allEpisodes
-                        .Where(ep => ep.LocationType == LocationType.FileSystem
-                                  && ItemMatchesMediaInfo(ep, tagConfig, debug, seriesEpisodeCache, personCache, userDataCache, null, preloadedUsers, seriesLastPlayedCache))
-                        .ToList();
-                    foreach (var season in ResolveParentSeasons(matchingEpisodes))
+                    if (tagConfig.SourceType == "MediaInfo")
                     {
-                        matchedSeasonIds.Add(season.Id);
-                        allSeasonItemsMap.TryAdd(season.Id, season);
+                        var matchingEpisodes = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Episode" }, Recursive = true, IsVirtualItem = false })
+                            .Where(ep => ep.LocationType == LocationType.FileSystem
+                                      && ItemMatchesMediaInfo(ep, tagConfig, debug, seriesEpisodeCache, personCache, userDataCache, null, preloadedUsers, seriesLastPlayedCache))
+                            .ToList();
+                        foreach (var season in ResolveParentSeasons(matchingEpisodes))
+                        {
+                            matchedSeasonIds.Add(season.Id);
+                            allSeasonItemsMap.TryAdd(season.Id, season);
+                        }
+                    }
+                    else
+                    {
+                        // Non-MediaInfo: seasons were already resolved into tagOutputItems
+                        foreach (var season in tagOutputItems.Where(i => i.GetType().Name.Contains("Season")))
+                        {
+                            matchedSeasonIds.Add(season.Id);
+                            allSeasonItemsMap.TryAdd(season.Id, season);
+                        }
                     }
                 }
                 foreach (var s in _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Season" }, Tags = new[] { tagName }, Recursive = true, IsVirtualItem = false }))
@@ -2304,7 +2376,7 @@ namespace HomeScreenCompanion
             return (leg == "Episode", leg == "Season", leg == "Series");
         }
 
-        // Returns true if episodes should be scanned — driven ONLY by filter criteria, not tab checkboxes
+        // Returns true if episodes should be scanned — only when MediaType:Episode is explicitly set
         private static bool TagConfigTargetsEpisodes(TagConfig tagConfig) =>
             GetAllCriteria(tagConfig).Any(c =>
                 c.TrimStart('!').StartsWith("MediaType:Episode", StringComparison.OrdinalIgnoreCase));
