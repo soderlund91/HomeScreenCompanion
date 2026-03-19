@@ -875,24 +875,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var mtOpts = MI_DROPDOWN_OPTIONS['MediaType'].map(function (pair) {
                     return '<option value="' + pair[0] + '"' + (pair[0] === dispVal ? ' selected' : '') + '>' + pair[1] + '</option>';
                 }).join('');
-                var includeParentActive = (savedVal === 'EpisodeIncludeSeries');
-                var includeParentDisplay = (dispVal === 'Episode') ? 'flex' : 'none';
-                var ipChecked = includeParentActive ? 'checked' : '';
-                return '<div style="display:flex; flex-direction:column; gap:5px; flex:1;">' +
-                    '<div style="display:flex; flex-direction:row; align-items:center; gap:8px;">' +
-                    '<select class="selMiValue" is="emby-select" style="flex:1;">' + mtOpts + '</select>' +
-                    '<div class="mi-include-parent" style="display:' + includeParentDisplay + '; align-items:center; gap:6px;">' +
-                    '<label style="display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap; font-size:0.85em;">' +
-                    '<input type="checkbox" is="emby-checkbox" class="chkIncludeParentSeries" ' + ipChecked + '>' +
-                    '<span>Include parent series</span>' +
-                    '</label>' +
-                    '<div class="mi-op-info">' +
-                    '<div class="mi-op-info-icon">i</div>' +
-                    '<div class="mi-op-tooltip" style="white-space:normal; width:220px;">Filter criteria can also match properties on the parent series — e.g. find episodes whose series has a specific tag or genre.</div>' +
-                    '</div>' +
-                    '</div>' +
-                    '</div>' +
-                    '</div>';
+                var ipChecked = (savedVal === 'EpisodeIncludeSeries') ? 'checked' : '';
+                var ipDisplay = (dispVal === 'Episode') ? 'inline-flex' : 'none';
+                return '<select class="selMiValue" is="emby-select" style="flex:1;">' + mtOpts + '</select>' +
+                    '<label class="mi-include-parent" style="display:' + ipDisplay + '; align-items:center; gap:6px; cursor:pointer; white-space:nowrap; font-size:0.85em; margin:0;">' +
+                    '<input type="checkbox" class="chkIncludeParentSeries" ' + ipChecked + ' style="margin:0;">' +
+                    '<span>Also include parent series</span>' +
+                    '</label>';
             }
             var opts = MI_DROPDOWN_OPTIONS[prop].map(function (pair) {
                 return '<option value="' + pair[0] + '"' + (pair[0] === savedVal ? ' selected' : '') + '>' + pair[1] + '</option>';
@@ -1421,9 +1410,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     </div>
                     <div class="tag-settings" style="margin-left: 20px; padding-left: 15px; border-left: 2px solid var(--line-color); margin-top: 10px; display: ${tagConfig.EnableTag !== false ? 'block' : 'none'};">
                         <div class="inputContainer" style="flex-grow:1;"><input is="emby-input" class="txtTagName" type="text" label="Tag Name" value="${tagName}" placeholder="${labelName}" /></div>
-                        <p style="margin:5px 0 0 0; font-size:0.9em; opacity:0.7;">The tag that will be applied to matched items in Emby.</p>
                         <div class="mi-tag-target-section" style="margin-top:14px; display:${sourceType === 'MediaInfo' ? 'block' : 'none'};">
-                            <div style="font-size:0.85em; opacity:0.6; margin-bottom:6px;">For TV shows, tag at level: (If none selected defaults to Series)</div>
+                            <div style="font-size:0.85em; opacity:0.6; margin-bottom:6px;">For TV shows, choose what level to tag: (If none selected defaults to Series)</div>
                             <div style="display:flex; flex-direction:row; align-items:center; gap:20px;">
                                 <label style="display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap;">
                                     <input type="checkbox" is="emby-checkbox" class="chkTagTargetSeries" ${_tagTargetSer ? 'checked' : ''} />
@@ -1470,6 +1458,23 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <div class="fieldDescription">Leave empty to use Display Name.</div>
                         </div>
 
+                        <div class="mi-coll-target-section" style="margin-top:10px; display:${sourceType === 'MediaInfo' ? 'block' : 'none'};">
+                            <div style="font-size:0.85em; opacity:0.6; margin-bottom:6px;">For TV shows, choose what level to add to collection: (If none selected defaults to Series)</div>
+                            <div style="display:flex; flex-direction:row; align-items:center; gap:20px;">
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap;">
+                                    <input type="checkbox" is="emby-checkbox" class="chkCollTargetSeries" ${_collTargetSer ? 'checked' : ''} />
+                                    <span>Series</span>
+                                </label>
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap;">
+                                    <input type="checkbox" is="emby-checkbox" class="chkCollTargetSeason" ${_collTargetSea ? 'checked' : ''} />
+                                    <span>Season</span>
+                                </label>
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap;">
+                                    <input type="checkbox" is="emby-checkbox" class="chkCollTargetEpisode" ${_collTargetEp ? 'checked' : ''} />
+                                    <span>Episode</span>
+                                </label>
+                            </div>
+                        </div>
 
                         <div class="inputContainer" style="margin-top:15px;">
                             <textarea is="emby-textarea" class="txtCollectionDescription" rows="3"
@@ -1498,23 +1503,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <div style="display:flex; gap:6px; margin-top:6px;">
                                 <input class="txtPosterUrl" is="emby-input" type="url" placeholder="https://example.com/poster.jpg" style="flex:1;" />
                                 <button type="button" is="emby-button" class="btnLoadPosterUrl raised btn-neutral">Load</button>
-                            </div>
-                        </div>
-                        <div class="mi-coll-target-section" style="margin-top:14px; display:${sourceType === 'MediaInfo' ? 'block' : 'none'};">
-                            <div style="font-size:0.85em; opacity:0.6; margin-bottom:6px;">For TV shows, add to collection at level: (If none selected defaults to Series)</div>
-                            <div style="display:flex; flex-direction:row; align-items:center; gap:20px;">
-                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap;">
-                                    <input type="checkbox" is="emby-checkbox" class="chkCollTargetSeries" ${_collTargetSer ? 'checked' : ''} />
-                                    <span>Series</span>
-                                </label>
-                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap;">
-                                    <input type="checkbox" is="emby-checkbox" class="chkCollTargetSeason" ${_collTargetSea ? 'checked' : ''} />
-                                    <span>Season</span>
-                                </label>
-                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap;">
-                                    <input type="checkbox" is="emby-checkbox" class="chkCollTargetEpisode" ${_collTargetEp ? 'checked' : ''} />
-                                    <span>Episode</span>
-                                </label>
                             </div>
                         </div>
                     </div>
@@ -1666,7 +1654,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var _prop = (_miRule.querySelector('.selMiProperty') || {}).value;
                     if (_prop === 'MediaType') {
                         var _incParent = _miRule.querySelector('.mi-include-parent');
-                        if (_incParent) _incParent.style.display = e.target.value === 'Episode' ? 'flex' : 'none';
+                        if (_incParent) _incParent.style.display = e.target.value === 'Episode' ? 'inline-flex' : 'none';
                     }
                 }
             }
@@ -2471,6 +2459,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var selUser = rule.querySelector('.selMiUser');
                     var selTextOp = rule.querySelector('.selMiTextOp');
                     var val = selVal ? selVal.value : (txtVal ? txtVal.value.trim() : '');
+                    if (prop === 'MediaType' && val === 'Episode') {
+                        var incParentChk = rule.querySelector('.chkIncludeParentSeries');
+                        if (incParentChk && incParentChk.checked) val = 'EpisodeIncludeSeries';
+                    }
                     var op2 = selOp ? selOp.value : '';
                     var textMatchOp = selTextOp ? selTextOp.value : '';
                     var num = txtNum ? txtNum.value.trim() : '';
