@@ -210,15 +210,23 @@ The plugin page has three tabs: **Tag and Collection**, **Home Screen**, and **S
 
 ### Screenshots
 
-<img width="775" height="828" alt="image" src="https://github.com/user-attachments/assets/bfe32910-ad40-418b-8c2f-a4b38fe7b69a" />
+<img width="768" height="673" alt="main" src="https://github.com/user-attachments/assets/efc94da5-030a-4380-ab07-5ec9e5ff7151" />
 
-<img width="721" height="1200" alt="image" src="https://github.com/user-attachments/assets/b96714b8-d9bf-4aea-9a66-bc08e7060d48" />
 
-<img width="778" height="905" alt="image" src="https://github.com/user-attachments/assets/04b29706-1e23-4505-b2e0-155089bdb433" />
+<img width="740" height="936" alt="lmi" src="https://github.com/user-attachments/assets/f2e0f1f4-fdc0-4eea-b9ef-a1b2acd14611" />
 
-<img width="916" height="699" alt="image" src="https://github.com/user-attachments/assets/b78d6f9a-6ce5-4af7-b4d5-f05c11abcbef" />
+
+<img width="743" height="711" alt="schedule" src="https://github.com/user-attachments/assets/f9efe07b-5974-4485-bbd7-381e6bd071dd" />
+
+
+<img width="728" height="1272" alt="home screen section" src="https://github.com/user-attachments/assets/8dc7b72b-4272-4527-b505-44fa155d4692" />
+
+
+<img width="737" height="799" alt="sync" src="https://github.com/user-attachments/assets/29103ea5-fce7-47be-9f75-99ee38b58975" />
+
+
 
 ---
 
-**Disclaimer:** This plugin is not affiliated with Emby, Trakt, MDBList, OpenAI, or Google.
-This plugin is heavily vibe-coded, tested on my own server — use at your own risk.
+_**Disclaimer:** This plugin is not affiliated with Emby, Trakt, MDBList, OpenAI, or Google.
+This plugin is heavily vibe-coded, tested on my own server — use at your own risk._
