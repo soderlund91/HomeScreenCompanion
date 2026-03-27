@@ -371,24 +371,7 @@ public class HomeScreenCompanionService : IService
             }
         }
 
-        // Walks full type hierarchy (base types + interfaces) to find all methods with the given name
-        private static List<MethodInfo> FindMethodsInHierarchy(object obj, string methodName)
-        {
-            var results = new List<MethodInfo>();
-            var seen = new HashSet<Type>();
-            var queue = new Queue<Type>();
-            queue.Enqueue(obj.GetType());
-            while (queue.Count > 0)
-            {
-                var t = queue.Dequeue();
-                if (!seen.Add(t)) continue;
-                results.AddRange(t.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
-                    .Where(m => m.Name == methodName || m.Name.EndsWith("." + methodName)));
-                if (t.BaseType != null) queue.Enqueue(t.BaseType);
-                foreach (var iface in t.GetInterfaces()) queue.Enqueue(iface);
-            }
-            return results;
-        }
+
 
         public object Get(HscDebugMethodsRequest request)
         {
@@ -447,46 +430,25 @@ public class HomeScreenCompanionService : IService
                     .Select(s => s.Id)
                     .ToArray();
 
-                var allMoveMethods = FindMethodsInHierarchy(_userManager, "MoveHomeSections");
-
-                // Signatur: MoveHomeSections(Int64 userId, String[] sectionIds, Int32 newIndex, CancellationToken)
-                // Anropas en gång per sektion med ett enda ID i arrayen.
-                var moveMethod = allMoveMethods.FirstOrDefault(m => {
-                    var ps = m.GetParameters();
-                    return ps.Length == 4
-                        && ps[1].ParameterType == typeof(string[])
-                        && ps[2].ParameterType == typeof(int)
-                        && ps[3].ParameterType == typeof(CancellationToken);
-                });
-                // Fallback utan CancellationToken: (Int64, String[], Int32)
-                if (moveMethod == null)
-                    moveMethod = allMoveMethods.FirstOrDefault(m => {
-                        var ps = m.GetParameters();
-                        return ps.Length == 3
-                            && ps[1].ParameterType == typeof(string[])
-                            && ps[2].ParameterType == typeof(int);
-                    });
-
-                string moveDebug = $"MoveHomeSections candidates: {allMoveMethods.Count}";
-                if (allMoveMethods.Count > 0)
-                    moveDebug += " | " + string.Join("; ", allMoveMethods.Select(m =>
-                        m.Name + "(" + string.Join(",", m.GetParameters().Select(p => p.ParameterType.Name)) + ")"));
-
-                if (moveMethod != null)
+                string moveDebug = "MoveHomeSections: ok";
+                try
                 {
-                    bool withToken = moveMethod.GetParameters().Length == 4;
+                    dynamic mgr = _userManager;
                     for (int i = 0; i < orderedIds.Length; i++)
-                    {
-                        try
-                        {
-                            var args = withToken
-                                ? new object[] { internalId, new[] { orderedIds[i] }, i, CancellationToken.None }
-                                : new object[] { internalId, new[] { orderedIds[i] }, i };
-                            moveMethod.Invoke(_userManager, args);
-                        }
-                        catch (Exception ex) { moveDebug += $" | move[{i}] error: " + ex.Message; break; }
-                    }
+                        mgr.MoveHomeSections(internalId, new[] { orderedIds[i] }, i, CancellationToken.None);
                 }
+                catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
+                {
+                    // Fallback: prova utan CancellationToken
+                    try
+                    {
+                        dynamic mgr = _userManager;
+                        for (int i = 0; i < orderedIds.Length; i++)
+                            mgr.MoveHomeSections(internalId, new[] { orderedIds[i] }, i);
+                    }
+                    catch (Exception ex) { moveDebug = $"MoveHomeSections fallback error: {ex.Message}"; }
+                }
+                catch (Exception ex) { moveDebug = $"MoveHomeSections error: {ex.Message}"; }
 
                 // 3. Ta bort tracking för raderade sektioner så att task re-skapar dem vid behov
                 if (toDelete.Length > 0)
