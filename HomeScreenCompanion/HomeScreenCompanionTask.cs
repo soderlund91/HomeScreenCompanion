@@ -1456,9 +1456,8 @@ namespace HomeScreenCompanion
             // Episode cleanup: remove stale tags from episodes; also tag matching episodes when episode-level targeting is active
             {
                 var (tEpClean, _, _) = EffectiveTagTargets(tagConfig);
-                bool targetsEpisodes = tagConfig.EnableTag && !tagConfig.OnlyCollection &&
-                    ((tagConfig.SourceType == "MediaInfo" && TagConfigTargetsEpisodes(tagConfig)) ||
-                     (tagConfig.SourceType != "MediaInfo" && tEpClean));
+                bool targetsEpisodes = tagConfig.EnableTag && !tagConfig.OnlyCollection && tEpClean &&
+                    (tagConfig.SourceType != "MediaInfo" || TagConfigTargetsEpisodes(tagConfig));
                 var matchedEpisodeIds = new HashSet<Guid>();
                 var allEpisodeItemsMap = new Dictionary<Guid, BaseItem>();
                 if (targetsEpisodes)

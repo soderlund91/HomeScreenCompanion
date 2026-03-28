@@ -1227,7 +1227,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var _collTargetSer = tagConfig.CollectionTargetSeries  || tagConfig.MediaInfoTargetSeries  || _legacyTarget === 'Series' || !_collAnySet;
 
         var enableHomeSection = tagConfig.EnableHomeSection ? 'checked' : '';
-        var disableHomeSection = (!tagConfig.EnableTag && !tagConfig.EnableCollection) ? 'disabled' : '';
+        var disableHomeSection = (tagConfig.EnableTag === false && !tagConfig.EnableCollection) ? 'disabled' : '';
         var homeSectionLibraryId = encodeURIComponent(tagConfig.HomeSectionLibraryId || 'auto');
         var homeSectionUserIdsEnc = encodeURIComponent(JSON.stringify(tagConfig.HomeSectionUserIds || []));
         var homeSectionSettingsEnc = encodeURIComponent(tagConfig.HomeSectionSettings || '{}');
@@ -1571,7 +1571,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <span>Add as home screen section</span>
                         </label>
                         <div class="fieldDescription">A home screen section will be managed for selected users each time sync runs.</div>
-                        <div class="hse-disabled-hint" style="font-size:0.9em; color:#e07070; margin-top:4px; display:${(!tagConfig.EnableTag && !tagConfig.EnableCollection) ? 'block' : 'none'};">Requires <strong>Apply Tag</strong> or <strong>Create Collection</strong> to be enabled.</div>
+                        <div class="hse-disabled-hint" style="font-size:0.9em; color:#e07070; margin-top:4px; display:${(tagConfig.EnableTag === false && !tagConfig.EnableCollection) ? 'block' : 'none'};">Requires <strong>Apply Tag</strong> or <strong>Create Collection</strong> to be enabled.</div>
                     </div>
                     <div class="hse-details" style="display:${enableHomeSection ? 'block' : 'none'}; margin-top:15px;">
                         <div style="margin-bottom:15px;">
