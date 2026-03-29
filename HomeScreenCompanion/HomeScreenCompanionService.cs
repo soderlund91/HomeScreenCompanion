@@ -593,13 +593,13 @@ public class HomeScreenCompanionService : IService
             var allItems = _libraryManager.GetItemList(new InternalItemsQuery
             {
                 Recursive = true,
-                IsVirtualItem = false
+                IsVirtualItem = false,
+                Tags = new[] { tagName }
             });
             int updated = 0;
             foreach (var item in allItems)
             {
                 if (item.Tags == null) continue;
-                if (!item.Tags.Any(t => string.Equals(t, tagName, StringComparison.OrdinalIgnoreCase))) continue;
                 item.RemoveTag(tagName);
                 try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); updated++; }
                 catch { /* best effort */ }
