@@ -1,4 +1,5 @@
 ﻿using MediaBrowser.Common.Net;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Querying;
@@ -89,6 +90,24 @@ namespace HomeScreenCompanion
     {
         public string UserId { get; set; } = string.Empty;
     }
+
+    [Route("/HomeScreenCompanion/Manage/Tags", "GET")]
+    public class GetManagedTagsRequest : IReturn<GetManagedTagsResponse> { }
+    public class ManagedTagInfo { public string Name { get; set; } = ""; public int ItemCount { get; set; } }
+    public class GetManagedTagsResponse { public List<ManagedTagInfo> Tags { get; set; } = new List<ManagedTagInfo>(); }
+
+    [Route("/HomeScreenCompanion/Manage/Collections", "GET")]
+    public class GetManagedCollectionsRequest : IReturn<GetManagedCollectionsResponse> { }
+    public class ManagedCollectionInfo { public string Id { get; set; } = ""; public string Name { get; set; } = ""; public int ItemCount { get; set; } }
+    public class GetManagedCollectionsResponse { public List<ManagedCollectionInfo> Collections { get; set; } = new List<ManagedCollectionInfo>(); }
+
+    [Route("/HomeScreenCompanion/Manage/DeleteTag", "POST")]
+    public class DeleteManagedTagRequest : IReturn<DeleteManagedTagResponse> { public string TagName { get; set; } = ""; }
+    public class DeleteManagedTagResponse { public bool Success { get; set; } public string Message { get; set; } = ""; public int ItemsUpdated { get; set; } }
+
+    [Route("/HomeScreenCompanion/Manage/DeleteCollection", "POST")]
+    public class DeleteManagedCollectionRequest : IReturn<DeleteManagedCollectionResponse> { public string CollectionId { get; set; } = ""; }
+    public class DeleteManagedCollectionResponse { public bool Success { get; set; } public string Message { get; set; } = ""; }
 
 public class HomeScreenCompanionService : IService
     {
@@ -509,6 +528,105 @@ public class HomeScreenCompanionService : IService
             if (t == typeof(long) || t == typeof(long?)) return "long";
             if (t == typeof(DateTime) || t == typeof(DateTime?)) return "datetime";
             return null;
+        }
+
+        public object Get(GetManagedTagsRequest request)
+        {
+            var allItems = _libraryManager.GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = new[] { "Movie", "Series", "Season", "Episode" },
+                Recursive = true,
+                IsVirtualItem = false
+            });
+            var tagCount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in allItems)
+            {
+                if (item.Tags == null) continue;
+                foreach (var tag in item.Tags)
+                {
+                    if (string.IsNullOrWhiteSpace(tag)) continue;
+                    tagCount.TryGetValue(tag, out var c);
+                    tagCount[tag] = c + 1;
+                }
+            }
+            var tags = tagCount
+                .Select(kv => new ManagedTagInfo { Name = kv.Key, ItemCount = kv.Value })
+                .OrderBy(t => t.Name)
+                .ToList();
+            return new GetManagedTagsResponse { Tags = tags };
+        }
+
+        public object Get(GetManagedCollectionsRequest request)
+        {
+            var collections = _libraryManager.GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = new[] { "BoxSet" },
+                Recursive = true
+            });
+            var result = new List<ManagedCollectionInfo>();
+            foreach (var c in collections)
+            {
+                var childCount = _libraryManager.GetItemList(new InternalItemsQuery { CollectionIds = new[] { c.InternalId }, IsVirtualItem = false }).Count();
+                result.Add(new ManagedCollectionInfo
+                {
+                    Id = c.Id.ToString("N"),
+                    Name = c.Name ?? "",
+                    ItemCount = childCount
+                });
+            }
+            result.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+            return new GetManagedCollectionsResponse { Collections = result };
+        }
+
+        public object Post(DeleteManagedTagRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.TagName))
+                return new DeleteManagedTagResponse { Success = false, Message = "TagName is required." };
+
+            var tagName = request.TagName.Trim();
+
+            // Remove from real-time cache first — otherwise UpdateItem fires ItemUpdated
+            // which triggers ProcessItem in ServerEntryPoint and immediately re-adds the tag.
+            TagCacheManager.Instance.RemoveTagFromAllEntries(tagName);
+            TagCacheManager.Instance.Save();
+
+            var allItems = _libraryManager.GetItemList(new InternalItemsQuery
+            {
+                Recursive = true,
+                IsVirtualItem = false
+            });
+            int updated = 0;
+            foreach (var item in allItems)
+            {
+                if (item.Tags == null) continue;
+                if (!item.Tags.Any(t => string.Equals(t, tagName, StringComparison.OrdinalIgnoreCase))) continue;
+                item.RemoveTag(tagName);
+                try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); updated++; }
+                catch { /* best effort */ }
+            }
+            return new DeleteManagedTagResponse { Success = true, ItemsUpdated = updated };
+        }
+
+        public object Post(DeleteManagedCollectionRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.CollectionId))
+                return new DeleteManagedCollectionResponse { Success = false, Message = "CollectionId is required." };
+            if (!Guid.TryParse(request.CollectionId, out var guid))
+                return new DeleteManagedCollectionResponse { Success = false, Message = "Invalid CollectionId." };
+
+            var item = _libraryManager.GetItemById(guid);
+            if (item == null)
+                return new DeleteManagedCollectionResponse { Success = false, Message = "Collection not found." };
+
+            try
+            {
+                _libraryManager.DeleteItem(item, new DeleteOptions { DeleteFileLocation = true });
+                return new DeleteManagedCollectionResponse { Success = true };
+            }
+            catch (Exception ex)
+            {
+                return new DeleteManagedCollectionResponse { Success = false, Message = ex.Message };
+            }
         }
 
     }

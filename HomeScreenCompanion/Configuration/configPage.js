@@ -246,6 +246,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
         }
 
+        @keyframes tcDotBounce {
+            0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+            40%            { transform: translateY(-5px); opacity: 1; }
+        }
+        .tc-dot-loader { display:inline-flex; align-items:center; gap:5px; }
+        .tc-dot-loader span { display:inline-block; width:7px; height:7px; border-radius:50%; background:currentColor; animation:tcDotBounce 1.2s ease-in-out infinite; }
+        .tc-dot-loader span:nth-child(2) { animation-delay:0.2s; }
+        .tc-dot-loader span:nth-child(3) { animation-delay:0.4s; }
+
         @keyframes addHighlight {
             0% {
                 border-top: 1px solid #52B54B;
@@ -668,6 +677,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             hseTab.querySelectorAll('[data-field]').forEach(function(el) {
                 var f = el.dataset.field;
                 var v = el.type === 'checkbox' ? String(el.checked) : el.value;
+                // If field is empty, fall back to placeholder (e.g. CustomName uses display name as placeholder)
+                if (v === '' && el.placeholder) v = el.placeholder;
                 hseSettings[f] = v;
             });
             var itemTypesVal = (hseTab.querySelector('.selHseItemTypes') || {}).value || 'Movie,Series';
@@ -2810,6 +2821,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var btnApplyManage = view.querySelector('#btnApplyManage');
         if (btnApplyManage && !btnApplyManage.disabled) isDirty = true;
 
+        var tcContainer = view.querySelector('#tcManageContainer');
+        if (tcContainer && tcContainer._tcHasPending) isDirty = true;
+
         var btnSave = view.querySelector('.btn-save');
         if (btnSave) {
             var isSyncRunning = (btnSave.querySelector('span').textContent || "").includes("progress");
@@ -3097,6 +3111,363 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             if (offset < 0 && offset > closest.offset) return { offset: offset, element: child };
             return closest;
         }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+
+    function loadTagManageTab(view) {
+        var container = view.querySelector('#tcManageContainer');
+        if (!container) return;
+
+        container.innerHTML = '<div style="padding:20px;color:var(--theme-text-secondary);display:flex;align-items:center;gap:10px;">Loading <span class="tc-dot-loader"><span></span><span></span><span></span></span></div>';
+
+        var token = window.ApiClient.accessToken();
+        var pendingTagDeletes = {};       // tagName.toLowerCase() -> { name, itemCount }
+        var pendingCollDeletes = {};      // collectionId -> { id, name, itemCount }
+
+        Promise.all([
+            fetch(window.ApiClient.getUrl('HomeScreenCompanion/Manage/Tags'), { headers: { 'X-MediaBrowser-Token': token } }).then(function (r) { return r.json(); }),
+            fetch(window.ApiClient.getUrl('HomeScreenCompanion/Manage/Collections'), { headers: { 'X-MediaBrowser-Token': token } }).then(function (r) { return r.json(); }),
+            window.ApiClient.getPluginConfiguration(pluginId).catch(function () { return { Tags: [] }; })
+        ]).then(function (results) {
+            var tagsData = results[0];
+            var collectionsData = results[1];
+            var pluginConfig = results[2];
+
+            // Build maps: which tags/collections are managed by a plugin group
+            var managedTagMap = {};   // tagName.toLowerCase() -> { displayName, groupIndex, groupActive }
+            var managedCollMap = {};  // collectionName.toLowerCase() -> { displayName, groupIndex, groupActive }
+            (pluginConfig.Tags || []).forEach(function (t, idx) {
+                if (!t.Tag) return;
+                var tName = t.Tag.trim();
+                var groupDisplay = t.Name ? t.Name + ' [' + tName + ']' : tName;
+                managedTagMap[tName.toLowerCase()] = { displayName: groupDisplay, groupIndex: idx, groupActive: !!t.Active };
+                if (t.EnableCollection) {
+                    var cName = (t.CollectionName && t.CollectionName.trim()) ? t.CollectionName.trim() : tName;
+                    managedCollMap[cName.toLowerCase()] = { displayName: groupDisplay, groupIndex: idx, groupActive: !!t.Active };
+                }
+            });
+
+            function escAttr(s) { return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;'); }
+            function escHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+            var btnStyle = 'cursor:pointer;border:none;border-radius:3px;padding:4px 12px;font-size:0.82em;font-weight:500;';
+
+            function renderSection(title, items, isTagSection) {
+                var sectionId = isTagSection ? 'tcTagSection' : 'tcCollSection';
+                var rows = items.length === 0
+                    ? '<div style="color:var(--theme-text-secondary);padding:8px 0;">No items found.</div>'
+                    : items.map(function (item) {
+                        var id = isTagSection ? (item.Name || '') : (item.Id || '');
+                        var name = item.Name || '';
+                        var count = item.ItemCount != null ? item.ItemCount : 0;
+                        var managed = isTagSection ? managedTagMap[name.toLowerCase()] : managedCollMap[name.toLowerCase()];
+                        var badge = managed
+                            ? '<span style="font-size:0.75em;background:#52B54B22;color:#52B54B;border:1px solid #52B54B55;border-radius:4px;padding:1px 6px;margin-left:8px;white-space:nowrap;">Managed by HSC Plugin</span>'
+                            : '';
+                        return '<tr class="tc-manage-row" data-rowname="' + escAttr(name.toLowerCase()) + '" data-managed="' + (managed ? '1' : '0') + '" data-count="' + count + '">' +
+                            '<td style="padding:9px 4px;border-bottom:1px solid var(--line-color);width:100%;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+                            '<span class="tc-item-name">' + escHtml(name) + '</span>' +
+                            badge +
+                            '</td>' +
+                            '<td style="padding:9px 4px 9px 16px;border-bottom:1px solid var(--line-color);white-space:nowrap;color:var(--theme-text-secondary);font-size:0.88em;">' + count + ' items</td>' +
+                            '<td style="padding:9px 4px 9px 8px;border-bottom:1px solid var(--line-color);white-space:nowrap;">' +
+                            '<button type="button" class="btnTcMark" style="' + btnStyle + 'background:#cc3333;color:#fff;" data-id="' + escAttr(id) + '" data-name="' + escAttr(name) + '" data-count="' + count + '" data-type="' + (isTagSection ? 'tag' : 'coll') + '">Remove</button>' +
+                            '</td>' +
+                            '</tr>';
+                    }).join('');
+
+                return '<div id="' + sectionId + '" style="flex:1 1 300px;min-width:0;">' +
+                    '<div style="display:flex;align-items:center;margin-bottom:12px;">' +
+                    '<h3 style="margin:0;font-size:1em;text-transform:uppercase;letter-spacing:1px;color:#52B54B;">' + escHtml(title) + '</h3>' +
+                    '<button type="button" class="btnTcRefresh" style="' + btnStyle + 'background:transparent;color:var(--theme-text-secondary);border:1px solid var(--line-color);margin-left:auto;"><i class="md-icon" style="font-size:1em;vertical-align:middle;">refresh</i></button>' +
+                    '</div>' +
+                    '<table class="tc-manage-list" style="width:100%;border-collapse:collapse;"><tbody>' + rows + '</tbody></table>' +
+                    '</div>';
+            }
+
+            var searchInputStyle = 'background:rgba(128,128,128,0.08);border:1px solid var(--line-color);border-radius:4px;padding:5px 10px;font-size:0.9em;color:inherit;width:400px;max-width:100%;';
+
+            container.innerHTML =
+                '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">' +
+                '<input type="text" id="tcSearch" placeholder="Search…" style="' + searchInputStyle + '" />' +
+                '<select is="emby-select" id="tcSort" style="color:inherit;background:rgba(128,128,128,0.08);border:1px solid var(--line-color);padding:5px;border-radius:4px;font-size:0.9em;cursor:pointer;">' +
+                '<option value="name-asc">Name A–Z</option>' +
+                '<option value="name-desc">Name Z–A</option>' +
+                '<option value="count-desc">Most items</option>' +
+                '<option value="count-asc">Fewest items</option>' +
+                '<option value="managed">Managed first</option>' +
+                '</select>' +
+                '</div>' +
+                '<div id="tcSectionsWrap" style="display:flex;gap:40px;align-items:flex-start;">' +
+                renderSection('Tags', tagsData.Tags || [], true) +
+                renderSection('Collections', collectionsData.Collections || [], false) +
+                '</div>';
+
+            container.dataset.loaded = '1';
+
+            function applySearchSort() {
+                var query = (container.querySelector('#tcSearch').value || '').toLowerCase();
+                var sort = container.querySelector('#tcSort').value;
+
+                ['tcTagSection', 'tcCollSection'].forEach(function (sectionId) {
+                    var section = container.querySelector('#' + sectionId);
+                    if (!section) return;
+                    var rows = Array.from(section.querySelectorAll('.tc-manage-row'));
+
+                    rows.forEach(function (row) {
+                        var rowName = row.dataset.rowname || '';
+                        row.style.display = (!query || rowName.indexOf(query) !== -1) ? '' : 'none';
+                    });
+
+                    var list = section.querySelector('.tc-manage-list');
+                    if (!list) return;
+                    var visibleRows = rows.filter(function (r) { return r.style.display !== 'none'; });
+                    visibleRows.sort(function (a, b) {
+                        var nameA = a.dataset.rowname || '';
+                        var nameB = b.dataset.rowname || '';
+                        var countA = parseInt(a.dataset.count || '0', 10);
+                        var countB = parseInt(b.dataset.count || '0', 10);
+                        var managedA = a.dataset.managed === '1';
+                        var managedB = b.dataset.managed === '1';
+                        if (sort === 'name-asc') return nameA.localeCompare(nameB);
+                        if (sort === 'name-desc') return nameB.localeCompare(nameA);
+                        if (sort === 'count-desc') return countB - countA;
+                        if (sort === 'count-asc') return countA - countB;
+                        if (sort === 'managed') return (managedB ? 1 : 0) - (managedA ? 1 : 0) || nameA.localeCompare(nameB);
+                        return 0;
+                    });
+                    visibleRows.forEach(function (r) { list.appendChild(r); });
+                });
+            }
+
+            container.querySelector('#tcSearch').addEventListener('input', applySearchSort);
+            container.querySelector('#tcSort').addEventListener('change', applySearchSort);
+            applySearchSort();
+
+            function updateSaveButton() {
+                var hasPending = Object.keys(pendingTagDeletes).length > 0 || Object.keys(pendingCollDeletes).length > 0;
+                container._tcHasPending = hasPending;
+                checkFormState();
+            }
+
+            container.addEventListener('click', function (e) {
+                var btn = e.target.closest('button');
+                if (!btn) return;
+
+                // Mark for deletion
+                if (btn.classList.contains('btnTcMark')) {
+                    var type = btn.dataset.type;
+                    var id = btn.dataset.id;
+                    var name = btn.dataset.name;
+                    var count = parseInt(btn.dataset.count || '0', 10);
+                    if (type === 'tag') pendingTagDeletes[id.toLowerCase()] = { name: name, itemCount: count };
+                    else pendingCollDeletes[id] = { id: id, name: name, itemCount: count };
+                    var row = btn.closest('.tc-manage-row');
+                    if (row) {
+                        row.style.opacity = '0.45';
+                        var nameEl = row.querySelector('.tc-item-name');
+                        if (nameEl) nameEl.style.textDecoration = 'line-through';
+                        btn.textContent = 'Undo';
+                        btn.classList.remove('btnTcMark');
+                        btn.classList.add('btnTcUndo');
+                        btn.style.background = '#555';
+                    }
+                    updateSaveButton();
+                    return;
+                }
+
+                // Undo pending deletion
+                if (btn.classList.contains('btnTcUndo')) {
+                    var type = btn.dataset.type;
+                    var id = btn.dataset.id;
+                    if (type === 'tag') delete pendingTagDeletes[id.toLowerCase()];
+                    else delete pendingCollDeletes[id];
+                    var row = btn.closest('.tc-manage-row');
+                    if (row) {
+                        row.style.opacity = '1';
+                        var nameEl = row.querySelector('.tc-item-name');
+                        if (nameEl) nameEl.style.textDecoration = '';
+                        btn.textContent = 'Remove';
+                        btn.classList.remove('btnTcUndo');
+                        btn.classList.add('btnTcMark');
+                        btn.style.background = '#cc3333';
+                    }
+                    updateSaveButton();
+                    return;
+                }
+
+                // Refresh
+                if (btn.classList.contains('btnTcRefresh')) {
+                    container.dataset.loaded = '';
+                    loadTagManageTab(view);
+                    return;
+                }
+
+            });
+
+            container._tcShowModal = function () { showSummaryModal(); };
+
+            function showSummaryModal() {
+                var undoBtnStyle = 'cursor:pointer;border:1px solid var(--line-color);background:transparent;color:var(--theme-text-secondary);border-radius:3px;padding:2px 8px;font-size:0.8em;margin-left:10px;';
+
+                function buildRows(items, isTag) {
+                    return items.map(function (item) {
+                        var name = item.name;
+                        var key = isTag ? item.name.toLowerCase() : item.id;
+                        var managed = isTag ? managedTagMap[name.toLowerCase()] : managedCollMap[name.toLowerCase()];
+                        var warning = '';
+                        if (managed && managed.groupActive) {
+                            var what = isTag ? 'recreate this tag' : 'recreate this collection';
+                            warning =
+                                '<div style="color:#f0a000;margin-top:6px;font-size:0.88em;">' +
+                                '<i class="md-icon" style="font-size:1em;vertical-align:middle;margin-right:4px;">warning</i>' +
+                                'Group <strong>' + escHtml(managed.displayName) + '</strong> is active and may ' + what + ' on next sync.' +
+                                '<br><label style="display:flex;align-items:center;gap:6px;margin-top:5px;cursor:pointer;">' +
+                                '<input type="checkbox" class="cbInactivateGroup" data-group-index="' + managed.groupIndex + '"> ' +
+                                'Deactivate group at the same time' +
+                                '</label></div>';
+                        }
+                        return '<div style="padding:10px 0;border-bottom:1px solid var(--line-color);display:flex;align-items:flex-start;">' +
+                            '<div style="flex:1;">' +
+                            '<span style="font-weight:500;">' + escHtml(name) + '</span>' +
+                            '<span style="color:var(--theme-text-secondary);font-size:0.88em;margin-left:8px;">(' + item.itemCount + ' items)</span>' +
+                            warning +
+                            '</div>' +
+                            '<button type="button" class="btnModalUndo" style="' + undoBtnStyle + '" data-key="' + escAttr(key) + '" data-type="' + (isTag ? 'tag' : 'coll') + '" title="Remove from list">✕</button>' +
+                            '</div>';
+                    }).join('');
+                }
+
+                function buildContent() {
+                    var tagList = Object.values(pendingTagDeletes);
+                    var collList = Object.values(pendingCollDeletes);
+                    var tagSection = tagList.length > 0
+                        ? '<div style="margin-bottom:20px;"><h4 style="margin:0 0 8px;color:#52B54B;">Tags to remove (' + tagList.length + ')</h4>' + buildRows(tagList, true) + '</div>'
+                        : '';
+                    var collSection = collList.length > 0
+                        ? '<div style="margin-bottom:20px;"><h4 style="margin:0 0 8px;color:#52B54B;">Collections to remove (' + collList.length + ')</h4>' + buildRows(collList, false) + '</div>'
+                        : '';
+                    return tagSection + collSection;
+                }
+
+                var modal = document.createElement('div');
+                modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:center;justify-content:center;';
+
+                function renderModal() {
+                    var tagList = Object.values(pendingTagDeletes);
+                    var collList = Object.values(pendingCollDeletes);
+                    if (tagList.length === 0 && collList.length === 0) { modal.remove(); updateSaveButton(); return; }
+                    modal.innerHTML =
+                        '<div style="background:var(--plugin-popup-bg,#2a2a2a);color:var(--plugin-popup-color,#e8e8e8);border:1px solid var(--plugin-popup-border,rgba(255,255,255,0.12));border-radius:8px;padding:28px;max-width:380px;width:90%;max-height:80vh;overflow-y:auto;">' +
+                        '<h3 style="margin:0 0 20px;font-size:1.1em;color:#52B54B;">Summary — Pending changes</h3>' +
+                        '<div id="tcModalBody">' + buildContent() + '</div>' +
+                        '<div style="display:flex;justify-content:flex-end;gap:12px;margin-top:20px;border-top:1px solid var(--line-color);padding-top:16px;">' +
+                        '<button type="button" id="tcModalCancel" style="cursor:pointer;border:1px solid var(--line-color);background:transparent;color:var(--theme-text-primary);border-radius:3px;padding:8px 18px;font-size:0.9em;">Cancel</button>' +
+                        '<button type="button" id="tcModalConfirm" style="cursor:pointer;border:none;background:#52B54B;color:#fff;border-radius:3px;padding:8px 18px;font-size:0.9em;font-weight:500;"><i class="md-icon" style="font-size:1em;vertical-align:middle;margin-right:5px;">check</i>Confirm &amp; Save</button>' +
+                        '</div></div>';
+
+                    modal.querySelector('#tcModalCancel').addEventListener('click', function () { modal.remove(); });
+
+                    modal.addEventListener('click', function (e) {
+                        var undoBtn = e.target.closest('.btnModalUndo');
+                        if (!undoBtn) return;
+                        var type = undoBtn.dataset.type;
+                        var key = undoBtn.dataset.key;
+                        if (type === 'tag') delete pendingTagDeletes[key];
+                        else delete pendingCollDeletes[key];
+
+                        // Restore the row in the main list directly (no .click() to avoid re-triggering handler)
+                        var mainBtn = container.querySelector('.btnTcUndo[data-id="' + key + '"]');
+                        if (mainBtn) {
+                            var row = mainBtn.closest('.tc-manage-row');
+                            if (row) {
+                                row.style.opacity = '1';
+                                var nameEl = row.querySelector('.tc-item-name');
+                                if (nameEl) nameEl.style.textDecoration = '';
+                            }
+                            mainBtn.textContent = 'Remove';
+                            mainBtn.classList.remove('btnTcUndo');
+                            mainBtn.classList.add('btnTcMark');
+                            mainBtn.style.background = '#cc3333';
+                        }
+
+                        updateSaveButton();
+                        renderModal();
+                    });
+
+                    modal.querySelector('#tcModalConfirm').addEventListener('click', function () {
+                        var confirmBtn = modal.querySelector('#tcModalConfirm');
+                        confirmBtn.disabled = true;
+                        confirmBtn.innerHTML = 'Saving <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
+
+                        var tagList = Object.values(pendingTagDeletes);
+                        var collList = Object.values(pendingCollDeletes);
+
+                        var groupsToInactivate = new Set();
+                        modal.querySelectorAll('.cbInactivateGroup:checked').forEach(function (cb) {
+                            groupsToInactivate.add(parseInt(cb.dataset.groupIndex, 10));
+                        });
+
+                        var tok = window.ApiClient.accessToken();
+                        var promises = [];
+
+                        tagList.forEach(function (t) {
+                            promises.push(fetch(window.ApiClient.getUrl('HomeScreenCompanion/Manage/DeleteTag'), {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', 'X-MediaBrowser-Token': tok },
+                                body: JSON.stringify({ TagName: t.name })
+                            }).then(function (r) { return r.json(); }));
+                        });
+
+                        collList.forEach(function (c) {
+                            promises.push(fetch(window.ApiClient.getUrl('HomeScreenCompanion/Manage/DeleteCollection'), {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', 'X-MediaBrowser-Token': tok },
+                                body: JSON.stringify({ CollectionId: c.id })
+                            }).then(function (r) { return r.json(); }));
+                        });
+
+                        Promise.all(promises).then(function () {
+                            if (groupsToInactivate.size === 0) return Promise.resolve();
+                            return window.ApiClient.getPluginConfiguration(pluginId).then(function (cfg) {
+                                groupsToInactivate.forEach(function (idx) {
+                                    if (cfg.Tags && cfg.Tags[idx]) cfg.Tags[idx].Active = false;
+                                });
+                                return window.ApiClient.updatePluginConfiguration(pluginId, cfg);
+                            });
+                        }).then(function () {
+                            modal.remove();
+                            // Update SOURCES tab rows for deactivated groups immediately
+                            groupsToInactivate.forEach(function (idx) {
+                                var sourceRow = view.querySelector('#tagListContainer .tag-row[data-index="' + idx + '"]');
+                                if (!sourceRow) return;
+                                var chk = sourceRow.querySelector('.chkTagActive');
+                                var lbl = sourceRow.querySelector('.lblActiveStatus');
+                                if (chk) chk.checked = false;
+                                if (lbl) { lbl.textContent = 'Disabled'; lbl.style.color = 'var(--theme-text-secondary)'; }
+                                sourceRow.classList.add('inactive');
+                                var runBtn = sourceRow.querySelector('.btnRunEntry');
+                                if (runBtn) { runBtn.disabled = true; runBtn.style.opacity = '0.4'; }
+                            });
+                            pendingTagDeletes = {};
+                            pendingCollDeletes = {};
+                            container._tcHasPending = false;
+                            checkFormState();
+                            container.dataset.loaded = '';
+                            loadTagManageTab(view);
+                        }).catch(function (err) {
+                            modal.remove();
+                            alert('Error saving: ' + err);
+                        });
+                    });
+                }
+
+                renderModal();
+                document.body.appendChild(modal);
+            }
+
+        }).catch(function (err) {
+            container.innerHTML = '<div style="color:#cc3333;padding:20px;">Failed to load: ' + err + '</div>';
+        });
     }
 
     function loadHscManageTab(view) {
@@ -3694,6 +4065,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         view.querySelector('.HomeScreenCompanionForm').addEventListener('submit', e => {
             e.preventDefault();
 
+            // If CLEANUP tab is active and has pending deletions, show its modal instead of normal config save
+            var tcManageTab = view.querySelector('#tcSubTabManage');
+            var tcContainer = view.querySelector('#tcManageContainer');
+            if (tcManageTab && tcManageTab.style.display !== 'none' && tcContainer && tcContainer._tcHasPending && tcContainer._tcShowModal) {
+                tcContainer._tcShowModal();
+                return;
+            }
+
             var btnApplyManage = view.querySelector('#btnApplyManage');
             if (btnApplyManage && !btnApplyManage.disabled) applyManageSections(view);
 
@@ -3805,13 +4184,31 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             closeSpeedDial();
         });
 
+        function beforeUnloadHandler(e) {
+            if (hasDirtyState()) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        }
+        window.addEventListener('beforeunload', beforeUnloadHandler);
+
         view.addEventListener('viewhide', function () {
             document.removeEventListener('click', closeSpeedDial);
+            window.removeEventListener('beforeunload', beforeUnloadHandler);
         }, { once: true });
+
+        function hasDirtyState() {
+            var btnSave = view.querySelector('.btn-save');
+            if (btnSave && !btnSave.disabled) return true;
+            var tcContainer = view.querySelector('#tcManageContainer');
+            if (tcContainer && tcContainer._tcHasPending) return true;
+            return false;
+        }
 
         view.querySelectorAll('.page-tab-btn').forEach(function (btn) {
             btn.addEventListener('click', function () {
                 var target = this.getAttribute('data-page-tab');
+                if (hasDirtyState() && !confirm('You have unsaved changes. Leave this tab and discard changes?')) return;
                 view.querySelectorAll('.page-tab-btn').forEach(function (b) { b.classList.remove('active'); });
                 this.classList.add('active');
                 view.querySelectorAll('.page-tab-content').forEach(function (c) { c.style.display = 'none'; });
@@ -3869,6 +4266,23 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 view.querySelector('#hscSubTabManage').style.display = '';
                 var manageContainer = view.querySelector('#hscManageContainer');
                 if (manageContainer && !manageContainer.dataset.loaded) loadHscManageTab(view);
+            }
+        });
+
+        view.addEventListener('click', function (e) {
+            var btn = e.target.closest('[data-tc-tab]');
+            if (!btn) return;
+            var target = btn.getAttribute('data-tc-tab');
+            view.querySelectorAll('.tc-sub-tab-btn').forEach(function (b) { b.classList.remove('active'); });
+            btn.classList.add('active');
+            if (target === 'sources') {
+                view.querySelector('#tcSubTabSources').style.display = '';
+                view.querySelector('#tcSubTabManage').style.display = 'none';
+            } else if (target === 'manage') {
+                view.querySelector('#tcSubTabSources').style.display = 'none';
+                view.querySelector('#tcSubTabManage').style.display = '';
+                var container = view.querySelector('#tcManageContainer');
+                if (container && !container.dataset.loaded) loadTagManageTab(view);
             }
         });
 

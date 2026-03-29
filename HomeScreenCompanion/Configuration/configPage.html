@@ -496,6 +496,35 @@
             border-bottom-color: rgba(128,128,128,0.3);
         }
 
+        /* TC (Tags & Collections) sub-tabs */
+        .tc-sub-tab-nav {
+            display: flex;
+            border-bottom: 1px solid var(--line-color);
+            margin-bottom: 20px;
+        }
+        .tc-sub-tab-btn {
+            background: transparent;
+            border: none;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -1px;
+            padding: 10px 22px;
+            cursor: pointer;
+            font-size: 0.82em;
+            font-weight: 600;
+            color: var(--theme-text-secondary);
+            transition: color 0.2s, border-color 0.2s;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .tc-sub-tab-btn.active {
+            color: #52B54B;
+            border-bottom-color: #52B54B;
+        }
+        .tc-sub-tab-btn:hover:not(.active) {
+            color: var(--theme-text-primary);
+            border-bottom-color: rgba(128,128,128,0.3);
+        }
+
         /* Manage section rows — same visual as .tag-row */
         .man-section-row {
             position: relative;
@@ -986,7 +1015,13 @@
 
             <div id="tabTagCollection" class="page-tab-content">
 
-            <form class="HomeScreenCompanionForm" id="homeScreenCompanionForm">
+                <div class="tc-sub-tab-nav">
+                    <button class="tc-sub-tab-btn active" data-tc-tab="sources">SOURCES</button>
+                    <button class="tc-sub-tab-btn" data-tc-tab="manage">CLEANUP</button>
+                </div>
+
+                <div id="tcSubTabSources" class="tc-sub-tab-content">
+                <form class="HomeScreenCompanionForm" id="homeScreenCompanionForm">
 
 <div class="sectionTitleContainer flex align-items-center" style="margin-bottom: 1em; margin-top: 2em;">
                     <h2 class="sectionTitle" style="margin-bottom:0;">Sources</h2>
@@ -999,7 +1034,12 @@
 
                 <br /><br /><br /><br /><br />
 
-            </form>
+                </form>
+                </div>
+
+                <div id="tcSubTabManage" class="tc-sub-tab-content" style="display:none;">
+                    <div id="tcManageContainer"></div>
+                </div>
 
             </div>
 
@@ -1043,7 +1083,7 @@
         </div>
 
         <div style="margin-top: 5em; padding-top: 2em; border-top: 1px solid var(--line-color); text-align: center; color: var(--theme-text-secondary);">
-            <p style="margin-bottom: 5px; font-weight: bold;">Home Screen Companion v3.2.2.0</p>
+            <p style="margin-bottom: 5px; font-weight: bold;">Home Screen Companion v3.3.0.0</p>
             <div style="display: flex; justify-content: center; margin-bottom: 15px;">
                 <a href="https://github.com/soderlund91/HomeScreenCompanion/tree/main" target="_blank" class="simple-link">
                     <i class="md-icon" style="font-size:1.2em;">link</i>

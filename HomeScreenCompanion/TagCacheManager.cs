@@ -37,6 +37,15 @@ namespace HomeScreenCompanion
             }
         }
 
+        public void RemoveTagFromAllEntries(string tagName)
+        {
+            lock (_lock)
+            {
+                foreach (var key in _cache.Keys)
+                    _cache[key].RemoveWhere(t => string.Equals(t, tagName, StringComparison.OrdinalIgnoreCase));
+            }
+        }
+
         public void ClearCache()
         {
             lock (_lock)
