@@ -165,6 +165,17 @@ namespace HomeScreenCompanion
                 foreach (var t in previouslyManagedTags) managedTags.Add(t);
 
                 var previouslyManagedCollections = LoadFileHistory("homescreencompanion_collections.txt");
+                // Also track collection names from inactive groups so they get cleaned up
+                // even if the group was only ever run via single-entry sync (which doesn't update history)
+                foreach (var tc in config.Tags)
+                {
+                    if (tc.EnableCollection && !string.IsNullOrWhiteSpace(tc.Tag))
+                    {
+                        string cn = string.IsNullOrWhiteSpace(tc.CollectionName) ? tc.Tag.Trim() : tc.CollectionName.Trim();
+                        if (!previouslyManagedCollections.Contains(cn))
+                            previouslyManagedCollections.Add(cn);
+                    }
+                }
 
                 TagCacheManager.Instance.Initialize(Plugin.Instance.DataFolderPath, _jsonSerializer);
                 TagCacheManager.Instance.ClearCache();
@@ -293,6 +304,79 @@ namespace HomeScreenCompanion
                     }
                 }
 
+                // Determine which pre-loads are needed based on active group criteria
+                bool _needsSeriesLastPlayed = config.Tags.Any(t => t.Active && GetAllCriteria(t).Any(c =>
+                    c.TrimStart('!').Split(':') is var _p && _p.Length == 4 && _p[0] == "LastPlayed"));
+                bool _needsItemUserData = _needsSeriesLastPlayed || config.Tags.Any(t => t.Active && GetAllCriteria(t).Any(c =>
+                {
+                    var _p2 = c.TrimStart('!').Split(':');
+                    return _p2[0] == "IsPlayed" || _p2[0] == "PlayCount" || _p2[0] == "WatchedByCount";
+                }));
+
+                if (_needsItemUserData && preloadedUsers?.Length > 0)
+                {
+                    // Pre-populate userDataCache for all top-level items (movies + series).
+                    // Covers lazy GetUserData calls for IsPlayed / PlayCount / WatchedByCount / LastPlayed on movies.
+                    foreach (var _user in preloadedUsers)
+                    {
+                        foreach (var _topItem in allItems)
+                        {
+                            var _k = (_user.Id, _topItem.InternalId);
+                            if (userDataCache.ContainsKey(_k)) continue;
+                            var _ud0 = _userDataManager?.GetUserData(_user, _topItem);
+                            userDataCache[_k] = _ud0 == null ? (false, (DateTimeOffset?)null, 0) : (_ud0.Played, _ud0.LastPlayedDate, _ud0.PlayCount);
+                        }
+                    }
+                }
+
+                if (_needsSeriesLastPlayed && preloadedUsers?.Length > 0)
+                {
+                    // Pre-populate userDataCache for all episodes + build seriesLastPlayedCache.
+                    // Without this, Execute() falls back to O(series × users) lazy GetItemList calls during the scan.
+                    var _allEps = _libraryManager.GetItemList(new InternalItemsQuery
+                    {
+                        IncludeItemTypes = new[] { "Episode" },
+                        Recursive = true,
+                        IsVirtualItem = false
+                    });
+                    foreach (var _user in preloadedUsers)
+                    {
+                        foreach (var _ep in _allEps)
+                        {
+                            var _epKey = (_user.Id, _ep.InternalId);
+                            if (userDataCache.ContainsKey(_epKey)) continue;
+                            var _ud = _userDataManager?.GetUserData(_user, _ep);
+                            userDataCache[_epKey] = _ud == null ? (false, (DateTimeOffset?)null, 0) : (_ud.Played, _ud.LastPlayedDate, _ud.PlayCount);
+                        }
+                        var _epsBySeries = new Dictionary<long, List<BaseItem>>();
+                        foreach (var _ep in _allEps)
+                        {
+                            BaseItem? _ser = null;
+                            var _par = _ep.Parent;
+                            if (_par != null)
+                            {
+                                if (_par.GetType().Name.Contains("Series")) _ser = _par;
+                                else if (_par.GetType().Name.Contains("Season") && _par.Parent?.GetType().Name.Contains("Series") == true) _ser = _par.Parent;
+                            }
+                            if (_ser == null) continue;
+                            if (!_epsBySeries.ContainsKey(_ser.InternalId)) _epsBySeries[_ser.InternalId] = new List<BaseItem>();
+                            _epsBySeries[_ser.InternalId].Add(_ep);
+                        }
+                        foreach (var _kvp in _epsBySeries)
+                        {
+                            var _sKey = (_user.Id, _kvp.Key);
+                            if (seriesLastPlayedCache.ContainsKey(_sKey)) continue;
+                            DateTimeOffset? _max = null;
+                            foreach (var _ep in _kvp.Value)
+                            {
+                                if (userDataCache.TryGetValue((_user.Id, _ep.InternalId), out var _cd) && _cd.LastPlayedDate.HasValue)
+                                    if (_max == null || _cd.LastPlayedDate > _max) _max = _cd.LastPlayedDate;
+                            }
+                            seriesLastPlayedCache[_sKey] = _max;
+                        }
+                    }
+                }
+
                 var statsList = new List<GroupRunStats>();
                 int activeGroupIdx = 0;
                 var tagAddedByTag = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -303,9 +387,12 @@ namespace HomeScreenCompanion
 
                 foreach (var tagConfig in config.Tags)
                 {
-                    if (string.IsNullOrWhiteSpace(tagConfig.Tag) || !tagConfig.Active) continue;
-
+                    if (string.IsNullOrWhiteSpace(tagConfig.Tag)) continue;
                     string tagName = tagConfig.Tag.Trim();
+                    managedTags.Add(tagName); // track all groups (active or inactive) so cleanup always runs
+
+                    if (!tagConfig.Active) continue;
+
                     string displayName = !string.IsNullOrWhiteSpace(tagConfig.Name) ? $"{tagConfig.Name} [{tagName}]" : tagName;
                     string srcLabel = string.IsNullOrEmpty(tagConfig.SourceType) ? "External" : tagConfig.SourceType;
                     var ruleFeatures = new List<string>();
@@ -313,7 +400,6 @@ namespace HomeScreenCompanion
                     if (tagConfig.EnableCollection) ruleFeatures.Add("Collection");
                     if (tagConfig.EnableHomeSection) ruleFeatures.Add("HS");
                     string featureStr = ruleFeatures.Count > 0 ? $"  ({string.Join(", ", ruleFeatures)})" : "";
-                    managedTags.Add(tagName);
 
                     activeGroupIdx++;
                     var gs = new GroupRunStats
@@ -1063,8 +1149,6 @@ namespace HomeScreenCompanion
                 }
 
                 // Final summary
-                int totalTagsAdded = statsList.Sum(g => g.TagsAdded);
-                int totalTagsRemoved = statsList.Sum(g => g.TagsRemoved);
                 int totalCollCreated = statsList.Count(g => g.CollectionCreated);
                 int totalCollUpdated = statsList.Count(g => !g.CollectionCreated && !g.Skipped && g.EnableCollection && (g.CollectionItemsAdded > 0 || g.CollectionItemsRemoved > 0));
                 int totalHsSynced = statsList.Count(g => g.HomeSectionSynced);
@@ -1072,8 +1156,8 @@ namespace HomeScreenCompanion
 
                 LogSummary("══════════════════════════════════════════════════");
                 LogSummary("Summary");
-                if (statsList.Any(g => g.EnableTag))
-                    LogSummary($"  Tags:          +{totalTagsAdded} added,  -{totalTagsRemoved} removed");
+                if (tagsAdded > 0 || tagsRemoved > 0)
+                    LogSummary($"  Tags:          +{tagsAdded} added,  -{tagsRemoved} removed");
                 LogSummary($"  Collections:   {totalCollCreated} created,   {totalCollUpdated} updated,   {collDeleted} removed");
                 LogSummary($"  Home sections: {totalHsSynced} synced,    {totalHsRemoved} removed");
                 LogSummary($"  Done in {elapsedStr}  ·  {finalStatus}");
@@ -1239,6 +1323,26 @@ namespace HomeScreenCompanion
                         }
                     }
                     collectionMembershipCache[crit] = ids;
+                }
+
+                // Pre-populate userDataCache for all top-level items when IsPlayed/PlayCount/WatchedByCount/LastPlayed criteria exist
+                bool needsItemUserData = GetAllCriteria(tagConfig).Any(c =>
+                {
+                    var _cp = c.TrimStart('!').Split(':');
+                    return (_cp.Length == 4 && _cp[0] == "LastPlayed") || _cp[0] == "IsPlayed" || _cp[0] == "PlayCount" || _cp[0] == "WatchedByCount";
+                });
+                if (needsItemUserData && preloadedUsers?.Length > 0)
+                {
+                    foreach (var _user in preloadedUsers)
+                    {
+                        foreach (var _topItem in allItems)
+                        {
+                            var _k = (_user.Id, _topItem.InternalId);
+                            if (userDataCache.ContainsKey(_k)) continue;
+                            var _ud0 = _userDataManager?.GetUserData(_user, _topItem);
+                            userDataCache[_k] = _ud0 == null ? (false, (DateTimeOffset?)null, 0) : (_ud0.Played, _ud0.LastPlayedDate, _ud0.PlayCount);
+                        }
+                    }
                 }
 
                 // Pre-fetch all episodes once if needed for LastPlayed or EpisodeTitle caches
