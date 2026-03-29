@@ -3249,7 +3249,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 checkFormState();
             }
 
-            container.addEventListener('click', function (e) {
+            if (container._tcClickHandler) container.removeEventListener('click', container._tcClickHandler);
+            container._tcClickHandler = function (e) {
                 var btn = e.target.closest('button');
                 if (!btn) return;
 
@@ -3302,12 +3303,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     return;
                 }
 
-            });
+            };
+            container.addEventListener('click', container._tcClickHandler);
 
             container._tcShowModal = function () { showSummaryModal(); };
 
             function showSummaryModal() {
-                var undoBtnStyle = 'cursor:pointer;border:1px solid var(--line-color);background:transparent;color:var(--theme-text-secondary);border-radius:3px;padding:2px 8px;font-size:0.8em;margin-left:10px;';
+                var undoBtnStyle = 'cursor:pointer;border:none;background:transparent;color:#cc2222;border-radius:3px;padding:2px 6px;font-size:1.1em;line-height:1;margin-right:8px;flex-shrink:0;';
 
                 function buildRows(items, isTag) {
                     return items.map(function (item) {
@@ -3327,12 +3329,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                                 '</label></div>';
                         }
                         return '<div style="padding:10px 0;border-bottom:1px solid var(--line-color);display:flex;align-items:flex-start;">' +
+                            '<button type="button" class="btnModalUndo" style="' + undoBtnStyle + '" data-key="' + escAttr(key) + '" data-type="' + (isTag ? 'tag' : 'coll') + '" title="Keep this one">✕</button>' +
                             '<div style="flex:1;">' +
                             '<span style="font-weight:500;">' + escHtml(name) + '</span>' +
                             '<span style="color:var(--theme-text-secondary);font-size:0.88em;margin-left:8px;">(' + item.itemCount + ' items)</span>' +
                             warning +
                             '</div>' +
-                            '<button type="button" class="btnModalUndo" style="' + undoBtnStyle + '" data-key="' + escAttr(key) + '" data-type="' + (isTag ? 'tag' : 'coll') + '" title="Remove from list">✕</button>' +
                             '</div>';
                     }).join('');
                 }
@@ -3357,7 +3359,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var collList = Object.values(pendingCollDeletes);
                     if (tagList.length === 0 && collList.length === 0) { modal.remove(); updateSaveButton(); return; }
                     modal.innerHTML =
-                        '<div style="background:var(--plugin-popup-bg,#2a2a2a);color:var(--plugin-popup-color,#e8e8e8);border:1px solid var(--plugin-popup-border,rgba(255,255,255,0.12));border-radius:8px;padding:28px;max-width:380px;width:90%;max-height:80vh;overflow-y:auto;">' +
+                        '<div style="background:var(--plugin-popup-bg,#2a2a2a);color:var(--plugin-popup-color,#e8e8e8);border:1px solid var(--plugin-popup-border,rgba(255,255,255,0.12));border-radius:8px;padding:28px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;">' +
                         '<h3 style="margin:0 0 20px;font-size:1.1em;color:#52B54B;">Summary — Pending changes</h3>' +
                         '<div id="tcModalBody">' + buildContent() + '</div>' +
                         '<div style="display:flex;justify-content:flex-end;gap:12px;margin-top:20px;border-top:1px solid var(--line-color);padding-top:16px;">' +
@@ -3376,7 +3378,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         else delete pendingCollDeletes[key];
 
                         // Restore the row in the main list directly (no .click() to avoid re-triggering handler)
-                        var mainBtn = container.querySelector('.btnTcUndo[data-id="' + key + '"]');
+                        var keyLower = key.toLowerCase();
+                        var mainBtn = Array.from(container.querySelectorAll('.btnTcUndo')).find(function (b) { return b.dataset.id.toLowerCase() === keyLower; });
                         if (mainBtn) {
                             var row = mainBtn.closest('.tc-manage-row');
                             if (row) {
