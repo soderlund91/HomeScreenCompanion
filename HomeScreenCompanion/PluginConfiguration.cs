@@ -12,6 +12,7 @@ namespace HomeScreenCompanion
         public string GeminiApiKey { get; set; } = "";
         public bool ExtendedConsoleOutput { get; set; } = false;
         public bool DryRunMode { get; set; } = false;
+        public bool PreserveTagsOnEmptyResult { get; set; } = true;
         public List<TagConfig> Tags { get; set; } = new List<TagConfig>();
         public List<SavedMediaInfoFilter> SavedFilters { get; set; } = new List<SavedMediaInfoFilter>();
 

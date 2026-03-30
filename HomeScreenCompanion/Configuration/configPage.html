@@ -1000,6 +1000,14 @@
                     <div class="fieldDescription">Simulate process without modifying database.</div>
                 </div>
 
+                <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
+                    <label>
+                        <input is="emby-checkbox" type="checkbox" id="chkPreserveTagsOnEmptyResult" />
+                        <span>Preserve tags on empty result</span>
+                    </label>
+                    <div class="fieldDescription">If an External or AI source returns zero items (e.g. broken URL or API error), keep existing tags and collection members instead of removing them.</div>
+                </div>
+
                 <hr style="border-color: var(--line-color); margin: 25px 0;" />
 
                 <h3 style="margin-top: 0; margin-bottom: 10px; font-size: 1.05em; color: #52B54B; text-transform: uppercase; letter-spacing: 1px;">Backup & Restore</h3>

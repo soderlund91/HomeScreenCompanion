@@ -912,7 +912,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 }).join('');
                 return tagTextOpHtml + '<select class="selMiValue" is="emby-select" style="flex:1;"><option value="">-- Select tag --</option>' + tagOpts + '</select>';
             }
-            return tagTextOpHtml + '<input class="txtMiValue" is="emby-input" type="text" placeholder="e.g. 4K" value="' + (savedVal || '').replace(/"/g, '&quot;') + '" style="flex:1;" />';
+            var migratedTagVal = migrateCommaSeparated(savedVal || '');
+            return tagTextOpHtml + '<textarea class="txtMiValue" placeholder="e.g. 4K" rows="1" style="flex:1;resize:none;overflow:hidden;padding:6px 8px;font-size:inherit;font-family:inherit;background:var(--input-background,rgba(255,255,255,0.08));border:1px solid var(--input-border,rgba(255,255,255,0.2));border-radius:3px;color:inherit;line-height:1.4;min-height:32px;max-height:120px;overflow-y:auto;">' + migratedTagVal.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>';
         }
         if (MI_DROPDOWN_OPTIONS[prop]) {
             if (prop === 'MediaType') {
@@ -965,17 +966,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var ph = MI_TEXT_PLACEHOLDERS[prop] || '';
             var ph = MI_TEXT_PLACEHOLDERS[prop] || '';
             var migratedVal = migrateCommaSeparated(savedVal || '');
-            return textOpHtml + '<textarea class="txtMiValue" placeholder="' + ph + '" rows="1" style="flex:1;resize:none;overflow:hidden;padding:6px 8px;font-size:inherit;font-family:inherit;background:var(--input-background,rgba(255,255,255,0.08));border:1px solid var(--input-border,rgba(255,255,255,0.2));border-radius:3px;color:inherit;line-height:1.4;max-height:120px;overflow-y:auto;">' + migratedVal.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>';
+            return textOpHtml + '<textarea class="txtMiValue" placeholder="' + ph + '" rows="1" style="flex:1;resize:none;overflow:hidden;padding:6px 8px;font-size:inherit;font-family:inherit;background:var(--input-background,rgba(255,255,255,0.08));border:1px solid var(--input-border,rgba(255,255,255,0.2));border-radius:3px;color:inherit;line-height:1.4;min-height:32px;max-height:120px;overflow-y:auto;">' + migratedVal.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>';
         }
         var ph = MI_TEXT_PLACEHOLDERS[prop] || '';
         var migratedVal = migrateCommaSeparated(savedVal || '');
-        return '<textarea class="txtMiValue" placeholder="' + ph + '" rows="1" style="flex:1;resize:none;overflow:hidden;padding:6px 8px;font-size:inherit;font-family:inherit;background:var(--input-background,rgba(255,255,255,0.08));border:1px solid var(--input-border,rgba(255,255,255,0.2));border-radius:3px;color:inherit;line-height:1.4;max-height:120px;overflow-y:auto;">' + migratedVal.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>';
+        return '<textarea class="txtMiValue" placeholder="' + ph + '" rows="1" style="flex:1;resize:none;overflow:hidden;padding:6px 8px;font-size:inherit;font-family:inherit;background:var(--input-background,rgba(255,255,255,0.08));border:1px solid var(--input-border,rgba(255,255,255,0.2));border-radius:3px;color:inherit;line-height:1.4;min-height:32px;max-height:120px;overflow-y:auto;">' + migratedVal.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>';
     }
 
     function getMiHintHtml(prop) {
         if (MI_TEXT_MATCH_PROPS.indexOf(prop) < 0 && prop !== 'ImdbId') return '<div class="mi-rule-hint"></div>';
-        var example = MI_TEXT_PLACEHOLDERS[prop] || 'Value1\nValue2';
-        return '<div class="mi-rule-hint" style="font-size:0.75em; opacity:0.5; margin-top:2px; padding-right:32px; text-align:right;">One value per line — ' + example.replace(/,\s*/g, ' / ') + '</div>';
+        return '<div class="mi-rule-hint" style="font-size:0.75em; opacity:0.5; margin-top:2px; padding-right:32px; text-align:right;">One value per line</div>';
     }
 
     function getMediaInfoRuleHtml(criterion) {
@@ -1576,7 +1576,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 <div class="tab-content advanced-tab" style="display:none;">
                     <div class="inputContainer">
                         <p style="margin:0 0 5px 0; font-size:0.9em; font-weight:bold; opacity:0.7;">Blacklist / Ignore (IMDB IDs)</p>
-                        <textarea class="txtTagBlacklist" rows="1" placeholder="tt1234567&#10;tt9876543" style="width:100%;resize:none;overflow:hidden;padding:6px 8px;font-size:inherit;font-family:inherit;background:var(--input-background,rgba(255,255,255,0.08));border:1px solid var(--input-border,rgba(255,255,255,0.2));border-radius:3px;color:inherit;line-height:1.4;max-height:120px;overflow-y:auto;">${blacklist}</textarea>
+                        <textarea class="txtTagBlacklist" rows="2" placeholder="tt1234567&#10;tt9876543" style="width:100%;resize:none;overflow:hidden;padding:6px 8px;font-size:inherit;font-family:inherit;background:var(--input-background,rgba(255,255,255,0.08));border:1px solid var(--input-border,rgba(255,255,255,0.2));border-radius:3px;color:inherit;line-height:1.4;min-height:44px;max-height:120px;overflow-y:auto;">${blacklist}</textarea>
                         <div class="fieldDescription">Items with these IDs will never be tagged or added to collection.</div>
                     </div>
                 </div>
@@ -2815,6 +2815,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             GeminiApiKey: (view.querySelector('#txtGeminiApiKey') || {}).value || '',
             ExtendedConsoleOutput: view.querySelector('#chkExtendedConsoleOutput').checked,
             DryRunMode: view.querySelector('#chkDryRunMode').checked,
+            PreserveTagsOnEmptyResult: view.querySelector('#chkPreserveTagsOnEmptyResult').checked,
             Tags: flatTags,
             SavedFilters: savedFilters,
             HomeSyncEnabled: hscEnabled ? hscEnabled.checked : (lastHscConfig.HomeSyncEnabled || false),
@@ -4031,6 +4032,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             var gmEl = view.querySelector('#txtGeminiApiKey'); if (gmEl) gmEl.value = config.GeminiApiKey || '';
                             view.querySelector('#chkExtendedConsoleOutput').checked = config.ExtendedConsoleOutput || false;
                             view.querySelector('#chkDryRunMode').checked = config.DryRunMode || false;
+                            view.querySelector('#chkPreserveTagsOnEmptyResult').checked = config.PreserveTagsOnEmptyResult !== false;
 
                             var container = view.querySelector('#tagListContainer'); container.innerHTML = '';
                             var grouped = groupConfigTags(config.Tags);

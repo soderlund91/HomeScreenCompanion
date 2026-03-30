@@ -385,7 +385,14 @@ namespace HomeScreenCompanion
                 var collItemsAdded = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
                 var collItemsRemoved = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
-                foreach (var tagConfig in config.Tags)
+                // Process OverrideWhenActive entries first so they can remove themselves from
+                // activeTagOverrides before non-override entries for the same tag are evaluated.
+                var orderedTags = config.Tags
+                    .Where(t => t.OverrideWhenActive)
+                    .Concat(config.Tags.Where(t => !t.OverrideWhenActive))
+                    .ToList();
+
+                foreach (var tagConfig in orderedTags)
                 {
                     if (string.IsNullOrWhiteSpace(tagConfig.Tag)) continue;
                     string tagName = tagConfig.Tag.Trim();
@@ -796,6 +803,28 @@ namespace HomeScreenCompanion
                         foreach (var id in collectionOutputItems.Select(i => i.Id)) allOutputIds.Add(id);
                         gs.MatchCount = allOutputIds.Count;
                         matchCount += allOutputIds.Count;
+
+                        // If this is a priority-override entry but produced zero results,
+                        // remove it from the override sets so other entries for the same tag are not suppressed.
+                        if (tagConfig.OverrideWhenActive && allOutputIds.Count == 0)
+                        {
+                            activeTagOverrides.Remove(tagName);
+                            if (tagConfig.EnableCollection) activeCollectionOverrides.Remove(cName);
+                        }
+
+                        // For External and AI sources: if the remote returned zero items and the user has
+                        // opted to preserve tags on empty results, treat it as a failed fetch.
+                        bool isRemoteSource = string.IsNullOrEmpty(tagConfig.SourceType) || tagConfig.SourceType == "External" || tagConfig.SourceType == "AI";
+                        if (isRemoteSource && gs.ListCount == 0 && config.PreserveTagsOnEmptyResult)
+                        {
+                            LogSummary($"  ! {displayName}  ·  Source returned 0 items — preserving existing tags (see Settings to change this behaviour)", "Warn");
+                            failedFetches.Add(tagName);
+                            if (tagConfig.EnableCollection) failedFetches.Add(cName);
+                            statsList.Add(gs);
+                            currentProgress += step;
+                            progress.Report(currentProgress);
+                            continue;
+                        }
 
                         if (tagConfig.EnableTag && !tagConfig.OnlyCollection)
                         {
