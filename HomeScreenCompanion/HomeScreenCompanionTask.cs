@@ -2765,11 +2765,13 @@ namespace HomeScreenCompanion
                 v.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0);
 
         private static string[] SplitCommaValues(string val) =>
-            val.Split(',').Select(v => v.Trim()).Where(v => v.Length > 0).ToArray();
+            val.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+               .Select(v => v.Trim()).Where(v => v.Length > 0).ToArray();
 
         private static bool MatchesImdbId(string? itemImdb, string val) =>
             !string.IsNullOrEmpty(itemImdb) &&
-            val.Split(',').Any(id => string.Equals(itemImdb, id.Trim(), StringComparison.OrdinalIgnoreCase));
+            val.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+               .Any(id => string.Equals(itemImdb, id.Trim(), StringComparison.OrdinalIgnoreCase));
 
         private static bool MatchesPerson(BaseItem item, string name, string type)
         {

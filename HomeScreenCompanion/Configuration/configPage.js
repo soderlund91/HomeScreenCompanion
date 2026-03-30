@@ -604,7 +604,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var tagName = row.querySelector('.txtTagName').value || entryLabel;
         var active = row.querySelector('.chkTagActive').checked;
         var blInput = row.querySelector('.txtTagBlacklist');
-        var bl = blInput ? blInput.value.split(',').map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; }) : [];
+        var bl = blInput ? blInput.value.split(/[\n\r]+/).map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; }) : [];
         var enableTag = row.querySelector('.chkEnableTag').checked;
         var enableColl = row.querySelector('.chkEnableCollection').checked;
         var overrideWhenActive = !!(row.querySelector('.chkOverrideWhenActive') || {}).checked;
@@ -644,7 +644,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var txtNum = rule.querySelector('.txtMiNum');
                 var selUser = rule.querySelector('.selMiUser');
                 var selTextOp = rule.querySelector('.selMiTextOp');
-                var val = selVal ? selVal.value : (txtVal ? txtVal.value.trim() : '');
+                var val = selVal ? selVal.value : (txtVal ? txtVal.value.replace(/\r?\n/g, '\n').trim() : '');
                 // MediaType:Episode + "Include parent series" → save as EpisodeIncludeSeries
                 if (prop === 'MediaType' && val === 'Episode') {
                     var incParentChk = rule.querySelector('.chkIncludeParentSeries');
@@ -752,6 +752,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var m = MI_CRITERION_MAP[k];
         MI_REVERSE_MAP[m.prop + ':' + m.val] = k;
     });
+
+    // Migrate legacy comma-separated values to newline-separated on first load.
+    // Only converts if the string contains commas but no newlines.
+    function migrateCommaSeparated(val) {
+        if (!val || val.indexOf('\n') >= 0) return val;
+        if (val.indexOf(',') < 0) return val;
+        return val.split(',').map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; }).join('\n');
+    }
 
     function parseCriterion(crit) {
         if (!crit) return { prop: 'Resolution', op: '', val: '', userId: '', not: false };
@@ -955,16 +963,19 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<option value="exact"' + (textOp === 'exact' ? ' selected' : '') + '>Exact</option>' +
                 '</select>';
             var ph = MI_TEXT_PLACEHOLDERS[prop] || '';
-            return textOpHtml + '<input class="txtMiValue" is="emby-input" type="text" placeholder="' + ph + '" value="' + (savedVal || '').replace(/"/g, '&quot;') + '" style="flex:1;" />';
+            var ph = MI_TEXT_PLACEHOLDERS[prop] || '';
+            var migratedVal = migrateCommaSeparated(savedVal || '');
+            return textOpHtml + '<textarea class="txtMiValue" placeholder="' + ph + '" rows="1" style="flex:1;resize:none;overflow:hidden;padding:6px 8px;font-size:inherit;font-family:inherit;background:var(--input-background,rgba(255,255,255,0.08));border:1px solid var(--input-border,rgba(255,255,255,0.2));border-radius:3px;color:inherit;line-height:1.4;max-height:120px;overflow-y:auto;">' + migratedVal.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>';
         }
         var ph = MI_TEXT_PLACEHOLDERS[prop] || '';
-        return '<input class="txtMiValue" is="emby-input" type="text" placeholder="' + ph + '" value="' + (savedVal || '').replace(/"/g, '&quot;') + '" style="flex:1;" />';
+        var migratedVal = migrateCommaSeparated(savedVal || '');
+        return '<textarea class="txtMiValue" placeholder="' + ph + '" rows="1" style="flex:1;resize:none;overflow:hidden;padding:6px 8px;font-size:inherit;font-family:inherit;background:var(--input-background,rgba(255,255,255,0.08));border:1px solid var(--input-border,rgba(255,255,255,0.2));border-radius:3px;color:inherit;line-height:1.4;max-height:120px;overflow-y:auto;">' + migratedVal.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>';
     }
 
     function getMiHintHtml(prop) {
         if (MI_TEXT_MATCH_PROPS.indexOf(prop) < 0 && prop !== 'ImdbId') return '<div class="mi-rule-hint"></div>';
-        var example = MI_TEXT_PLACEHOLDERS[prop] || 'Value1, Value2';
-        return '<div class="mi-rule-hint" style="font-size:0.75em; opacity:0.5; margin-top:2px; padding-right:32px; text-align:right;">Comma-separated — ' + example + '</div>';
+        var example = MI_TEXT_PLACEHOLDERS[prop] || 'Value1\nValue2';
+        return '<div class="mi-rule-hint" style="font-size:0.75em; opacity:0.5; margin-top:2px; padding-right:32px; text-align:right;">One value per line — ' + example.replace(/,\s*/g, ' / ') + '</div>';
     }
 
     function getMediaInfoRuleHtml(criterion) {
@@ -1068,7 +1079,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var txtNum = rule.querySelector('.txtMiNum');
                 var selUser = rule.querySelector('.selMiUser');
                 var selTextOp = rule.querySelector('.selMiTextOp');
-                var val = selVal ? selVal.value : (txtVal ? txtVal.value.trim() : '');
+                var val = selVal ? selVal.value : (txtVal ? txtVal.value.replace(/\r?\n/g, '\n').trim() : '');
                 if (prop === 'MediaType' && val === 'Episode') {
                     var incParentChk = rule.querySelector('.chkIncludeParentSeries');
                     if (incParentChk && incParentChk.checked) val = 'EpisodeIncludeSeries';
@@ -1200,7 +1211,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var tagName = tagConfig.Tag || '';
         var labelName = tagConfig.Name || '';
         var urls = tagConfig.Urls || (tagConfig.Url ? [{ url: tagConfig.Url, limit: tagConfig.Limit !== undefined ? tagConfig.Limit : 0 }] : [{ url: '', limit: 0 }]);
-        var blacklist = (tagConfig.Blacklist || []).join(', ');
+        var blacklist = migrateCommaSeparated((tagConfig.Blacklist || []).join('\n'));
         var intervals = tagConfig.ActiveIntervals || [];
         var idx = typeof index !== 'undefined' ? index : 9999;
 
@@ -1280,7 +1291,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var newClass = isNew ? "just-added" : "";
 
         var html = `
-        <div class="tag-row ${inactiveClass} ${newClass}" data-index="${idx}" data-last-modified="${lastMod}" data-dirty="false">
+        <div class="tag-row ${inactiveClass} ${newClass}" data-index="${idx}" data-tag="${tagName.toLowerCase()}" data-last-modified="${lastMod}" data-dirty="false">
             <div class="tag-header" style="display:flex; align-items:center; justify-content:space-between; padding:10px; cursor:pointer;">
                 <div style="display:flex; align-items:center;">
                     <div class="header-actions" style="margin-right:15px; display:flex; align-items:center;" onclick="event.stopPropagation()">
@@ -1415,8 +1426,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                                 <button type="button" is="emby-button" class="btnAddMediaInfoFilter raised" style="flex:1; background:transparent; border:2px dashed rgba(128,128,128,0.4); color:var(--theme-text-secondary);"><i class="md-icon" style="margin-right:5px;">add</i>Add Filter Group</button>
                                 <button type="button" is="emby-button" class="btnClearAllFilters raised" style="background:transparent; border:2px dashed rgba(204,51,51,0.4); color:#cc3333; padding:0 14px; min-width:0;" title="Clear all filters"><i class="md-icon" style="font-size:1em;">delete_sweep</i></button>
                             </div>
-                            ${sourceType === 'MediaInfo' ? `
-                            <div style="margin-top:30px; border-top:1px solid var(--line-color); padding-top:12px;">
+                            <div class="mi-presets-section" style="margin-top:30px; border-top:1px solid var(--line-color); padding-top:12px; display:${sourceType === 'MediaInfo' ? 'block' : 'none'};">
+                            ${true ? `
                                 <button type="button" is="emby-button" class="btnPremadeFilters raised btn-neutral" style="width:100%; margin-bottom:6px; background:transparent; border:1px solid var(--line-color); color:var(--theme-text-secondary); display:flex; align-items:center; justify-content:space-between;"><span><i class="md-icon" style="margin-right:5px;">auto_awesome</i>Premade filters</span><i class="md-icon mi-expand-icon" style="transition:transform 0.2s; font-size:1.2em;">expand_more</i></button>
                                 <div class="mi-preset-panel" style="display:none; border:1px solid var(--line-color); border-radius:6px; padding:10px 12px; margin-bottom:8px; background:rgba(128,128,128,0.06);">
                                     <div style="font-size:0.8em; color:var(--theme-text-secondary); margin-bottom:10px;">Select a preset to replace the current filters:</div>
@@ -1441,7 +1452,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                                         <button type="button" is="emby-button" class="btnConfirmSaveFilter raised" style="background:var(--button-background); color:var(--button-foreground); flex-shrink:0;">Save</button>
                                     </div>
                                 </div>
-                            </div>` : ''}
+                            ` : ''}
+                            </div>
                         </div>
                     </div>
 
@@ -1564,7 +1576,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 <div class="tab-content advanced-tab" style="display:none;">
                     <div class="inputContainer">
                         <p style="margin:0 0 5px 0; font-size:0.9em; font-weight:bold; opacity:0.7;">Blacklist / Ignore (IMDB IDs)</p>
-                        <textarea is="emby-textarea" class="txtTagBlacklist" rows="2" placeholder="tt1234567, tt9876543">${blacklist}</textarea>
+                        <textarea class="txtTagBlacklist" rows="1" placeholder="tt1234567&#10;tt9876543" style="width:100%;resize:none;overflow:hidden;padding:6px 8px;font-size:inherit;font-family:inherit;background:var(--input-background,rgba(255,255,255,0.08));border:1px solid var(--input-border,rgba(255,255,255,0.2));border-radius:3px;color:inherit;line-height:1.4;max-height:120px;overflow-y:auto;">${blacklist}</textarea>
                         <div class="fieldDescription">Items with these IDs will never be tagged or added to collection.</div>
                     </div>
                 </div>
@@ -1609,6 +1621,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
         var newRow = afterRef ? afterRef.nextElementSibling : (prepend ? container.firstElementChild : container.lastElementChild);
         setupRowEvents(newRow);
+        // Auto-size any pre-filled growing textareas
+        newRow.querySelectorAll('textarea.txtMiValue, textarea.txtTagBlacklist').forEach(function (ta) {
+            ta.style.height = 'auto';
+            ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
+            ta.style.overflowY = ta.scrollHeight > 120 ? 'auto' : 'hidden';
+        });
 
         if (isNew) {
             setTimeout(() => { newRow.classList.remove('just-added'); }, 2000);
@@ -1679,19 +1697,21 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 row.querySelector('.source-ai-container').style.display = type === 'AI' ? 'block' : 'none';
 
                 var isMi = type === 'MediaInfo';
-                var miLimitRow   = row.querySelector('.mi-limit-row');
-                var miToggleRow  = row.querySelector('.mi-toggle-row');
-                var miFilterBody = row.querySelector('.mi-filter-body');
-                var miHelpBtnRow = row.querySelector('.mi-help-btn-row');
+                var miLimitRow      = row.querySelector('.mi-limit-row');
+                var miToggleRow     = row.querySelector('.mi-toggle-row');
+                var miFilterBody    = row.querySelector('.mi-filter-body');
+                var miHelpBtnRow    = row.querySelector('.mi-help-btn-row');
+                var miPresetsSection = row.querySelector('.mi-presets-section');
+                if (miPresetsSection) miPresetsSection.style.display = isMi ? 'block' : 'none';
                 if (miLimitRow) miLimitRow.style.display = isMi ? 'flex' : 'none';
                 if (miHelpBtnRow) miHelpBtnRow.style.display = isMi ? 'none' : 'flex';
                 if (isMi) {
                     if (miToggleRow)  miToggleRow.style.display  = 'none';
                     if (miFilterBody) miFilterBody.style.display = 'block';
                 } else if (type) {
-                    var hasFilters = (row.querySelector('.mediainfo-filter-list')?.querySelectorAll('.mediainfo-filter-group').length ?? 0) > 0;
-                    if (miToggleRow)  miToggleRow.style.display  = hasFilters ? 'none'  : 'block';
-                    if (miFilterBody) miFilterBody.style.display = hasFilters ? 'block' : 'none';
+                    // Always collapse filters when switching away from MediaInfo — user must open manually
+                    if (miToggleRow)  miToggleRow.style.display  = 'block';
+                    if (miFilterBody) miFilterBody.style.display = 'none';
                 }
                 if (type) {
                     var miList = row.querySelector('.mediainfo-filter-list');
@@ -2644,7 +2664,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var active = row.querySelector('.chkTagActive').checked;
 
             var blInput = row.querySelector('.txtTagBlacklist');
-            var bl = blInput ? blInput.value.split(',').map(s => s.trim()).filter(s => s.length > 0) : [];
+            var bl = blInput ? blInput.value.split(/[\n\r]+/).map(s => s.trim()).filter(s => s.length > 0) : [];
 
             var enableTagChk = row.querySelector('.chkEnableTag').checked;
             var enableColl = row.querySelector('.chkEnableCollection').checked;
@@ -2691,7 +2711,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var txtNum = rule.querySelector('.txtMiNum');
                     var selUser = rule.querySelector('.selMiUser');
                     var selTextOp = rule.querySelector('.selMiTextOp');
-                    var val = selVal ? selVal.value : (txtVal ? txtVal.value.trim() : '');
+                    var val = selVal ? selVal.value : (txtVal ? txtVal.value.replace(/\r?\n/g, '\n').trim() : '');
                     if (prop === 'MediaType' && val === 'Episode') {
                         var incParentChk = rule.querySelector('.chkIncludeParentSeries');
                         if (incParentChk && incParentChk.checked) val = 'EpisodeIncludeSeries';
@@ -3133,16 +3153,27 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var pluginConfig = results[2];
 
             // Build maps: which tags/collections are managed by a plugin group
-            var managedTagMap = {};   // tagName.toLowerCase() -> { displayName, groupIndex, groupActive }
-            var managedCollMap = {};  // collectionName.toLowerCase() -> { displayName, groupIndex, groupActive }
+            // Each logical group may appear multiple times in cfg.Tags (one entry per URL/source).
+            // Deduplicate by Tag value so we get one entry per logical group.
+            var managedTagMap = {};   // tagName.toLowerCase() -> [{ displayName, groupIndex, groupActive }, ...]
+            var managedCollMap = {};  // collectionName.toLowerCase() -> [{ displayName, groupIndex, groupActive }, ...]
+            var seenGroupByTag = {};  // tKey -> Set of first-seen indices (to deduplicate multi-URL groups)
             (pluginConfig.Tags || []).forEach(function (t, idx) {
                 if (!t.Tag) return;
                 var tName = t.Tag.trim();
-                var groupDisplay = t.Name ? t.Name + ' [' + tName + ']' : tName;
-                managedTagMap[tName.toLowerCase()] = { displayName: groupDisplay, groupIndex: idx, groupActive: !!t.Active };
+                var tKey = tName.toLowerCase();
+                // Skip if we already recorded an entry for this exact tag from a previous URL-row of the same group
+                if (seenGroupByTag[tKey]) return;
+                seenGroupByTag[tKey] = true;
+                var groupLabel = (t.Name && t.Name.trim() && t.Name.trim().toLowerCase() !== tKey) ? t.Name.trim() : tName;
+                var entry = { displayName: groupLabel, groupIndex: idx, groupActive: !!t.Active };
+                if (!managedTagMap[tKey]) managedTagMap[tKey] = [];
+                managedTagMap[tKey].push(entry);
                 if (t.EnableCollection) {
                     var cName = (t.CollectionName && t.CollectionName.trim()) ? t.CollectionName.trim() : tName;
-                    managedCollMap[cName.toLowerCase()] = { displayName: groupDisplay, groupIndex: idx, groupActive: !!t.Active };
+                    var cKey = cName.toLowerCase();
+                    if (!managedCollMap[cKey]) managedCollMap[cKey] = [];
+                    managedCollMap[cKey].push(entry);
                 }
             });
 
@@ -3160,10 +3191,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         var name = item.Name || '';
                         var count = item.ItemCount != null ? item.ItemCount : 0;
                         var managed = isTagSection ? managedTagMap[name.toLowerCase()] : managedCollMap[name.toLowerCase()];
-                        var badge = managed
+                        var badge = managed && managed.length > 0
                             ? '<span style="font-size:0.75em;background:#52B54B22;color:#52B54B;border:1px solid #52B54B55;border-radius:4px;padding:1px 6px;margin-left:8px;white-space:nowrap;">Managed by HSC Plugin</span>'
                             : '';
-                        return '<tr class="tc-manage-row" data-rowname="' + escAttr(name.toLowerCase()) + '" data-managed="' + (managed ? '1' : '0') + '" data-count="' + count + '">' +
+                        return '<tr class="tc-manage-row" data-rowname="' + escAttr(name.toLowerCase()) + '" data-managed="' + (managed && managed.length > 0 ? '1' : '0') + '" data-count="' + count + '">' +
                             '<td style="padding:9px 4px;border-bottom:1px solid var(--line-color);width:100%;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
                             '<span class="tc-item-name">' + escHtml(name) + '</span>' +
                             badge +
@@ -3317,16 +3348,22 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         var key = isTag ? item.name.toLowerCase() : item.id;
                         var managed = isTag ? managedTagMap[name.toLowerCase()] : managedCollMap[name.toLowerCase()];
                         var warning = '';
-                        if (managed && managed.groupActive) {
+                        var activeManaged = managed ? managed.filter(function (m) { return m.groupActive; }) : [];
+                        if (activeManaged.length > 0) {
                             var what = isTag ? 'recreate this tag' : 'recreate this collection';
+                            var warningText = activeManaged.length === 1
+                                ? 'Group <strong>' + escHtml(activeManaged[0].displayName) + '</strong> is active and may ' + what + ' on next sync.'
+                                : activeManaged.length + ' active groups may ' + what + ' on next sync.';
+                            var checkboxes = activeManaged.map(function (m) {
+                                return '<label style="display:flex;align-items:center;gap:6px;margin-top:5px;cursor:pointer;">' +
+                                    '<input type="checkbox" class="cbInactivateGroup" data-group-indices="' + escAttr(JSON.stringify([m.groupIndex])) + '"> ' +
+                                    'Deactivate <strong>' + escHtml(m.displayName) + '</strong>' +
+                                    '</label>';
+                            }).join('');
                             warning =
                                 '<div style="color:#f0a000;margin-top:6px;font-size:0.88em;">' +
                                 '<i class="md-icon" style="font-size:1em;vertical-align:middle;margin-right:4px;">warning</i>' +
-                                'Group <strong>' + escHtml(managed.displayName) + '</strong> is active and may ' + what + ' on next sync.' +
-                                '<br><label style="display:flex;align-items:center;gap:6px;margin-top:5px;cursor:pointer;">' +
-                                '<input type="checkbox" class="cbInactivateGroup" data-group-index="' + managed.groupIndex + '"> ' +
-                                'Deactivate group at the same time' +
-                                '</label></div>';
+                                warningText + checkboxes + '</div>';
                         }
                         return '<div style="padding:10px 0;border-bottom:1px solid var(--line-color);display:flex;align-items:flex-start;">' +
                             '<button type="button" class="btnModalUndo" style="' + undoBtnStyle + '" data-key="' + escAttr(key) + '" data-type="' + (isTag ? 'tag' : 'coll') + '" title="Keep this one">✕</button>' +
@@ -3407,7 +3444,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                         var groupsToInactivate = new Set();
                         modal.querySelectorAll('.cbInactivateGroup:checked').forEach(function (cb) {
-                            groupsToInactivate.add(parseInt(cb.dataset.groupIndex, 10));
+                            var indices = cb.dataset.groupIndices ? JSON.parse(cb.dataset.groupIndices) : [];
+                            indices.forEach(function (idx) { groupsToInactivate.add(idx); });
                         });
 
                         var tok = window.ApiClient.accessToken();
@@ -3437,17 +3475,30 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         }).then(function () {
                             if (groupsToInactivate.size === 0) return Promise.resolve();
                             return window.ApiClient.getPluginConfiguration(pluginId).then(function (cfg) {
+                                // Collect the Tag values for the seed indices, then inactivate ALL rows sharing that Tag
+                                var tagsToInactivate = new Set();
                                 groupsToInactivate.forEach(function (idx) {
-                                    if (cfg.Tags && cfg.Tags[idx]) cfg.Tags[idx].Active = false;
+                                    if (cfg.Tags && cfg.Tags[idx] && cfg.Tags[idx].Tag)
+                                        tagsToInactivate.add(cfg.Tags[idx].Tag.trim().toLowerCase());
+                                });
+                                (cfg.Tags || []).forEach(function (t) {
+                                    if (t.Tag && tagsToInactivate.has(t.Tag.trim().toLowerCase()))
+                                        t.Active = false;
                                 });
                                 return window.ApiClient.updatePluginConfiguration(pluginId, cfg);
                             });
                         }).then(function () {
                             modal.remove();
-                            // Update SOURCES tab rows for deactivated groups immediately
+                            // Update SOURCES tab rows for deactivated groups immediately.
+                            // groupsToInactivate holds seed indices; find all rows sharing the same Tag value.
+                            var inactivatedTagKeys = new Set();
                             groupsToInactivate.forEach(function (idx) {
-                                var sourceRow = view.querySelector('#tagListContainer .tag-row[data-index="' + idx + '"]');
-                                if (!sourceRow) return;
+                                var seedRow = view.querySelector('#tagListContainer .tag-row[data-index="' + idx + '"]');
+                                if (seedRow && seedRow.dataset.tag) inactivatedTagKeys.add(seedRow.dataset.tag.toLowerCase());
+                            });
+                            view.querySelectorAll('#tagListContainer .tag-row').forEach(function (sourceRow) {
+                                var rowTag = (sourceRow.dataset.tag || '').toLowerCase();
+                                if (!inactivatedTagKeys.has(rowTag)) return;
                                 var chk = sourceRow.querySelector('.chkTagActive');
                                 var lbl = sourceRow.querySelector('.lblActiveStatus');
                                 if (chk) chk.checked = false;
@@ -3768,6 +3819,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var _signal = _formAc.signal;
             form.addEventListener('input', changeHandler, { signal: _signal });
             form.addEventListener('change', changeHandler, { signal: _signal });
+            form.addEventListener('input', function (e) {
+                var ta = e.target.closest('textarea.txtMiValue, textarea.txtTagBlacklist');
+                if (!ta) return;
+                ta.style.height = 'auto';
+                ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
+                ta.style.overflowY = ta.scrollHeight > 120 ? 'auto' : 'hidden';
+            });
             var settingsTab = view.querySelector('#tabSettings');
             settingsTab.addEventListener('input',  changeHandler, { signal: _signal });
             settingsTab.addEventListener('change', changeHandler, { signal: _signal });
@@ -4074,9 +4132,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             e.preventDefault();
 
             // If CLEANUP tab is active and has pending deletions, show its modal instead of normal config save
-            var tcManageTab = view.querySelector('#tcSubTabManage');
+            var cleanupTab = view.querySelector('#tabCleanup');
             var tcContainer = view.querySelector('#tcManageContainer');
-            if (tcManageTab && tcManageTab.style.display !== 'none' && tcContainer && tcContainer._tcHasPending && tcContainer._tcShowModal) {
+            if (cleanupTab && cleanupTab.style.display !== 'none' && tcContainer && tcContainer._tcHasPending && tcContainer._tcShowModal) {
                 tcContainer._tcShowModal();
                 return;
             }
@@ -4231,6 +4289,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     if (manageContainer && !manageContainer.dataset.loaded) {
                         loadHscManageTab(view);
                     }
+                } else if (target === 'Cleanup') {
+                    var container = view.querySelector('#tcManageContainer');
+                    if (container && !container.dataset.loaded) loadTagManageTab(view);
                 }
             });
         });
@@ -4277,22 +4338,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
         });
 
-        view.addEventListener('click', function (e) {
-            var btn = e.target.closest('[data-tc-tab]');
-            if (!btn) return;
-            var target = btn.getAttribute('data-tc-tab');
-            view.querySelectorAll('.tc-sub-tab-btn').forEach(function (b) { b.classList.remove('active'); });
-            btn.classList.add('active');
-            if (target === 'sources') {
-                view.querySelector('#tcSubTabSources').style.display = '';
-                view.querySelector('#tcSubTabManage').style.display = 'none';
-            } else if (target === 'manage') {
-                view.querySelector('#tcSubTabSources').style.display = 'none';
-                view.querySelector('#tcSubTabManage').style.display = '';
-                var container = view.querySelector('#tcManageContainer');
-                if (container && !container.dataset.loaded) loadTagManageTab(view);
-            }
-        });
 
         var origStatusInterval = statusInterval;
         if (origStatusInterval) clearInterval(origStatusInterval);

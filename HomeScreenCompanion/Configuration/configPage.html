@@ -915,6 +915,9 @@
                 <button class="page-tab-btn" data-page-tab="HomeCompanion">
                     <i class="md-icon tab-icon">home</i>Home Screen
                 </button>
+                <button class="page-tab-btn" data-page-tab="Cleanup">
+                    <i class="md-icon tab-icon">auto_delete</i>Cleanup
+                </button>
                 <button class="page-tab-btn" data-page-tab="Settings">
                     <i class="md-icon tab-icon">settings</i>Settings
                 </button>
@@ -1014,16 +1017,9 @@
             </div>
 
             <div id="tabTagCollection" class="page-tab-content">
-
-                <div class="tc-sub-tab-nav">
-                    <button class="tc-sub-tab-btn active" data-tc-tab="sources">SOURCES</button>
-                    <button class="tc-sub-tab-btn" data-tc-tab="manage">CLEANUP</button>
-                </div>
-
-                <div id="tcSubTabSources" class="tc-sub-tab-content">
                 <form class="HomeScreenCompanionForm" id="homeScreenCompanionForm">
 
-<div class="sectionTitleContainer flex align-items-center" style="margin-bottom: 1em; margin-top: 2em;">
+                <div class="sectionTitleContainer flex align-items-center" style="margin-bottom: 1em; margin-top: 2em;">
                     <h2 class="sectionTitle" style="margin-bottom:0;">Sources</h2>
                     <button is="emby-button" type="button" id="btnAddTag" class="raised button-submit mb025" style="margin-left: auto;">
                         <span>+ Add New Source</span>
@@ -1035,12 +1031,10 @@
                 <br /><br /><br /><br /><br />
 
                 </form>
-                </div>
+            </div>
 
-                <div id="tcSubTabManage" class="tc-sub-tab-content" style="display:none;">
-                    <div id="tcManageContainer"></div>
-                </div>
-
+            <div id="tabCleanup" class="page-tab-content" style="display:none;">
+                <div id="tcManageContainer"></div>
             </div>
 
             <div id="tabHomeCompanion" class="page-tab-content" style="display:none;">
