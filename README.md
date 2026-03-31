@@ -10,9 +10,9 @@
 It works by connecting one or more **sources** to a tag and/or collection in your Emby library. Sources can be external lists from Trakt or MDBList, rules-based filters on your own library, AI-generated recommendations, or your existing local collections and playlists. Each source runs on a schedule, and the plugin makes sure your library always reflects the current state — adding and removing tags and collection memberships automatically.
 
 > [!IMPORTANT]
-> Plugin version 3.0.0.0 no longer supports Emby server version 4.9.x.x. Requires Emby 4.10+
-> 
-> Plugin version 3.2.0.0 requires Emby 4.10.0.6+
+>
+> From plugin version 3.3.0.0, Emby beta server 4.10.0.8+ is required
+
 
 ---
 
