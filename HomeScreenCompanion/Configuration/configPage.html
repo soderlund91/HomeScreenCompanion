@@ -1286,7 +1286,7 @@
                     <i class="md-icon help-section-icon">analytics</i>
                     <span>MediaInfo Filters</span>
                 </div>
-                <div class="step-text" style="margin-bottom:12px; font-size:0.92em;">Build filter rules from six property categories: <strong>Video</strong>, <strong>Audio</strong>, <strong>Content</strong>, <strong>Music</strong>, <strong>Metrics</strong>, and <strong>Activity</strong>. Rules within a group use AND/OR logic; the <strong>NOT</strong> toggle inverts any rule. Numeric properties support <code>=&nbsp; &gt;&nbsp; &ge;&nbsp; &lt;&nbsp; &le;</code>. Activity properties can be scoped to <em>any user</em>, <em>all users</em>, or a specific user. Text fields support <strong>comma-separated values</strong> — entering multiple values matches any one of them (OR logic). Use <strong>MediaType</strong> to target specific item types (Movie, Series, Episode, Audio, MusicVideo, MusicAlbum, MusicArtist).</div>
+                <div class="step-text" style="margin-bottom:12px; font-size:0.92em;">Build filter rules from six property categories: <strong>Video</strong>, <strong>Audio</strong>, <strong>Content</strong>, <strong>Music</strong>, <strong>Metrics</strong>, and <strong>Activity</strong>. Rules within a group use AND/OR logic; the <strong>NOT</strong> toggle inverts any rule. Numeric properties support <code>=&nbsp; &gt;&nbsp; &ge;&nbsp; &lt;&nbsp; &le;</code>. Activity properties can be scoped to <em>any user</em>, <em>all users</em>, or a specific user. Text properties accept <strong>one value per line</strong> — if any line matches the item, the rule matches (OR logic). Text properties also offer a <strong>Contains / Exact</strong> mode selector. Use <strong>MediaType</strong> to target specific item types (Movie, Series, Episode, Audio, MusicVideo, MusicAlbum, MusicArtist).</div>
                 <div class="mi-help-grid" style="grid-template-columns: repeat(3, 1fr);">
                     <div class="mi-help-col">
                         <div class="mi-help-category">Video</div>
@@ -1294,11 +1294,11 @@
                     </div>
                     <div class="mi-help-col">
                         <div class="mi-help-category">Audio</div>
-                        Format (Atmos, DTS-HD MA, TrueHD, AC3…), Channels (stereo, surround, mono), Audio Language — comma-separated (e.g. eng, swe)
+                        Format (Atmos, DTS-HD MA, TrueHD, AC3…), Channels (stereo, surround, mono), Audio Language — one value per line (e.g. eng, swe)
                     </div>
                     <div class="mi-help-col">
                         <div class="mi-help-category">Content</div>
-                        Genre, Actor/Cast, Director, Writer, Studio, Title, Overview, Tag, Content Rating, IMDB ID — all support comma-separated values (e.g. <em>Netflix, HBO</em> or <em>Tom Hanks, Idris Elba</em>). <strong>MediaType</strong>: Movie, Series, Episode, Audio, MusicVideo, MusicAlbum, MusicArtist
+                        Genre, Actor/Cast, Director, Writer, Studio, Title, Episode Title, Overview, Tag, Content Rating, IMDB ID, Collection, Playlist — one value per line, any match = rule matches (OR). Text properties have a <strong>Contains / Exact</strong> selector. <strong>MediaType</strong>: Movie, Series, Episode, Audio, MusicVideo, MusicAlbum, MusicArtist
                     </div>
                     <div class="mi-help-col">
                         <div class="mi-help-category">Music</div>
@@ -1310,7 +1310,7 @@
                     </div>
                     <div class="mi-help-col">
                         <div class="mi-help-category">Activity</div>
-                        Watched / Unwatched (IsPlayed), Last Played (days ago), Play Count — scoped per user: <em>any</em>, <em>all</em>, or a specific user. <strong>WatchedByCount</strong> counts how many users have finished the item (e.g. <em>WatchedByCount:&gt;=:2</em>)
+                        Watched/Unwatched, Last Played (days ago), Play Count — scoped per user: <em>any</em>, <em>all</em>, or a specific user. <strong>WatchedByCount</strong>: number of distinct users who have finished the item, supports numeric operators (e.g. &ge;&nbsp;2)
                     </div>
                 </div>
 
@@ -1370,6 +1370,10 @@
                     <i class="md-icon help-feat-icon">save</i>
                     <div><strong>Backup &amp; Restore</strong> — Export your entire plugin configuration to a JSON file, or restore from a previous backup. Found in the <strong>Settings</strong> tab under <em>Backup &amp; Restore</em>.</div>
                 </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">shield</i>
+                    <div><strong>Preserve Tags on Empty Result</strong> — If an External or AI source returns zero items (e.g. network error or empty list), existing tags and collection members are kept as-is instead of being removed. Prevents accidental wipe-outs. Found in the <strong>Settings</strong> tab.</div>
+                </div>
                 <div class="help-feature-row" style="margin-bottom:0;">
                     <i class="md-icon help-feat-icon">play_circle</i>
                     <div><strong>Run button options</strong> — The <strong>Run</strong> button offers three choices: <em>Full sync</em> (tags, collections, and home screen), <em>Sync home screen only</em>, and <em>Sync tags and collections only</em>.</div>
@@ -1399,6 +1403,7 @@
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">do_not_disturb_on</i><div>The <b>NOT</b> button on each rule negates it — e.g. <i>NOT Genre: Action</i> matches items that are <b>not</b> action.</div></div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">device_hub</i><div><b>AND / OR within a group</b> — the radio buttons at the top of a group control how rules in that group are combined.</div></div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">layers</i><div><b>AND / OR between groups</b> — the connector badge between groups controls how groups relate to each other.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">text_fields</i><div><b>Contains / Exact</b> — text properties show a mode selector. <em>Contains</em> matches anywhere in the value (case-insensitive); <em>Exact</em> requires a full match. Enter one value per line — if any line matches, the rule matches (OR logic).</div></div>
 
                 <div class="help-section"><i class="md-icon help-section-icon">videocam</i>Video</div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Resolution</span> — 4K, 1080p, 720p, SD, 8K</div></div>
@@ -1408,20 +1413,27 @@
                 <div class="help-section"><i class="md-icon help-section-icon">volume_up</i>Audio</div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Audio Format</span> — Atmos, TrueHD, DTS-HD MA, DTS, AC3, AAC</div></div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Audio Channels</span> — 7.1, 5.1, Stereo, Mono</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Audio Language</span> — matches if the file contains a track in the specified language (e.g. <i>swe</i>, <i>eng</i>)</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Audio Language</span> — matches if the file contains a track in the specified language. One language code per line (e.g. <i>swe</i>, <i>eng</i>). Any matching line = rule matches.</div></div>
 
                 <div class="help-section"><i class="md-icon help-section-icon">local_movies</i>Content</div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Media Type</span> — Movie, Series, or Episode. When <b>Episode</b> is selected, all filters evaluate against individual episodes and tags are applied directly to each matching episode.</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Tag</span> — matches items that already have a specific Emby tag applied. Comma-separated: <i>4K, HDR</i> matches items tagged with either.</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Title</span> — matches the movie or series name. When Media Type = Episode, matches the parent series name. Comma-separated: <i>Batman, Dark Knight</i> matches either title.</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Title (Episode)</span> — matches the episode's own title. Use together with Media Type = Episode. Comma-separated for multiple episode titles.</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Overview</span> — searches the plot description/summary for keywords or phrases. Comma-separated: <i>Christmas, heist</i> matches if <em>either</em> word appears in the overview.</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Studio</span> — production studio name. Comma-separated: <i>Netflix, HBO</i> matches items from either studio.</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Genre</span> — e.g. Action, Drama, Comedy. Comma-separated: <i>Action, Thriller</i> matches items in either genre.</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Actor / Cast</span> — name of a cast member (exact match recommended). Comma-separated: <i>Tom Hanks, Idris Elba</i> matches items featuring either actor.</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Director</span> / <span class="mi-help-prop">Writer</span> — crew members. Comma-separated for multiple names.</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Content Rating</span> — e.g. PG-13, TV-MA (exact match). Comma-separated: <i>PG-13, R</i> matches either rating.</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">IMDB ID</span> — one or more comma-separated IDs, e.g. <i>tt0468569, tt1375666</i></div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Tag</span> — matches items that already have a specific Emby tag applied. One per line: <i>4K</i> / <i>HDR</i> matches items tagged with either.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Title</span> — matches the movie or series name. When Media Type = Episode, matches the parent series name. One per line: <i>Batman</i> / <i>Dark Knight</i> matches either title.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Title (Episode)</span> — matches the episode's own title. Use together with Media Type = Episode. One value per line for multiple episode titles.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Overview</span> — searches the plot description/summary for keywords or phrases. One per line: <i>Christmas</i> / <i>heist</i> matches if <em>either</em> word appears in the overview.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Studio</span> — production studio name. One per line: <i>Netflix</i> / <i>HBO</i> matches items from either studio.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Genre</span> — e.g. Action, Drama, Comedy. One per line: <i>Action</i> / <i>Thriller</i> matches items in either genre.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Actor / Cast</span> — name of a cast member. Use <em>Exact</em> for full-name match or <em>Contains</em> for partial. One per line: <i>Tom Hanks</i> / <i>Idris Elba</i> matches items featuring either.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Director</span> / <span class="mi-help-prop">Writer</span> — crew members. Use Exact or Contains mode. One per line for multiple names.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Content Rating</span> — e.g. PG-13, TV-MA. Use <em>Exact</em> mode. One per line: <i>PG-13</i> / <i>R</i> matches either rating.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">IMDB ID</span> — one or more IDs, one per line, e.g. <i>tt0468569</i></div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Collection</span> — matches items that are members of the named Emby collection. One collection name per line (OR). Names containing colons are supported.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Playlist</span> — matches items that belong to the named Emby playlist. One playlist name per line (OR). Names containing colons are supported.</div></div>
+
+                <div class="help-section"><i class="md-icon help-section-icon">music_note</i>Music</div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Artist</span> / <span class="mi-help-prop">Album</span> — use with <em>MediaType = Audio</em> for songs or <em>MediaType = MusicVideo</em> for music videos. Supports Contains/Exact mode. One per line for multiple values.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">BitRate</span> (kbps) / <span class="mi-help-prop">SampleRate</span> (Hz) / <span class="mi-help-prop">BitsPerSample</span> — numeric operators, e.g. <i>BitsPerSample &gt;= 24</i> for hi-res audio</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">TrackNumber</span> / <span class="mi-help-prop">DiscNumber</span> — numeric operators for track or disc position within an album</div></div>
 
                 <div class="help-section"><i class="md-icon help-section-icon">bar_chart</i>Metrics</div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Community Rating</span> — Emby/IMDB score, use numeric operators (=, &gt;, &gt;=, &lt;, &lt;=)</div></div>
@@ -1436,9 +1448,11 @@
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Play Count</span> — number of times watched</div></div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">group</i><div><span class="mi-help-prop">Any User</span> — matches if <b>at least one</b> user in the library satisfies the condition. Example: <i>Watched = Any User</i> matches items that <em>someone</em> has seen.</div></div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">groups</i><div><span class="mi-help-prop">All Users</span> — matches only if <b>every</b> user in the library satisfies the condition. Example: <i>Watched = All Users</i> matches items that <em>everybody</em> has seen. <i>NOT Watched = All Users</i> matches items that nobody has seen.</div></div>
-                <div class="help-feature-row" style="margin-bottom:0;"><i class="md-icon help-feat-icon">person</i><div><span class="mi-help-prop">Specific user</span> — scopes the condition to one named user only. Useful when different household members have different watch habits.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">person</i><div><span class="mi-help-prop">Specific user</span> — scopes the condition to one named user only. Useful when different household members have different watch habits.</div></div>
+                <div class="help-feature-row" style="margin-bottom:0;"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">WatchedByCount</span> — number of distinct users who have finished the item. Supports numeric operators (e.g. <i>&gt;= 2</i> = at least two users have watched it). Useful for finding content that is popular or completely unseen across the household.</div></div>
 
                 <div class="help-section"><i class="md-icon help-section-icon">lightbulb</i>Examples</div>
+                <div class="step-text" style="font-size:0.88em; margin-bottom:12px; opacity:0.75;"><b>Tip:</b> for text properties (Genre, Actor, Director, Studio, etc.) you can enter multiple values on separate lines in a single rule — any matching line satisfies the rule (OR logic).</div>
 
                 <div class="ex-table">
                     <div class="ex-row ex-header">
@@ -1492,6 +1506,49 @@
 
                     <div class="ex-row">
                         <div class="ex-col-title">
+                            <span class="ex-badge ex-easy">Simple</span>
+                            <b>Multiple genres — one rule</b>
+                            <span class="ex-desc">Action or Sci-Fi movies using a single rule with two lines (OR logic)</span>
+                        </div>
+                        <div class="ex-col-rules">
+                            <div class="ex-group">
+                                <span class="ex-op">Group 1 · AND</span>
+                                <code>Media Type = Movie</code>
+                                <code>Genre = Action <span style="opacity:0.5;">↵</span> Sci-Fi &nbsp;<span style="opacity:0.5; font-size:0.8em;">(two lines, one rule)</span></code>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="ex-row">
+                        <div class="ex-col-title">
+                            <span class="ex-badge ex-easy">Simple</span>
+                            <b>From a collection</b>
+                            <span class="ex-desc">Items that belong to a specific Emby collection</span>
+                        </div>
+                        <div class="ex-col-rules">
+                            <div class="ex-group">
+                                <span class="ex-op">Group 1 · AND</span>
+                                <code>Collection = Marvel Cinematic Universe</code>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="ex-row">
+                        <div class="ex-col-title">
+                            <span class="ex-badge ex-medium">Medium</span>
+                            <b>By director — partial match</b>
+                            <span class="ex-desc">All films from two directors using Contains mode on one rule</span>
+                        </div>
+                        <div class="ex-col-rules">
+                            <div class="ex-group">
+                                <span class="ex-op">Group 1 · AND</span>
+                                <code>Director [contains] Nolan <span style="opacity:0.5;">↵</span> Villeneuve &nbsp;<span style="opacity:0.5; font-size:0.8em;">(two lines)</span></code>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="ex-row">
+                        <div class="ex-col-title">
                             <span class="ex-badge ex-medium">Medium</span>
                             <b>Unseen by everyone</b>
                             <span class="ex-desc">No user in the library has watched it</span>
@@ -1507,19 +1564,13 @@
                     <div class="ex-row">
                         <div class="ex-col-title">
                             <span class="ex-badge ex-medium">Medium</span>
-                            <b>Recent sci-fi or action</b>
-                            <span class="ex-desc">Movies from 2020+ in either genre</span>
+                            <b>Popular across the household</b>
+                            <span class="ex-desc">Items that at least 2 users have finished watching</span>
                         </div>
                         <div class="ex-col-rules">
                             <div class="ex-group">
-                                <span class="ex-op">Group 1 · OR</span>
-                                <code>Genre = Sci-Fi</code>
-                                <code>Genre = Action</code>
-                            </div>
-                            <div class="ex-group-connector">AND</div>
-                            <div class="ex-group">
-                                <span class="ex-op">Group 2 · AND</span>
-                                <code>Year &gt;= 2020</code>
+                                <span class="ex-op">Group 1 · AND</span>
+                                <code>WatchedByCount &gt;= 2</code>
                             </div>
                         </div>
                     </div>
