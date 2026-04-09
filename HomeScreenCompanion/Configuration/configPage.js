@@ -3006,8 +3006,41 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         });
     }
 
+    function showDiscreetUpdateIndicator(container, latestTag, releaseUrl) {
+        var existing = container.querySelector('#updateDiscreetIndicator');
+        if (existing) return;
+        var el = document.createElement('div');
+        el.id = 'updateDiscreetIndicator';
+        el.style.cssText = 'font-size:0.78em; opacity:0.45; padding: 0 0 8px 0;';
+        el.innerHTML = '<a href="' + releaseUrl + '" target="_blank" rel="noopener"'
+            + ' style="color:inherit; text-decoration:none;">'
+            + '\u2191 Update available: v' + latestTag + '</a>';
+        container.appendChild(el);
+    }
+
+    function showUpdateBanner(container, latestTag, releaseUrl) {
+        var existing = container.querySelector('#autoTagVersionBadge');
+        if (existing) return;
+        var dismissKey = 'hsc_update_dismissed_v' + latestTag;
+        var badge = document.createElement('div');
+        badge.id = 'autoTagVersionBadge';
+        badge.style.cssText = 'font-size:1.2em; padding: 0 0 10px 0; display:flex; align-items:center; gap:8px;';
+        badge.innerHTML = '<a href="' + releaseUrl + '" target="_blank" rel="noopener"'
+            + ' style="color:#E67E22; font-weight:bold; text-decoration:none;">'
+            + 'New update: v' + latestTag + ' available</a>'
+            + '<button id="dismissUpdateBtn"'
+            + ' style="background:none; border:none; cursor:pointer; color:#888; font-size:0.8em; padding:2px 6px; border-radius:3px; opacity:0.7;"'
+            + ' title="Dismiss and don\'t show again">\u2715</button>';
+        container.appendChild(badge);
+        badge.querySelector('#dismissUpdateBtn').addEventListener('click', function () {
+            localStorage.setItem(dismissKey, '1');
+            badge.remove();
+            showDiscreetUpdateIndicator(container, latestTag, releaseUrl);
+        });
+    }
+
     function checkForUpdates(view) {
-        if (view.querySelector('#autoTagVersionBadge')) return;
+        if (view.querySelector('#autoTagVersionBadge') || view.querySelector('#updateDiscreetIndicator')) return;
 
         window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/Version")).then(function (result) {
             var currentVer = result.Version || '';
@@ -3028,18 +3061,37 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     if (isNewer) {
                         var container = view.querySelector('#versionBadgeArea');
                         if (!container) return;
-                        var badge = document.createElement('div');
-                        badge.id = 'autoTagVersionBadge';
-                        badge.style.cssText = 'font-size:1.2em; padding: 0 0 10px 0;';
-                        badge.innerHTML = '<a href="' + release.html_url + '" target="_blank" rel="noopener"'
-                            + ' style="color:#E67E22; font-weight:bold; text-decoration:none;">'
-                            + 'New update: v' + latestTag + ' available</a>';
-                        container.appendChild(badge);
+                        var dismissKey = 'hsc_update_dismissed_v' + latestTag;
+                        if (localStorage.getItem(dismissKey)) {
+                            showDiscreetUpdateIndicator(container, latestTag, release.html_url);
+                        } else {
+                            showUpdateBanner(container, latestTag, release.html_url);
+                        }
                     }
                 })
                 .catch(function () {});
         }).catch(function () {});
     }
+
+    window._testUpdateBanner = function (mode) {
+        var container = document.querySelector('#versionBadgeArea');
+        if (!container) { console.warn('_testUpdateBanner: #versionBadgeArea not found'); return; }
+        var fakeTag = '99.99.99';
+        var fakeUrl = 'https://github.com/soderlund91/HomeScreenCompanion/releases';
+        var dismissKey = 'hsc_update_dismissed_v' + fakeTag;
+        var b = container.querySelector('#autoTagVersionBadge');
+        var d = container.querySelector('#updateDiscreetIndicator');
+        if (b) b.remove();
+        if (d) d.remove();
+        if (mode === 'banner') {
+            localStorage.removeItem(dismissKey);
+            showUpdateBanner(container, fakeTag, fakeUrl);
+        } else if (mode === 'discreet') {
+            showDiscreetUpdateIndicator(container, fakeTag, fakeUrl);
+        } else if (mode === 'reset') {
+            localStorage.removeItem(dismissKey);
+        }
+    };
 
     function groupConfigTags(tags) {
         var grouped = {};
@@ -3304,6 +3356,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 { label: 'Trailers',     types: ['trailer'] },
                 { label: 'Theme songs',  types: ['themesong'] },
                 { label: 'Theme videos', types: ['themevideo', 'video'] },
+                { label: 'Extras',       types: ['behindthescenes', 'deletedscene', 'interview', 'scene', 'clip', 'featurette', 'short'] },
                 { label: 'People',       types: ['person'] },
                 { label: 'Collections',  types: ['boxset'] },
                 { label: 'Photos',       types: ['photo', 'photoalbum'] },
@@ -3311,6 +3364,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 { label: 'Recordings',   types: ['recording'] },
                 { label: 'Studios',      types: ['studio'] }
             ];
+
+            var tcExtraTypes = ['themesong', 'themevideo', 'trailer', 'behindthescenes', 'deletedscene', 'interview', 'scene', 'clip', 'featurette', 'short'];
 
             var presentGroups = tcTypeGroups.filter(function (g) {
                 return (tagsData.Tags || []).some(function (tag) {
@@ -3335,6 +3390,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                   '</div></div>'
                 : '';
 
+            var extrasCheckboxHtml =
+                '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9em;white-space:nowrap;opacity:0.8;">' +
+                '<input type="checkbox" id="cbIncludeExtras" style="cursor:pointer;margin:0;">' +
+                '<span>Include extras</span>' +
+                '</label>';
+
             container.innerHTML =
                 '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">' +
                 '<input type="text" id="tcSearch" placeholder="Search…" style="' + searchInputStyle + '" />' +
@@ -3347,7 +3408,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '</select>' +
                 '</div>' +
                 '<div id="tcSectionsWrap" style="display:flex;gap:40px;align-items:flex-start;">' +
-                renderSection('Tags', tagsData.Tags || [], true, typeFilterDropdownHtml) +
+                renderSection('Tags', tagsData.Tags || [], true, typeFilterDropdownHtml + extrasCheckboxHtml) +
                 renderSection('Collections', collectionsData.Collections || [], false) +
                 '</div>';
 
@@ -3381,6 +3442,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var query = (container.querySelector('#tcSearch').value || '').toLowerCase();
                 var sort = container.querySelector('#tcSort').value;
                 var selectedGroups = getSelectedTypeGroups();
+                var includeExtras = !!(container.querySelector('#cbIncludeExtras') || {}).checked;
 
                 ['tcTagSection', 'tcCollSection'].forEach(function (sectionId) {
                     var section = container.querySelector('#' + sectionId);
@@ -3392,7 +3454,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         var rowName = row.dataset.rowname || '';
                         var nameMatch = !query || rowName.indexOf(query) !== -1;
                         var typeMatch = !isTagSection || rowMatchesTypeFilter(row, selectedGroups);
-                        row.style.display = (nameMatch && typeMatch) ? '' : 'none';
+                        var extrasOk = !isTagSection || includeExtras || (function () {
+                            var types = (row.dataset.types || '').split(',').filter(Boolean);
+                            return types.length === 0 || !types.every(function (t) { return tcExtraTypes.indexOf(t) !== -1; });
+                        })();
+                        row.style.display = (nameMatch && typeMatch && extrasOk) ? '' : 'none';
                     });
 
                     var list = section.querySelector('.tc-manage-list');
@@ -3418,6 +3484,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
             container.querySelector('#tcSearch').addEventListener('input', applySearchSort);
             container.querySelector('#tcSort').addEventListener('change', applySearchSort);
+            var cbIncludeExtras = container.querySelector('#cbIncludeExtras');
+            if (cbIncludeExtras) cbIncludeExtras.addEventListener('change', applySearchSort);
 
             var typeFilterBtn = container.querySelector('#tcTypeFilterBtn');
             var typeFilterDropdown = container.querySelector('#tcTypeFilterDropdown');

@@ -671,7 +671,30 @@ public class HomeScreenCompanionService : IService
                 Recursive = true,
                 IsVirtualItem = false,
                 IncludeItemTypes = new[] { "Movie", "Series", "Episode", "Season", "Audio", "MusicVideo", "MusicAlbum", "MusicArtist", "Book", "Game", "Trailer", "Video", "Person", "BoxSet", "Photo", "PhotoAlbum", "Playlist", "Recording", "Studio" }
-            });
+            }).ToList();
+
+            // Also fetch extras (ExtraType = ThemeSong, BehindTheScenes, etc.) which are excluded by default
+            try
+            {
+                var extraQuery = new InternalItemsQuery { Recursive = true, IsVirtualItem = false };
+                var extraTypesProp = typeof(InternalItemsQuery).GetProperty("ExtraTypes");
+                if (extraTypesProp != null)
+                {
+                    var elemType = extraTypesProp.PropertyType.GetElementType();
+                    if (elemType != null && elemType.IsEnum)
+                    {
+                        var all = System.Enum.GetValues(elemType);
+                        var arr = System.Array.CreateInstance(elemType, all.Length);
+                        all.CopyTo(arr, 0);
+                        extraTypesProp.SetValue(extraQuery, arr);
+                    }
+                }
+                var seenIds = new HashSet<Guid>(allItems.Select(i => i.Id));
+                foreach (var extra in _libraryManager.GetItemList(extraQuery))
+                    if (seenIds.Add(extra.Id)) allItems.Add(extra);
+            }
+            catch { }
+
             var tagCount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             var tagTypes = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
             foreach (var item in allItems)
@@ -777,8 +800,31 @@ public class HomeScreenCompanionService : IService
             var allItems = _libraryManager.GetItemList(new InternalItemsQuery
             {
                 Recursive = true,
-                IsVirtualItem = false
-            });
+                IsVirtualItem = false,
+                IncludeItemTypes = new[] { "Movie", "Series", "Episode", "Season", "Audio", "MusicVideo", "MusicAlbum", "MusicArtist", "Book", "Game", "Trailer", "Video", "Person", "BoxSet", "Photo", "PhotoAlbum", "Playlist", "Recording", "Studio" }
+            }).ToList();
+
+            // Also fetch extras (ExtraType = ThemeSong, BehindTheScenes, etc.) which are excluded by default
+            try
+            {
+                var extraQuery = new InternalItemsQuery { Recursive = true, IsVirtualItem = false };
+                var extraTypesProp = typeof(InternalItemsQuery).GetProperty("ExtraTypes");
+                if (extraTypesProp != null)
+                {
+                    var elemType = extraTypesProp.PropertyType.GetElementType();
+                    if (elemType != null && elemType.IsEnum)
+                    {
+                        var all = System.Enum.GetValues(elemType);
+                        var arr = System.Array.CreateInstance(elemType, all.Length);
+                        all.CopyTo(arr, 0);
+                        extraTypesProp.SetValue(extraQuery, arr);
+                    }
+                }
+                var seenIds = new HashSet<Guid>(allItems.Select(i => i.Id));
+                foreach (var extra in _libraryManager.GetItemList(extraQuery))
+                    if (seenIds.Add(extra.Id)) allItems.Add(extra);
+            }
+            catch { }
 
             int updated = 0;
             foreach (var item in allItems)
