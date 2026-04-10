@@ -260,7 +260,7 @@ public class HomeScreenCompanionService : IService
             var fetcher = new ListFetcher(_httpClient, _jsonSerializer);
             try
             {
-                var items = await fetcher.FetchItems(request.Url, request.Limit, config.TraktClientId, config.MdblistApiKey, CancellationToken.None);
+                var items = await fetcher.FetchItems(request.Url, request.Limit, config.TraktClientId, config.MdblistApiKey, config.TmdbApiKey, CancellationToken.None);
 
                 if (items == null || items.Count == 0)
                 {

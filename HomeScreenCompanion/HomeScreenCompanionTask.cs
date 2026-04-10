@@ -1,4 +1,4 @@
-﻿using MediaBrowser.Common.Net;
+﻿﻿using MediaBrowser.Common.Net;
 using MediaBrowser.Controller.Collections;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -32,6 +32,7 @@ namespace HomeScreenCompanion
         public static string LastRunStatus { get; private set; } = "Unknown (resets at server restart)";
         public static List<string> ExecutionLog { get; } = new List<string>();
         public static bool IsRunning { get; private set; } = false;
+        private static readonly object _runLock = new object();
 
         private struct CachedMediaInfo
         {
@@ -111,7 +112,11 @@ namespace HomeScreenCompanion
 
         public async Task Execute(CancellationToken cancellationToken, IProgress<double> progress)
         {
-            IsRunning = true;
+            lock (_runLock)
+            {
+                if (IsRunning) return;
+                IsRunning = true;
+            }
             try
             {
                 lock (ExecutionLog) ExecutionLog.Clear();
@@ -507,7 +512,7 @@ namespace HomeScreenCompanion
 
                         if (string.IsNullOrEmpty(tagConfig.SourceType) || tagConfig.SourceType == "External")
                         {
-                            var items = await fetcher.FetchItems(tagConfig.Url, effectiveLimit, config.TraktClientId, config.MdblistApiKey, cancellationToken);
+                            var items = await fetcher.FetchItems(tagConfig.Url, effectiveLimit, config.TraktClientId, config.MdblistApiKey, config.TmdbApiKey, cancellationToken);
                             gs.ListCount = items.Count;
 
                             if (items.Count > 0)
@@ -1303,11 +1308,15 @@ namespace HomeScreenCompanion
 
         public async Task<(bool Success, string Message)> RunSingleEntryAsync(string entryName, CancellationToken cancellationToken)
         {
-            IsRunning = true;
-            lock (ExecutionLog) ExecutionLog.Clear();
-            LastRunStatus = "Running...";
+            lock (_runLock)
+            {
+                if (IsRunning) return (false, "A sync task is already running. Please try again later.");
+                IsRunning = true;
+            }
             try
             {
+                lock (ExecutionLog) ExecutionLog.Clear();
+                LastRunStatus = "Running...";
             return await RunSingleEntryInternalAsync(entryName, cancellationToken);
             }
             finally
@@ -1603,7 +1612,7 @@ namespace HomeScreenCompanion
 
                 if (string.IsNullOrEmpty(tagConfig.SourceType) || tagConfig.SourceType == "External")
                 {
-                    var items = await fetcher.FetchItems(tagConfig.Url, effectiveLimit, config.TraktClientId, config.MdblistApiKey, cancellationToken);
+                    var items = await fetcher.FetchItems(tagConfig.Url, effectiveLimit, config.TraktClientId, config.MdblistApiKey, config.TmdbApiKey, cancellationToken);
                     _listCount = items.Count;
                     if (items.Count > effectiveLimit) items = items.Take(effectiveLimit).ToList();
                     foreach (var extItem in items)

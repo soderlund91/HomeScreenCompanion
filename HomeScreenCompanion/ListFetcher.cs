@@ -35,18 +35,262 @@ namespace HomeScreenCompanion
             _jsonSerializer = jsonSerializer;
         }
 
-        public async Task<List<ExternalItemDto>> FetchItems(string url, int limit, string traktClientId, string mdbApiKey, CancellationToken cancellationToken)
+        public async Task<List<ExternalItemDto>> FetchItems(string url, int limit, string traktClientId, string mdbApiKey, string tmdbApiKey, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(url)) return new List<ExternalItemDto>();
 
             if (url.Contains("mdblist.com"))
-            {
                 return await FetchMdblist(url, mdbApiKey, limit, cancellationToken);
-            }
-            else
+            if (url.Contains("themoviedb.org"))
+                return await FetchTmdb(url, tmdbApiKey, limit, cancellationToken);
+
+            return await FetchTrakt(url, traktClientId, limit, cancellationToken);
+        }
+
+        // Builds a TMDB API URL, appending api_key for short keys.
+        // Bearer tokens are added as a header via BuildTmdbRequest instead.
+        private static string BuildTmdbUrl(string endpoint, string apiKey)
+        {
+            if (apiKey.Length > 80) // Bearer JWT — no api_key in URL
+                return $"https://api.themoviedb.org{endpoint}";
+            var sep = endpoint.Contains('?') ? "&" : "?";
+            return $"https://api.themoviedb.org{endpoint}{sep}api_key={apiKey}";
+        }
+
+        private static System.Net.Http.HttpRequestMessage BuildTmdbRequest(string endpoint, string apiKey)
+        {
+            var url = BuildTmdbUrl(endpoint, apiKey);
+            var req = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, url);
+            if (apiKey.Length > 80)
+                req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {apiKey}");
+            req.Headers.TryAddWithoutValidation("Accept", "application/json");
+            return req;
+        }
+
+        private async Task<T> GetTmdbAsync<T>(string endpoint, string apiKey, CancellationToken cancellationToken) where T : class
+        {
+            using var cts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(10));
+            using var req = BuildTmdbRequest(endpoint, apiKey);
+            var resp = await _netHttpClient.SendAsync(req, cts.Token);
+            if (!resp.IsSuccessStatusCode) return null;
+            var json = await resp.Content.ReadAsStringAsync();
+            return _jsonSerializer.DeserializeFromString<T>(json);
+        }
+
+        // Maps TMDB browse page URL paths to their API endpoints and implied media type.
+        // Returns (apiPath, impliedMediaType) where impliedMediaType is null for mixed/trending.
+        private static (string apiPath, string impliedMediaType) ResolveTmdbPageEndpoint(string urlPath)
+        {
+            var p = urlPath.Trim('/').ToLowerInvariant();
+            if (p == "movie/now-playing")  return ("/3/movie/now_playing", "movie");
+            if (p == "movie/popular")      return ("/3/movie/popular",     "movie");
+            if (p == "movie/top-rated")    return ("/3/movie/top_rated",   "movie");
+            if (p == "movie/upcoming")     return ("/3/movie/upcoming",    "movie");
+            if (p == "tv/top-rated")       return ("/3/tv/top_rated",      "tv");
+            if (p == "tv/popular")         return ("/3/tv/popular",        "tv");
+            if (p == "tv/on-the-air")      return ("/3/tv/on_the_air",     "tv");
+            if (p == "tv/airing-today")    return ("/3/tv/airing_today",   "tv");
+            if (p.StartsWith("trending"))  return ("/3/trending/all/week", null);
+            return (null, null);
+        }
+
+        private async Task<List<ExternalItemDto>> FetchTmdb(string rawUrl, string apiKey, int limit, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(apiKey)) return new List<ExternalItemDto>();
+
+            if (!Uri.TryCreate(rawUrl.Trim(), UriKind.Absolute, out var uri))
+                return new List<ExternalItemDto>();
+
+            var urlPath = uri.AbsolutePath.TrimEnd('/');
+            var (builtInApi, impliedMediaType) = ResolveTmdbPageEndpoint(urlPath);
+
+            if (builtInApi != null)
             {
-                return await FetchTrakt(url, traktClientId, limit, cancellationToken);
+                // TMDB built-in browse page (now-playing, popular, etc.) — paginated results
+                return await FetchTmdbPaged(builtInApi, impliedMediaType, apiKey, limit, cancellationToken);
             }
+
+            var segs = urlPath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+
+            // Award category: /award/{id}-slug/category/{id}-slug
+            if (segs.Length >= 4
+                && string.Equals(segs[0], "award", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(segs[2], "category", StringComparison.OrdinalIgnoreCase))
+            {
+                var awardId = ExtractLeadingNumber(segs[1]);
+                var categoryId = ExtractLeadingNumber(segs[3]);
+                if (awardId != null && categoryId != null)
+                    return await FetchTmdbPaged($"/3/award/{awardId}/category/{categoryId}", null, apiKey, limit, cancellationToken);
+            }
+
+            // Collection: /collection/{id}-slug
+            if (segs.Length >= 2 && string.Equals(segs[0], "collection", StringComparison.OrdinalIgnoreCase))
+            {
+                var collectionId = ExtractLeadingNumber(segs[1]);
+                if (collectionId != null)
+                    return await FetchTmdbCollection(collectionId, apiKey, limit, cancellationToken);
+            }
+
+            // Keyword: /keyword/{id}-slug or /keyword/{id}-slug/tv
+            if (segs.Length >= 2 && string.Equals(segs[0], "keyword", StringComparison.OrdinalIgnoreCase))
+            {
+                var keywordId = ExtractLeadingNumber(segs[1]);
+                var mt = segs.Length >= 3 && string.Equals(segs[2], "tv", StringComparison.OrdinalIgnoreCase) ? "tv" : "movie";
+                if (keywordId != null)
+                    return await FetchTmdbPaged($"/3/discover/{mt}?with_keywords={keywordId}", mt, apiKey, limit, cancellationToken);
+            }
+
+            // Company: /company/{id}-slug or /company/{id}-slug/tv
+            if (segs.Length >= 2 && string.Equals(segs[0], "company", StringComparison.OrdinalIgnoreCase))
+            {
+                var companyId = ExtractLeadingNumber(segs[1]);
+                var mt = segs.Length >= 3 && string.Equals(segs[2], "tv", StringComparison.OrdinalIgnoreCase) ? "tv" : "movie";
+                if (companyId != null)
+                    return await FetchTmdbPaged($"/3/discover/{mt}?with_companies={companyId}", mt, apiKey, limit, cancellationToken);
+            }
+
+            // Network: /network/{id}-slug (Usually implies TV)
+            if (segs.Length >= 2 && string.Equals(segs[0], "network", StringComparison.OrdinalIgnoreCase))
+            {
+                var networkId = ExtractLeadingNumber(segs[1]);
+                if (networkId != null)
+                    return await FetchTmdbPaged($"/3/discover/tv?with_networks={networkId}", "tv", apiKey, limit, cancellationToken);
+            }
+
+            // Similar / Recommendations: /movie/{id}-slug/similar or /tv/{id}-slug/recommendations
+            if (segs.Length >= 3 && 
+                (string.Equals(segs[0], "movie", StringComparison.OrdinalIgnoreCase) || string.Equals(segs[0], "tv", StringComparison.OrdinalIgnoreCase)) &&
+                (string.Equals(segs[2], "similar", StringComparison.OrdinalIgnoreCase) || string.Equals(segs[2], "recommendations", StringComparison.OrdinalIgnoreCase)))
+            {
+                var mediaType = segs[0].ToLowerInvariant();
+                var id = ExtractLeadingNumber(segs[1]);
+                var action = segs[2].ToLowerInvariant();
+                if (id != null)
+                    return await FetchTmdbPaged($"/3/{mediaType}/{id}/{action}", mediaType, apiKey, limit, cancellationToken);
+            }
+
+            // Fall back: user-created list with numeric ID, e.g. /list/12345
+            string listId = null;
+            for (int i = 0; i < segs.Length; i++)
+            {
+                if (string.Equals(segs[i], "list", StringComparison.OrdinalIgnoreCase) && i + 1 < segs.Length)
+                {
+                    listId = ExtractLeadingNumber(segs[i + 1]);
+                    break;
+                }
+            }
+            if (string.IsNullOrEmpty(listId)) return new List<ExternalItemDto>();
+
+            TmdbListResponse listResponse;
+            try { listResponse = await GetTmdbAsync<TmdbListResponse>($"/3/list/{listId}", apiKey, cancellationToken); }
+            catch { return new List<ExternalItemDto>(); }
+            if (listResponse == null) return new List<ExternalItemDto>();
+
+            if (listResponse.items == null || listResponse.items.Count == 0)
+                return new List<ExternalItemDto>();
+
+            var items = listResponse.items;
+            if (limit > 0 && limit < 10000 && items.Count > limit)
+                items = items.Take(limit).ToList();
+
+            return await ResolveTmdbImdbIds(items.Select(i => (i.id, i.media_type ?? "movie", i.title ?? i.name)).ToList(), apiKey, cancellationToken);
+        }
+
+        private async Task<List<ExternalItemDto>> FetchTmdbPaged(string apiPath, string impliedMediaType, string apiKey, int limit, CancellationToken cancellationToken)
+        {
+            var all = new List<(int id, string mediaType, string name)>();
+            int page = 1;
+
+            while (true)
+            {
+                TmdbPagedResponse resp;
+                var pageSep = apiPath.Contains('?') ? "&" : "?";
+                try { resp = await GetTmdbAsync<TmdbPagedResponse>($"{apiPath}{pageSep}page={page}", apiKey, cancellationToken); }
+                catch { break; }
+
+                if (resp?.results == null || resp.results.Count == 0) break;
+
+                foreach (var item in resp.results)
+                {
+                    var mt = !string.IsNullOrEmpty(item.media_type) ? item.media_type : (impliedMediaType ?? "movie");
+                    all.Add((item.id, mt, item.title ?? item.name));
+                }
+
+                if (page >= resp.total_pages) break;
+                if (limit > 0 && limit < 10000 && all.Count >= limit) break;
+                page++;
+            }
+
+            if (limit > 0 && limit < 10000 && all.Count > limit)
+                all = all.Take(limit).ToList();
+
+            return await ResolveTmdbImdbIds(all, apiKey, cancellationToken);
+        }
+
+        // Extracts the leading numeric ID from a TMDB URL slug like "17-best-sound" → "17"
+        private static string ExtractLeadingNumber(string segment)
+        {
+            if (string.IsNullOrEmpty(segment)) return null;
+            var dashIdx = segment.IndexOf('-');
+            var numPart = dashIdx > 0 ? segment.Substring(0, dashIdx) : segment;
+            return int.TryParse(numPart, out _) ? numPart : null;
+        }
+
+        private async Task<List<ExternalItemDto>> FetchTmdbCollection(string collectionId, string apiKey, int limit, CancellationToken cancellationToken)
+        {
+            TmdbCollectionResponse resp;
+            try { resp = await GetTmdbAsync<TmdbCollectionResponse>($"/3/collection/{collectionId}", apiKey, cancellationToken); }
+            catch { return new List<ExternalItemDto>(); }
+            if (resp?.parts == null || resp.parts.Count == 0) return new List<ExternalItemDto>();
+
+            var all = resp.parts
+                .Select(i => (i.id, i.media_type ?? "movie", i.title ?? i.name))
+                .ToList();
+            if (limit > 0 && limit < 10000 && all.Count > limit)
+                all = all.Take(limit).ToList();
+
+            return await ResolveTmdbImdbIds(all, apiKey, cancellationToken);
+        }
+
+        private async Task<List<ExternalItemDto>> ResolveTmdbImdbIds(List<(int id, string mediaType, string name)> items, string apiKey, CancellationToken cancellationToken)
+        {
+            // All external_ids fetched concurrently via _netHttpClient (connection-pooled).
+            // Reduce concurrency to avoid hitting TMDBs 50 req/s limit in quick bursts.
+            var semaphore = new System.Threading.SemaphoreSlim(5, 5);
+            var tasks = items.Select(async item =>
+            {
+                var (id, mediaType, name) = item;
+                var endpoint = string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase)
+                    ? $"/3/tv/{id}/external_ids"
+                    : $"/3/movie/{id}/external_ids";
+                await semaphore.WaitAsync(cancellationToken);
+                try
+                {
+                    var extIds = await GetTmdbAsync<TmdbExternalIds>(endpoint, apiKey, cancellationToken);
+                    if (!string.IsNullOrEmpty(extIds?.imdb_id))
+                        return new ExternalItemDto { Name = name, Imdb = extIds.imdb_id };
+                }
+                catch { }
+                finally { semaphore.Release(); }
+                return null;
+            });
+
+            var resolved = await System.Threading.Tasks.Task.WhenAll(tasks);
+            return resolved.Where(x => x != null).ToList();
+        }
+
+        private async Task<string> FetchTmdbExternalIds(int tmdbId, string mediaType, string apiKey, CancellationToken cancellationToken)
+        {
+            var endpoint = string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase)
+                ? $"/3/tv/{tmdbId}/external_ids"
+                : $"/3/movie/{tmdbId}/external_ids";
+            try
+            {
+                var extIds = await GetTmdbAsync<TmdbExternalIds>(endpoint, apiKey, cancellationToken);
+                return extIds?.imdb_id;
+            }
+            catch { return null; }
         }
 
         private async Task<List<ExternalItemDto>> FetchMdblist(string listUrl, string apiKey, int limit, CancellationToken cancellationToken)

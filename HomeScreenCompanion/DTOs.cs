@@ -54,6 +54,48 @@ namespace HomeScreenCompanion
         public string imdb { get; set; }
     }
 
+    // TMDB
+    public class TmdbListResponse
+    {
+        public List<TmdbListItem> items { get; set; } = new List<TmdbListItem>();
+    }
+
+    public class TmdbListItem
+    {
+        public int id { get; set; }
+        public string media_type { get; set; }
+        public string title { get; set; }
+        public string name { get; set; }
+    }
+
+    public class TmdbExternalIds
+    {
+        public string imdb_id { get; set; }
+    }
+
+    // Used for TMDB built-in pages (now-playing, popular, top-rated, etc.) and search
+    public class TmdbPagedResponse
+    {
+        public List<TmdbPagedItem> results { get; set; } = new List<TmdbPagedItem>();
+        public int total_pages { get; set; }
+        public int page { get; set; }
+    }
+
+    public class TmdbPagedItem
+    {
+        public int id { get; set; }
+        public string media_type { get; set; } // present in trending/all, absent in movie/tv-specific endpoints
+        public string title { get; set; }
+        public string name { get; set; }
+    }
+
+    // Used for TMDB collection pages (/collection/{id})
+    public class TmdbCollectionResponse
+    {
+        public string name { get; set; }
+        public List<TmdbPagedItem> parts { get; set; } = new List<TmdbPagedItem>();
+    }
+
     public class HscUserDto
     {
         public string Id { get; set; } = "";

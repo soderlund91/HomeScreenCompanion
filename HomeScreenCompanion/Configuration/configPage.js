@@ -1342,7 +1342,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         <label class="selectLabel">Source Type</label>
                         <select is="emby-select" class="selSourceType" style="width:100%;">
                             <option value="" ${!sourceType ? 'selected' : ''}>-- Select source type --</option>
-                            <option value="External" ${sourceType === 'External' ? 'selected' : ''}>External List (Trakt/MDBList)</option>
+                            <option value="External" ${sourceType === 'External' ? 'selected' : ''}>External List (Trakt / MDBList / TMDB)</option>
                             <option value="LocalCollection" ${sourceType === 'LocalCollection' ? 'selected' : ''}>Local Collection</option>
                             <option value="LocalPlaylist" ${sourceType === 'LocalPlaylist' ? 'selected' : ''}>Local Playlist</option>
                             <option value="MediaInfo" ${sourceType === 'MediaInfo' ? 'selected' : ''}>Local Media Information (Smart Playlist)</option>
@@ -2882,6 +2882,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         return {
             TraktClientId: view.querySelector('#txtTraktClientId').value,
             MdblistApiKey: view.querySelector('#txtMdblistApiKey').value,
+            TmdbApiKey: (view.querySelector('#txtTmdbApiKey') || {}).value || '',
             OpenAiApiKey: (view.querySelector('#txtOpenAiApiKey') || {}).value || '',
             GeminiApiKey: (view.querySelector('#txtGeminiApiKey') || {}).value || '',
             ExtendedConsoleOutput: view.querySelector('#chkExtendedConsoleOutput').checked,
@@ -4341,6 +4342,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             var config = JSON.parse(e.target.result);
                             view.querySelector('#txtTraktClientId').value = config.TraktClientId || '';
                             view.querySelector('#txtMdblistApiKey').value = config.MdblistApiKey || '';
+                            var tmdbEl = view.querySelector('#txtTmdbApiKey'); if (tmdbEl) tmdbEl.value = config.TmdbApiKey || '';
                             var oaEl = view.querySelector('#txtOpenAiApiKey'); if (oaEl) oaEl.value = config.OpenAiApiKey || '';
                             var gmEl = view.querySelector('#txtGeminiApiKey'); if (gmEl) gmEl.value = config.GeminiApiKey || '';
                             view.querySelector('#chkExtendedConsoleOutput').checked = config.ExtendedConsoleOutput || false;
@@ -4561,6 +4563,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var container = view.querySelector('#tagListContainer'); container.innerHTML = '';
                 view.querySelector('#txtTraktClientId').value = config.TraktClientId || '';
                 view.querySelector('#txtMdblistApiKey').value = config.MdblistApiKey || '';
+                var tmdbElInit = view.querySelector('#txtTmdbApiKey'); if (tmdbElInit) tmdbElInit.value = config.TmdbApiKey || '';
                 var oaElInit = view.querySelector('#txtOpenAiApiKey'); if (oaElInit) oaElInit.value = config.OpenAiApiKey || '';
                 var gmElInit = view.querySelector('#txtGeminiApiKey'); if (gmElInit) gmElInit.value = config.GeminiApiKey || '';
                 view.querySelector('#chkExtendedConsoleOutput').checked = config.ExtendedConsoleOutput || false;

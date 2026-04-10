@@ -8,6 +8,7 @@ namespace HomeScreenCompanion
     {
         public string TraktClientId { get; set; } = "";
         public string MdblistApiKey { get; set; } = "";
+        public string TmdbApiKey { get; set; } = "";
         public string OpenAiApiKey { get; set; } = "";
         public string GeminiApiKey { get; set; } = "";
         public bool ExtendedConsoleOutput { get; set; } = false;
