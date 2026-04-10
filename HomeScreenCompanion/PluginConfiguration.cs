@@ -77,6 +77,9 @@ namespace HomeScreenCompanion
         public string HomeSectionSettings { get; set; } = "{}";
         public List<HomeSectionTracking> HomeSectionTracked { get; set; } = new List<HomeSectionTracking>();
 
+        public bool CreateAsTopList { get; set; } = false;
+        public List<string> TopListTrackedPosters { get; set; } = new List<string>();
+
         public DateTime LastModified { get; set; } = DateTime.MinValue;
     }
 

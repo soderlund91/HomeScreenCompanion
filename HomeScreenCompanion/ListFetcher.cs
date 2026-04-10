@@ -39,12 +39,20 @@ namespace HomeScreenCompanion
         {
             if (string.IsNullOrWhiteSpace(url)) return new List<ExternalItemDto>();
 
+            List<ExternalItemDto> result;
             if (url.Contains("mdblist.com"))
-                return await FetchMdblist(url, mdbApiKey, limit, cancellationToken);
-            if (url.Contains("themoviedb.org"))
-                return await FetchTmdb(url, tmdbApiKey, limit, cancellationToken);
+                result = await FetchMdblist(url, mdbApiKey, limit, cancellationToken);
+            else if (url.Contains("themoviedb.org"))
+                result = await FetchTmdb(url, tmdbApiKey, limit, cancellationToken);
+            else
+                result = await FetchTrakt(url, traktClientId, limit, cancellationToken);
 
-            return await FetchTrakt(url, traktClientId, limit, cancellationToken);
+            // Assign 1-based positional rank to items that don't already have one (MDBList, TMDB)
+            for (int i = 0; i < result.Count; i++)
+                if (!result[i].Rank.HasValue)
+                    result[i].Rank = i + 1;
+
+            return result;
         }
 
         // Builds a TMDB API URL, appending api_key for short keys.
@@ -459,7 +467,7 @@ namespace HomeScreenCompanion
                                 string? imdb = item.movie?.ids?.imdb ?? item.show?.ids?.imdb;
 
                                 if (!string.IsNullOrEmpty(title) && !string.IsNullOrEmpty(imdb))
-                                    list.Add(new ExternalItemDto { Name = title, Imdb = imdb, Tmdb = null });
+                                    list.Add(new ExternalItemDto { Name = title, Imdb = imdb, Tmdb = null, Rank = item.rank > 0 ? item.rank : (int?)null });
                             }
                             if (list.Count > 0) return list;
                         }

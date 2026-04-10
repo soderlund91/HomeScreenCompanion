@@ -1,5 +1,6 @@
 ﻿﻿using MediaBrowser.Common.Net;
 using MediaBrowser.Controller.Collections;
+using SkiaSharp;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
@@ -33,6 +34,7 @@ namespace HomeScreenCompanion
         public static List<string> ExecutionLog { get; } = new List<string>();
         public static bool IsRunning { get; private set; } = false;
         private static readonly object _runLock = new object();
+        private static readonly System.Net.Http.HttpClient _topListHttpClient = new System.Net.Http.HttpClient();
 
         private struct CachedMediaInfo
         {
@@ -86,6 +88,7 @@ namespace HomeScreenCompanion
             public string? CollectionName;
             public int GroupIndex;
             public int GroupTotal;
+            public int TopListImagesApplied;
         }
 
         public HomeScreenCompanionTask(ILibraryManager libraryManager, ICollectionManager collectionManager, IUserManager userManager, IUserDataManager userDataManager, IHttpClient httpClient, IJsonSerializer jsonSerializer, ILogManager logManager)
@@ -427,7 +430,18 @@ namespace HomeScreenCompanion
                     string tagName = tagConfig.Tag.Trim();
                     managedTags.Add(tagName); // track all groups (active or inactive) so cleanup always runs
 
-                    if (!tagConfig.Active) continue;
+                    if (!tagConfig.Active)
+                    {
+                        if (tagConfig.CreateAsTopList && tagConfig.TopListTrackedPosters.Count > 0 && !dryRun)
+                        {
+                            var topListDir = System.IO.Path.Combine(Plugin.Instance.DataFolderPath, "toplist_images");
+                            foreach (var imdbId in tagConfig.TopListTrackedPosters.ToList())
+                                RestoreOriginalPoster(imdbId, topListDir, imdbLookup, debug);
+                            tagConfig.TopListTrackedPosters.Clear();
+                            Plugin.Instance.SaveConfiguration();
+                        }
+                        continue;
+                    }
 
                     string displayName = !string.IsNullOrWhiteSpace(tagConfig.Name) ? $"{tagConfig.Name} [{tagName}]" : tagName;
                     string srcLabel = string.IsNullOrEmpty(tagConfig.SourceType) ? "External" : tagConfig.SourceType;
@@ -510,6 +524,8 @@ namespace HomeScreenCompanion
                             }
                         }
 
+                        var itemRankMap = new Dictionary<BaseItem, int>();
+
                         if (string.IsNullOrEmpty(tagConfig.SourceType) || tagConfig.SourceType == "External")
                         {
                             var items = await fetcher.FetchItems(tagConfig.Url, effectiveLimit, config.TraktClientId, config.MdblistApiKey, config.TmdbApiKey, cancellationToken);
@@ -537,6 +553,8 @@ namespace HomeScreenCompanion
                                         foreach (var localItem in localItems)
                                         {
                                             if (!matchedLocalItems.Contains(localItem)) matchedLocalItems.Add(localItem);
+                                            if (extItem.Rank.HasValue && !itemRankMap.ContainsKey(localItem))
+                                                itemRankMap[localItem] = extItem.Rank.Value;
                                         }
                                     }
                                 }
@@ -648,6 +666,24 @@ namespace HomeScreenCompanion
                                 return ItemMatchesMediaInfo(item, tagConfig, debug, seriesEpisodeCache, personCache, userDataCache, ci, preloadedUsers, seriesLastPlayedCache, collectionMembershipCache, seriesEpisodeNamesCache);
                             }).ToList();
                             if (debug) LogDebug($"  MediaInfo post-filter: {beforeCount} → {matchedLocalItems.Count} items");
+                        }
+
+                        // Top-list poster overlay (External sources only)
+                        if (tagConfig.CreateAsTopList && (string.IsNullOrEmpty(tagConfig.SourceType) || tagConfig.SourceType == "External"))
+                        {
+                            // Deduplicate by IMDB ID so a film with 1080p+4K copies only gets one rank number
+                            var seenImdbRank = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            var rankedPairs = itemRankMap
+                                .Where(kv => matchedLocalItems.Contains(kv.Key))
+                                .OrderBy(kv => kv.Value)
+                                .Where(kv => seenImdbRank.Add(kv.Key.GetProviderId("Imdb") ?? kv.Key.InternalId.ToString()))
+                                .Select(kv => (kv.Key, kv.Value))
+                                .ToList();
+                            if (rankedPairs.Count > 0)
+                            {
+                                gs.TopListImagesApplied = await ApplyTopListPosters(tagConfig, rankedPairs, imdbLookup, dryRun, debug, cancellationToken);
+                                Plugin.Instance.SaveConfiguration();
+                            }
                         }
 
                         if (tagConfig.SourceType == "MediaInfo")
@@ -1263,6 +1299,8 @@ namespace HomeScreenCompanion
                             LogSummary(gs.HomeSectionSynced
                                 ? $"  Home section: synced for {gs.HomeSectionUserCount} user(s)"
                                 : "  Home section: not synced");
+                        if (gs.TopListImagesApplied > 0)
+                            LogSummary($"  Top-list images: {gs.TopListImagesApplied} applied");
                     }
                     LogSummary("");
                 }
@@ -1605,6 +1643,7 @@ namespace HomeScreenCompanion
             List<BaseItem> tagOutputItems = matchedLocalItems;
             List<BaseItem> collectionOutputItems = matchedLocalItems;
             int _listCount = 0;
+            var itemRankMap = new Dictionary<BaseItem, int>();
 
             try
             {
@@ -1623,7 +1662,11 @@ namespace HomeScreenCompanion
                             TagCacheManager.Instance.AddToCache($"imdb_{extItem.Imdb}", tagName);
                         if (imdbLookup.TryGetValue(extItem.Imdb, out var localItems))
                             foreach (var localItem in localItems)
+                            {
                                 if (!matchedLocalItems.Contains(localItem)) matchedLocalItems.Add(localItem);
+                                if (extItem.Rank.HasValue && !itemRankMap.ContainsKey(localItem))
+                                    itemRankMap[localItem] = extItem.Rank.Value;
+                            }
                     }
                 }
                 else if (tagConfig.SourceType == "LocalCollection" || tagConfig.SourceType == "LocalPlaylist")
@@ -1775,6 +1818,23 @@ namespace HomeScreenCompanion
                     return ItemMatchesMediaInfo(item, tagConfig, debug, seriesEpisodeCache, personCache, userDataCache, ci, preloadedUsers, seriesLastPlayedCache, collectionMembershipCache, seriesEpisodeNamesCache);
                 }).ToList();
                 if (debug) LogDebug($"  MediaInfo post-filter: {beforeCount} → {matchedLocalItems.Count} items");
+            }
+
+            // Top-list poster overlay (External sources only)
+            if (tagConfig.CreateAsTopList && (string.IsNullOrEmpty(tagConfig.SourceType) || tagConfig.SourceType == "External"))
+            {
+                var seenImdbRank = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var rankedPairs = itemRankMap
+                    .Where(kv => matchedLocalItems.Contains(kv.Key))
+                    .OrderBy(kv => kv.Value)
+                    .Where(kv => seenImdbRank.Add(kv.Key.GetProviderId("Imdb") ?? kv.Key.InternalId.ToString()))
+                    .Select(kv => (kv.Key, kv.Value))
+                    .ToList();
+                if (rankedPairs.Count > 0)
+                {
+                    await ApplyTopListPosters(tagConfig, rankedPairs, imdbLookup, dryRun, debug, cancellationToken);
+                    Plugin.Instance.SaveConfiguration();
+                }
             }
 
             // For non-MediaInfo sources, apply output level selection (expand down from Series/Movie)
@@ -2187,6 +2247,13 @@ namespace HomeScreenCompanion
 
                 if (!settingsDict.ContainsKey("SectionType"))
                     settingsDict["SectionType"] = (tc.EnableCollection && !string.IsNullOrEmpty(tc.CollectionName)) ? "boxset" : "items";
+
+                // Top-list: force sort by SortName ascending so items appear in rank order
+                if (tc.CreateAsTopList)
+                {
+                    settingsDict["SortBy"] = "SortName";
+                    settingsDict["SortOrder"] = "Ascending";
+                }
 
                 settingsDict.TryGetValue("SectionType", out var sectionType);
 
@@ -3559,6 +3626,252 @@ namespace HomeScreenCompanion
 
             if (metaChanged)
                 _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null);
+        }
+
+        // ── Top-list poster overlay helpers ────────────────────────────────────
+
+        private async Task<byte[]> GetPrimaryImageBytes(BaseItem item, CancellationToken ct)
+        {
+            var info = (item.ImageInfos ?? Array.Empty<ItemImageInfo>()).FirstOrDefault(i => i.Type == ImageType.Primary);
+            if (info == null)
+            {
+                LogSummary($"  ! TopList [{item.Name}]: no Primary entry in ImageInfos (total={item.ImageInfos?.Length ?? 0})");
+                return null;
+            }
+
+            var path = info.Path ?? "";
+
+            // Stale overlay: toplist_images was deleted externally but ImageInfos still points there.
+            // Clear the entry so Emby re-fetches the poster on next metadata refresh.
+            if (path.IndexOf("toplist_images", StringComparison.OrdinalIgnoreCase) >= 0 && !File.Exists(path))
+            {
+                item.ImageInfos = (item.ImageInfos ?? Array.Empty<ItemImageInfo>())
+                    .Where(i => i.Type != ImageType.Primary).ToArray();
+                try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.ImageUpdate, null); } catch { }
+                LogSummary($"  ! TopList [{item.Name}]: stale overlay found (folder was deleted). Cleared from Emby — run a metadata refresh on this item, then re-run the task.");
+                return null;
+            }
+
+            if (!string.IsNullOrEmpty(path) && File.Exists(path))
+                return File.ReadAllBytes(path);
+
+            if (!string.IsNullOrEmpty(path) && (path.StartsWith("http://") || path.StartsWith("https://")))
+            {
+                try
+                {
+                    using var cts2 = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    cts2.CancelAfter(TimeSpan.FromSeconds(15));
+                    using var resp = await _topListHttpClient.GetAsync(path, cts2.Token);
+                    if (resp.IsSuccessStatusCode) return await resp.Content.ReadAsByteArrayAsync();
+                }
+                catch { }
+            }
+
+            if (!string.IsNullOrEmpty(path))
+                LogSummary($"  ! TopList: no image found for '{item.Name}' (path='{path}') — run a metadata refresh");
+
+            return null;
+        }
+
+        private async Task ApplyRankedPoster(BaseItem item, int rank, string imdbId,
+            string topListDir, bool dryRun, bool debug, CancellationToken ct)
+        {
+            var outPath = System.IO.Path.Combine(topListDir, $"{imdbId}_rank{rank}.jpg");
+
+            // Skip if the item already points at the correct ranked image
+            var existingInfo = (item.ImageInfos ?? Array.Empty<ItemImageInfo>()).FirstOrDefault(i => i.Type == ImageType.Primary);
+            if (existingInfo?.Path == outPath && File.Exists(outPath)) return;
+
+            // Delete stale ranked images for this item (rank changed)
+            foreach (var stale in Directory.GetFiles(topListDir, $"{imdbId}_rank*.jpg"))
+                if (stale != outPath) try { File.Delete(stale); } catch { }
+
+            var srcBytes = await GetPrimaryImageBytes(item, ct);
+            if (srcBytes == null || srcBytes.Length == 0)
+            {
+                LogSummary($"  ! TopList: no source image for '{item.Name}' — skipping");
+                return;
+            }
+
+            if (dryRun)
+            {
+                LogSummary($"  [DRY RUN] Would overlay rank #{rank} on '{item.Name}'");
+                return;
+            }
+
+            using var srcBitmap = SKBitmap.Decode(srcBytes);
+            if (srcBitmap == null)
+            {
+                LogSummary($"  ! TopList: could not decode image for '{item.Name}'");
+                return;
+            }
+
+            // Single BGRA8888 canvas for everything — format guaranteed mutable for alpha drawing
+            var dstInfo = new SKImageInfo(srcBitmap.Width, srcBitmap.Height, SKColorType.Bgra8888, SKAlphaType.Premul);
+            using var dstBitmap = new SKBitmap(dstInfo);
+            using var canvas = new SKCanvas(dstBitmap);
+
+            canvas.DrawBitmap(srcBitmap, 0, 0);
+
+            var digitSize = Math.Max(64f, dstBitmap.Height / 8f);
+            var rankText = rank.ToString();
+
+            // Badge background — size depends on how many digits
+            float badgeW = digitSize * 0.75f * rankText.Length + digitSize * 0.3f;
+            float badgeH = digitSize * 1.25f;
+            using var bgPaint = new SKPaint { Color = new SKColor(0, 0, 0, 160), Style = SKPaintStyle.Fill, IsAntialias = false };
+            canvas.DrawRect(SKRect.Create(0, 0, badgeW, badgeH), bgPaint);
+
+            // Draw rank using 7-segment rectangles — bypasses SkiaSharp text rendering entirely
+            // (DrawText is broken in Emby's build: SKTextBlob.Create returns null when CountGlyphs fails)
+            using var shadowPaint2 = new SKPaint { Color = new SKColor(0, 0, 0, 180), Style = SKPaintStyle.Fill, IsAntialias = false };
+            DrawRankSegments(canvas, rankText, 13f, 13f, digitSize, shadowPaint2);
+            using var digitPaint = new SKPaint { Color = SKColors.White, Style = SKPaintStyle.Fill, IsAntialias = false };
+            DrawRankSegments(canvas, rankText, 10f, 10f, digitSize, digitPaint);
+
+            canvas.Flush();
+
+            // Encode via PeekPixels → avoids any stale-snapshot issue from SKImage.FromBitmap
+            var pixmap = dstBitmap.PeekPixels();
+            SKData? encoded = pixmap != null
+                ? pixmap.Encode(SKEncodedImageFormat.Jpeg, 90)
+                : SKImage.FromBitmap(dstBitmap)?.Encode(SKEncodedImageFormat.Jpeg, 90);
+
+            if (encoded == null)
+            {
+                LogSummary($"  ! TopList: JPEG encode failed for '{item.Name}'");
+                return;
+            }
+            using (encoded)
+            using (var outStream = File.Create(outPath))
+                encoded.SaveTo(outStream);
+
+            var imageInfo = new ItemImageInfo
+            {
+                Path = outPath,
+                Type = ImageType.Primary,
+                DateModified = DateTime.UtcNow
+            };
+            item.ImageInfos = (item.ImageInfos ?? Array.Empty<ItemImageInfo>())
+                .Where(i => i.Type != ImageType.Primary)
+                .Concat(new[] { imageInfo }).ToArray();
+            _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.ImageUpdate, null);
+
+            // Set SortName to padded rank so the home section sorts items in rank order
+            item.SortName = rank.ToString("D3");
+            _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null);
+
+            if (debug) LogDebug($"  TopList: rank #{rank} → '{item.Name}'");
+        }
+
+        // ── 7-segment digit renderer (DrawRect-based, no SkiaSharp text API needed) ──────
+        // Segments: a=top, b=top-right, c=bottom-right, d=bottom, e=bottom-left, f=top-left, g=middle
+        private static void DrawSegmentDigit(SKCanvas canvas, char ch, float x, float y, float size, SKPaint paint)
+        {
+            float t = size * 0.15f;   // segment thickness
+            float g = size * 0.06f;   // gap
+            float w = size * 0.60f;   // digit width
+            float h = size;           // digit height
+
+            bool a, b, c, d, e, f, gSeg;
+            switch (ch)
+            {
+                case '0': a=true;  b=true;  c=true;  d=true;  e=true;  f=true;  gSeg=false; break;
+                case '1': a=false; b=true;  c=true;  d=false; e=false; f=false; gSeg=false; break;
+                case '2': a=true;  b=true;  c=false; d=true;  e=true;  f=false; gSeg=true;  break;
+                case '3': a=true;  b=true;  c=true;  d=true;  e=false; f=false; gSeg=true;  break;
+                case '4': a=false; b=true;  c=true;  d=false; e=false; f=true;  gSeg=true;  break;
+                case '5': a=true;  b=false; c=true;  d=true;  e=false; f=true;  gSeg=true;  break;
+                case '6': a=true;  b=false; c=true;  d=true;  e=true;  f=true;  gSeg=true;  break;
+                case '7': a=true;  b=true;  c=true;  d=false; e=false; f=false; gSeg=false; break;
+                case '8': a=true;  b=true;  c=true;  d=true;  e=true;  f=true;  gSeg=true;  break;
+                case '9': a=true;  b=true;  c=true;  d=true;  e=false; f=true;  gSeg=true;  break;
+                default:  return;
+            }
+
+            float half = h / 2f;
+            if (a)    canvas.DrawRect(SKRect.Create(x+g,     y,            w-2*g, t),    paint); // top horiz
+            if (b)    canvas.DrawRect(SKRect.Create(x+w-t,   y+g,          t, half-2*g), paint); // top-right vert
+            if (c)    canvas.DrawRect(SKRect.Create(x+w-t,   y+half+g,     t, half-2*g), paint); // bottom-right vert
+            if (d)    canvas.DrawRect(SKRect.Create(x+g,     y+h-t,        w-2*g, t),    paint); // bottom horiz
+            if (e)    canvas.DrawRect(SKRect.Create(x,       y+half+g,     t, half-2*g), paint); // bottom-left vert
+            if (f)    canvas.DrawRect(SKRect.Create(x,       y+g,          t, half-2*g), paint); // top-left vert
+            if (gSeg) canvas.DrawRect(SKRect.Create(x+g,     y+half-t/2f,  w-2*g, t),    paint); // middle horiz
+        }
+
+        private static void DrawRankSegments(SKCanvas canvas, string text, float x, float y, float digitSize, SKPaint paint)
+        {
+            float digitW = digitSize * 0.60f;
+            float spacing = digitSize * 0.12f;
+            for (int i = 0; i < text.Length; i++)
+                DrawSegmentDigit(canvas, text[i], x + i * (digitW + spacing), y, digitSize, paint);
+        }
+        // ────────────────────────────────────────────────────────────────────────────────
+
+        private void RestoreOriginalPoster(string imdbId, string topListDir,
+            Dictionary<string, List<BaseItem>> imdbLookup, bool debug)
+        {
+            foreach (var f in Directory.GetFiles(topListDir, $"{imdbId}_rank*.jpg"))
+                try { File.Delete(f); } catch { }
+
+            if (!imdbLookup.TryGetValue(imdbId, out var items)) return;
+            foreach (var item in items)
+            {
+                var primary = (item.ImageInfos ?? Array.Empty<ItemImageInfo>()).FirstOrDefault(i => i.Type == ImageType.Primary);
+                if (primary?.Path?.Contains("toplist_images") != true) continue;
+                item.ImageInfos = (item.ImageInfos ?? Array.Empty<ItemImageInfo>())
+                    .Where(i => i.Type != ImageType.Primary).ToArray();
+                try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.ImageUpdate, null); }
+                catch { }
+                // Clear the rank-based SortName so Emby reverts to the item title for sorting
+                item.SortName = null;
+                try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); }
+                catch { }
+                if (debug) LogDebug($"  TopList: restored poster + sort name for IMDB:{imdbId} ('{item.Name}')");
+            }
+        }
+
+        private async Task<int> ApplyTopListPosters(
+            TagConfig tagConfig,
+            List<(BaseItem item, int rank)> rankedItems,
+            Dictionary<string, List<BaseItem>> imdbLookup,
+            bool dryRun, bool debug, CancellationToken ct)
+        {
+            var topListDir = System.IO.Path.Combine(Plugin.Instance.DataFolderPath, "toplist_images");
+            Directory.CreateDirectory(topListDir);
+
+            var currentIds = new HashSet<string>(
+                rankedItems
+                    .Select(p => p.item.GetProviderId("Imdb"))
+                    .Where(id => id != null),
+                StringComparer.OrdinalIgnoreCase);
+
+            // Restore posters for items that left the list
+            foreach (var imdbId in tagConfig.TopListTrackedPosters.Where(id => !currentIds.Contains(id)).ToList())
+            {
+                RestoreOriginalPoster(imdbId, topListDir, imdbLookup, debug);
+                if (!dryRun) tagConfig.TopListTrackedPosters.Remove(imdbId);
+            }
+
+            int applied = 0;
+            // Apply ranked poster for each current item
+            foreach (var (item, rank) in rankedItems.OrderBy(p => p.rank))
+            {
+                var imdbId = item.GetProviderId("Imdb");
+                if (string.IsNullOrEmpty(imdbId)) continue;
+                try
+                {
+                    await ApplyRankedPoster(item, rank, imdbId, topListDir, dryRun, debug, ct);
+                    applied++;
+                    if (!dryRun && !tagConfig.TopListTrackedPosters.Contains(imdbId, StringComparer.OrdinalIgnoreCase))
+                        tagConfig.TopListTrackedPosters.Add(imdbId);
+                }
+                catch (Exception ex)
+                {
+                    LogSummary($"  ! TopList poster failed for '{item.Name}': {ex.Message}", "Warn");
+                }
+            }
+            return applied;
         }
     }
 }

@@ -670,6 +670,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
         var hseTab = row.querySelector('.homescreen-tab');
         var enableHse = hseTab ? !!(hseTab.querySelector('.chkEnableHomeSection') || {}).checked : false;
+        var createAsTopListVal = hseTab ? !!(hseTab.querySelector('.chkCreateAsTopList') || {}).checked : false;
         var hseLibraryId = hseTab && hseTab.dataset.hseLoaded === '1'
             ? ((hseTab.querySelector('.selHseLibrary') || {}).value || 'auto')
             : decodeURIComponent((hseTab && hseTab.dataset.hseLibraryid) || 'auto');
@@ -717,7 +718,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             OverrideWhenActive: overrideWhenActive, SourceType: st,
             Urls: urls, LocalSources: localSources, Limit: miLimit,
             MediaInfoFilters: miFilters, MediaInfoConditions: [],
-            EnableHomeSection: enableHse, HomeSectionLibraryId: hseLibraryId,
+            EnableHomeSection: enableHse, CreateAsTopList: createAsTopListVal,
+            HomeSectionLibraryId: hseLibraryId,
             HomeSectionUserIds: hseUserIds, HomeSectionSettings: JSON.stringify(hseSettings),
             HomeSectionTracked: [], LastModified: new Date().toISOString(),
             AiProvider: aiProvider, AiPrompt: aiPrompt,
@@ -1609,6 +1611,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     data-hse-settings="${homeSectionSettingsEnc}"
                     data-hse-tracked="${homeSectionTrackedEnc}"
                     data-hse-default-type="${hsDefaultSectionType}"
+                    data-hse-createastoplist="${tagConfig.CreateAsTopList ? 'true' : ''}"
                     data-hse-loaded="0">
                     <div class="checkboxContainer checkboxContainer-withDescription">
                         <label>
@@ -2430,7 +2433,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
 
 
-    function buildHomeSectionFormHtml(savedSettings, defaultSectionType, defaultName, tagEnabled, collEnabled) {
+    function buildHomeSectionFormHtml(savedSettings, defaultSectionType, defaultName, tagEnabled, collEnabled, createAsTopList) {
         var s = savedSettings || {};
         var html = '';
 
@@ -2539,8 +2542,19 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         [['true','Played'],['false','Unplayed']].forEach(function(o) { html += '<option value="' + o[0] + '"' + (playstateVal === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; });
         html += '</select></div>';
 
+        html += '<div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:8px;">';
+        html += '<label>';
+        html += '<input is="emby-checkbox" class="chkCreateAsTopList" type="checkbox"' + (createAsTopList ? ' checked' : '') + '/>';
+        html += '<span>Create as Top-list</span>';
+        html += '</label>';
+        html += '<div class="fieldDescription">Overlays rank numbers onto each item\'s poster. Items are sorted by rank on the home screen. Original posters are restored when items leave the list.</div>';
+        html += '</div>';
+
         return html;
     }
+
+    // Note: The "Create as Top-list" checkbox is rendered directly in the homescreen-tab template
+    // (outside buildHomeSectionFormHtml) and saved as a top-level TagConfig property.
 
     function updateHseItemsOnlyVisibility(tab) {
         var stSel = tab.querySelector('.selHseSectionType');
@@ -2672,7 +2686,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var defaultTagName = row.querySelector('.txtEntryLabel').value || row.querySelector('.txtTagName').value || '';
                 var tagEnabled  = !!(row.querySelector('.chkEnableTag') || {}).checked;
                 var collEnabled = !!(row.querySelector('.chkEnableCollection') || {}).checked;
-                tab.querySelector('.hse-fields-inner').innerHTML = buildHomeSectionFormHtml(savedSettings, defaultSectionType, defaultTagName, tagEnabled, collEnabled);
+                tab.querySelector('.hse-fields-inner').innerHTML = buildHomeSectionFormHtml(savedSettings, defaultSectionType, defaultTagName, tagEnabled, collEnabled, !!tab.dataset.hseCreateastoplist);
                 wireHomeSectionTypeChange(tab);
 
                 // Mark as fully loaded only after form is in DOM so getUiConfig reads form values
@@ -2803,6 +2817,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
             var hseTab = row.querySelector('.homescreen-tab');
             var enableHse = hseTab ? !!(hseTab.querySelector('.chkEnableHomeSection') || {}).checked : false;
+            var createAsTopListVal = hseTab ? !!(hseTab.querySelector('.chkCreateAsTopList') || {}).checked : false;
             var hseLibraryId = hseTab && hseTab.dataset.hseLoaded === '1'
                 ? ((hseTab.querySelector('.selHseLibrary') || {}).value || 'auto')
                 : decodeURIComponent((hseTab && hseTab.dataset.hseLibraryid) || 'auto');
@@ -2835,7 +2850,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 CollectionTargetSeries:  !!(row.querySelector('.chkCollTargetSeries')  || {}).checked,
                 MediaInfoTargetEpisode: false, MediaInfoTargetSeason: false, MediaInfoTargetSeries: false,
                 MediaInfoTargetType: '', MediaInfoSeasonMode: false,
-                EnableHomeSection: enableHse, HomeSectionLibraryId: hseLibraryId, HomeSectionUserIds: hseUserIds,
+                EnableHomeSection: enableHse, CreateAsTopList: createAsTopListVal,
+                HomeSectionLibraryId: hseLibraryId, HomeSectionUserIds: hseUserIds,
                 HomeSectionSettings: JSON.stringify(hseSettings), HomeSectionTracked: hseTracked
             };
 
@@ -3104,7 +3120,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     EnableTag: t.EnableTag !== false, EnableCollection: t.EnableCollection, CollectionName: t.CollectionName, CollectionDescription: t.CollectionDescription || '', CollectionPosterPath: t.CollectionPosterPath || '', OnlyCollection: t.OnlyCollection, OverrideWhenActive: t.OverrideWhenActive || false, LastModified: t.LastModified,
                     SourceType: t.SourceType || "External", MediaInfoConditions: t.MediaInfoConditions || [], MediaInfoFilters: t.MediaInfoFilters || [],
                     Limit: t.Limit || 0,
-                    EnableHomeSection: t.EnableHomeSection || false, HomeSectionLibraryId: t.HomeSectionLibraryId || 'auto',
+                    EnableHomeSection: t.EnableHomeSection || false, CreateAsTopList: t.CreateAsTopList || false, HomeSectionLibraryId: t.HomeSectionLibraryId || 'auto',
                     HomeSectionUserIds: t.HomeSectionUserIds || [], HomeSectionSettings: t.HomeSectionSettings || '{}',
                     HomeSectionTracked: t.HomeSectionTracked || [],
                     AiProvider: t.AiProvider || 'OpenAI',

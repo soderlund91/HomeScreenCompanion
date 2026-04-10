@@ -8,6 +8,7 @@ namespace HomeScreenCompanion
         public string Name { get; set; }
         public string Imdb { get; set; }
         public string Tmdb { get; set; }
+        public int? Rank { get; set; }
     }
 
     public class MdbListItem
