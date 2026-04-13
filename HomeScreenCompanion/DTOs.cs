@@ -15,7 +15,13 @@ namespace HomeScreenCompanion
         public string title { get; set; }
         public string imdb_id { get; set; }
         public int? id { get; set; }
-        public string media_type { get; set; }
+        public string mediatype { get; set; }
+    }
+
+    public class MdbListResponse
+    {
+        public List<MdbListItem> movies { get; set; } = new List<MdbListItem>();
+        public List<MdbListItem> shows { get; set; } = new List<MdbListItem>();
     }
 
     public class TraktBaseObject

@@ -51,10 +51,10 @@ namespace HomeScreenCompanion
             public int? DiscNumber;    // ParentIndexNumber on the item
         }
 
-        // Utökar ItemsQuery med IsPlayed/IsUnplayed så att Embys JSON-serialisering inkluderar fälten
+        // Utökar ItemsQuery med IsUnplayed så att Embys JSON-serialisering inkluderar fältet.
+        // IsPlayed finns nativt i ItemsQuery (Emby 4.10.0.10+) och sätts via basklassen.
         private class ExtendedItemsQuery : ItemsQuery
         {
-            public bool? IsPlayed { get; set; }
             public bool? IsUnplayed { get; set; }
         }
 
@@ -2517,8 +2517,11 @@ namespace HomeScreenCompanion
                             tagIdsProp.SetValue(extQuery, new[] { qTagId });
                     }
 
-                    // Specialfall: _queryIsPlayed → IsPlayed/IsUnplayed; tomt = Any = null
-                    // Emby använder IsPlayed=true för "Played" och IsUnplayed=true för "Unplayed" (separata flaggor)
+                    // Specialfall: _queryIsPlayed → IsPlayed; tomt = Any = null
+                    // Emby 4.10.0.10+: IsPlayed finns nativt i ItemsQuery.
+                    //   true  → Played   (IsPlayed = true)
+                    //   false → Unplayed (IsPlayed = false)
+                    //   annat → ingen filtrering
                     if (settings.TryGetValue("_queryIsPlayed", out var qIsPlayed))
                     {
                         if (qIsPlayed == "true")
@@ -2528,8 +2531,8 @@ namespace HomeScreenCompanion
                         }
                         else if (qIsPlayed == "false")
                         {
-                            extQuery.IsPlayed = null;
-                            extQuery.IsUnplayed = true;
+                            extQuery.IsPlayed = false;
+                            extQuery.IsUnplayed = null;
                         }
                         else
                         {

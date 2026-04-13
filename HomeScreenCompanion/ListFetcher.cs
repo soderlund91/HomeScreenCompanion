@@ -51,6 +51,54 @@ namespace HomeScreenCompanion
 
         private async Task<List<ExternalItemDto>> FetchMdblist(string listUrl, string apiKey, int limit, CancellationToken cancellationToken)
         {
+            if (!string.IsNullOrWhiteSpace(apiKey))
+                return await FetchMdblistApi(listUrl, apiKey, limit, cancellationToken);
+            else
+                return await FetchMdblistLegacy(listUrl, limit, cancellationToken);
+        }
+
+        // Uses api.mdblist.com — works for both public and private lists
+        private async Task<List<ExternalItemDto>> FetchMdblistApi(string listUrl, string apiKey, int limit, CancellationToken cancellationToken)
+        {
+            var apiBaseUrl = BuildMdblistApiUrl(listUrl);
+            const int pageSize = 1000;
+            var all = new List<ExternalItemDto>();
+            int offset = 0;
+
+            while (true)
+            {
+                var apiUrl = $"{apiBaseUrl}?apikey={apiKey}&limit={pageSize}&offset={offset}";
+                try
+                {
+                    using (var stream = await _httpClient.Get(new HttpRequestOptions { Url = apiUrl, CancellationToken = cancellationToken }))
+                    {
+                        var result = _jsonSerializer.DeserializeFromStream<MdbListResponse>(stream);
+                        if (result == null) break;
+
+                        var movies = result.movies ?? new List<MdbListItem>();
+                        var shows = result.shows ?? new List<MdbListItem>();
+                        int pageCount = movies.Count + shows.Count;
+                        if (pageCount == 0) break;
+
+                        var page = movies.Concat(shows)
+                            .Where(x => !string.IsNullOrEmpty(x.imdb_id))
+                            .Select(x => new ExternalItemDto { Name = x.title, Imdb = x.imdb_id, Tmdb = null });
+                        all.AddRange(page);
+
+                        if (pageCount < pageSize) break;
+                        if (limit < 10000 && all.Count >= limit) break;
+                        offset += pageSize;
+                    }
+                }
+                catch { break; }
+            }
+
+            return all;
+        }
+
+        // Legacy fallback: mdblist.com/slug/json — public lists only, no API key needed
+        private async Task<List<ExternalItemDto>> FetchMdblistLegacy(string listUrl, int limit, CancellationToken cancellationToken)
+        {
             var cleanUrl = listUrl.Trim().TrimEnd('/');
             if (!cleanUrl.EndsWith("/json")) cleanUrl += "/json";
 
@@ -60,7 +108,7 @@ namespace HomeScreenCompanion
 
             while (true)
             {
-                var apiUrl = $"{cleanUrl}?apikey={apiKey}&limit={pageSize}&offset={offset}&_={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+                var apiUrl = $"{cleanUrl}?limit={pageSize}&offset={offset}&_={DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
                 try
                 {
                     using (var stream = await _httpClient.Get(new HttpRequestOptions { Url = apiUrl, CancellationToken = cancellationToken }))
@@ -82,6 +130,31 @@ namespace HomeScreenCompanion
             }
 
             return all;
+        }
+
+        private static string BuildMdblistApiUrl(string listUrl)
+        {
+            var cleaned = listUrl.Trim().TrimEnd('/');
+
+            // Already a correct API items URL
+            if (cleaned.Contains("api.mdblist.com") && cleaned.EndsWith("/items"))
+                return cleaned;
+
+            if (Uri.TryCreate(cleaned, UriKind.Absolute, out var uri))
+            {
+                var path = uri.AbsolutePath.TrimEnd('/');
+                if (path.EndsWith("/json")) path = path.Substring(0, path.Length - 5);
+                if (path.EndsWith("/items")) path = path.Substring(0, path.Length - 6);
+                return $"https://api.mdblist.com{path}/items";
+            }
+
+            // Fallback: treat as path fragment
+            var fallback = cleaned
+                .Replace("https://mdblist.com", "")
+                .Replace("https://www.mdblist.com", "")
+                .TrimEnd('/');
+            if (fallback.EndsWith("/json")) fallback = fallback.Substring(0, fallback.Length - 5);
+            return $"https://api.mdblist.com{fallback}/items";
         }
 
         private async Task<List<ExternalItemDto>> FetchTrakt(string rawUrl, string clientId, int limit, CancellationToken cancellationToken)
