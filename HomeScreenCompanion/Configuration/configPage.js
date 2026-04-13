@@ -3054,7 +3054,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var a = latestTag.split('.').map(Number);
                     var b = currentVer.split('.').map(Number);
                     var isNewer = false;
-                    for (var i = 0; i < 3; i++) {
+                    for (var i = 0; i < Math.max(a.length, b.length); i++) {
                         if ((a[i] || 0) > (b[i] || 0)) { isNewer = true; break; }
                         if ((a[i] || 0) < (b[i] || 0)) break;
                     }
