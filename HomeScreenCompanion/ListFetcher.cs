@@ -35,13 +35,17 @@ namespace HomeScreenCompanion
             _jsonSerializer = jsonSerializer;
         }
 
-        public async Task<List<ExternalItemDto>> FetchItems(string url, int limit, string traktClientId, string mdbApiKey, CancellationToken cancellationToken)
+        public async Task<List<ExternalItemDto>> FetchItems(string url, int limit, string traktClientId, string mdbApiKey, string tmdbApiKey, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(url)) return new List<ExternalItemDto>();
 
             if (url.Contains("mdblist.com"))
             {
                 return await FetchMdblist(url, mdbApiKey, limit, cancellationToken);
+            }
+            else if (url.Contains("themoviedb.org"))
+            {
+                return await FetchTmdb(url, tmdbApiKey, limit, cancellationToken);
             }
             else
             {
@@ -155,6 +159,89 @@ namespace HomeScreenCompanion
                 .TrimEnd('/');
             if (fallback.EndsWith("/json")) fallback = fallback.Substring(0, fallback.Length - 5);
             return $"https://api.mdblist.com{fallback}/items";
+        }
+
+        private string ExtractTmdbListId(string url)
+        {
+            try
+            {
+                var uri = new Uri(url);
+                var segments = uri.Segments;
+                if (segments.Length >= 3 && segments[1].TrimEnd('/') == "list")
+                {
+                    return segments[2].TrimEnd('/');
+                }
+                else if (segments.Length >= 3 && segments[1].TrimEnd('/') == "list" && segments.Length > 2)
+                {
+                    return segments[2].TrimEnd('/');
+                }
+            }
+            catch { }
+            return string.Empty;
+        }
+
+        private async Task<List<ExternalItemDto>> FetchTmdb(string url, string apiKey, int limit, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(apiKey)) return new List<ExternalItemDto>();
+
+            var listId = ExtractTmdbListId(url);
+            if (string.IsNullOrEmpty(listId)) return new List<ExternalItemDto>();
+
+            var all = new List<ExternalItemDto>();
+            int page = 1;
+
+            while (true)
+            {
+                var apiUrl = $"https://api.themoviedb.org/3/list/{listId}?api_key={apiKey}&page={page}";
+                try
+                {
+                    var options = new HttpRequestOptions { Url = apiUrl, CancellationToken = cancellationToken };
+                    using (var stream = await _httpClient.Get(options))
+                    {
+                        var result = _jsonSerializer.DeserializeFromStream<TmdbListResponse>(stream);
+                        if (result == null) break;
+
+                        var items = result.items ?? result.results;
+                        if (items == null || items.Count == 0) break;
+
+                        foreach (var item in items)
+                        {
+                            var dto = new ExternalItemDto
+                            {
+                                Name = item.title ?? item.name,
+                                Tmdb = item.id.ToString()
+                            };
+
+                            try
+                            {
+                                var type = item.media_type == "tv" ? "tv" : "movie";
+                                var extUrl = $"https://api.themoviedb.org/3/{type}/{item.id}/external_ids?api_key={apiKey}";
+                                using (var extStream = await _httpClient.Get(new HttpRequestOptions { Url = extUrl, CancellationToken = cancellationToken }))
+                                {
+                                    var extIds = _jsonSerializer.DeserializeFromStream<TmdbExternalIds>(extStream);
+                                    if (extIds != null && !string.IsNullOrEmpty(extIds.imdb_id))
+                                    {
+                                        dto.Imdb = extIds.imdb_id;
+                                    }
+                                }
+                            }
+                            catch { }
+
+                            all.Add(dto);
+                            if (limit > 0 && all.Count >= limit) return all.Take(limit).ToList();
+                        }
+
+                        if (page >= result.total_pages) break;
+                        page++;
+                    }
+                }
+                catch
+                {
+                    break;
+                }
+            }
+
+            return all;
         }
 
         private async Task<List<ExternalItemDto>> FetchTrakt(string rawUrl, string clientId, int limit, CancellationToken cancellationToken)

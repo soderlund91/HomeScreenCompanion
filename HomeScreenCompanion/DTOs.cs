@@ -191,4 +191,24 @@ namespace HomeScreenCompanion
         public int Count { get; set; }
         public List<string> Preview { get; set; } = new List<string>();
     }
+
+    public class TmdbListResponse
+    {
+        public List<TmdbListItem> items { get; set; } = new List<TmdbListItem>();
+        public List<TmdbListItem> results { get; set; } = new List<TmdbListItem>();
+        public int total_pages { get; set; }
+    }
+
+    public class TmdbListItem
+    {
+        public string title { get; set; }
+        public string name { get; set; }
+        public int id { get; set; }
+        public string media_type { get; set; }
+    }
+
+    public class TmdbExternalIds
+    {
+        public string imdb_id { get; set; }
+    }
 }

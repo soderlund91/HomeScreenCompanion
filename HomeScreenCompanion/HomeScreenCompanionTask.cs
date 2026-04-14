@@ -507,7 +507,7 @@ namespace HomeScreenCompanion
 
                         if (string.IsNullOrEmpty(tagConfig.SourceType) || tagConfig.SourceType == "External")
                         {
-                            var items = await fetcher.FetchItems(tagConfig.Url, effectiveLimit, config.TraktClientId, config.MdblistApiKey, cancellationToken);
+                            var items = await fetcher.FetchItems(tagConfig.Url, effectiveLimit, config.TraktClientId, config.MdblistApiKey, config.TmdbApiKey, cancellationToken);
                             gs.ListCount = items.Count;
 
                             if (items.Count > 0)
@@ -1603,7 +1603,7 @@ namespace HomeScreenCompanion
 
                 if (string.IsNullOrEmpty(tagConfig.SourceType) || tagConfig.SourceType == "External")
                 {
-                    var items = await fetcher.FetchItems(tagConfig.Url, effectiveLimit, config.TraktClientId, config.MdblistApiKey, cancellationToken);
+                    var items = await fetcher.FetchItems(tagConfig.Url, effectiveLimit, config.TraktClientId, config.MdblistApiKey, config.TmdbApiKey, cancellationToken);
                     _listCount = items.Count;
                     if (items.Count > effectiveLimit) items = items.Take(effectiveLimit).ToList();
                     foreach (var extItem in items)

@@ -55,6 +55,7 @@ namespace HomeScreenCompanion
                 var cfg = Plugin.Instance!.Configuration;
                 cfg.TraktClientId         = oldConfig.TraktClientId;
                 cfg.MdblistApiKey         = oldConfig.MdblistApiKey;
+                cfg.TmdbApiKey            = oldConfig.TmdbApiKey;
                 cfg.ExtendedConsoleOutput = oldConfig.ExtendedConsoleOutput;
                 cfg.DryRunMode            = oldConfig.DryRunMode;
                 if (oldConfig.Tags?.Count > 0) cfg.Tags = oldConfig.Tags;
