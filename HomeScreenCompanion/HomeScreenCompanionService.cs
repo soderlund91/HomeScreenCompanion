@@ -113,6 +113,52 @@ namespace HomeScreenCompanion
     public class DeleteManagedCollectionRequest : IReturn<DeleteManagedCollectionResponse> { public string CollectionId { get; set; } = ""; }
     public class DeleteManagedCollectionResponse { public bool Success { get; set; } public string Message { get; set; } = ""; }
 
+    [Route("/HomeScreenCompanion/TopList/PrepareFolder", "POST")]
+    public class PrepareTopListFolderRequest : IReturn<PrepareTopListFolderResponse>
+    {
+        public string TagName { get; set; } = "";
+    }
+    public class PrepareTopListFolderResponse
+    {
+        public bool Success { get; set; }
+        public string FolderPath { get; set; } = "";
+        public string Message { get; set; } = "";
+        public int FilesCreated { get; set; }
+    }
+
+    [Route("/HomeScreenCompanion/TopList/List", "GET")]
+    public class GetTopListsRequest : IReturn<GetTopListsResponse> { }
+    public class GetTopListsResponse
+    {
+        public List<string> FolderNames { get; set; } = new List<string>();
+    }
+
+    [Route("/HomeScreenCompanion/TopList/Delete", "POST")]
+    public class DeleteTopListRequest : IReturn<DeleteTopListResponse>
+    {
+        public string TagName { get; set; } = "";
+    }
+    public class DeleteTopListResponse
+    {
+        public bool Success { get; set; }
+        public string FolderPath { get; set; } = "";
+        public string Message { get; set; } = "";
+    }
+
+    [Route("/HomeScreenCompanion/TopList/SyncHomeSections", "POST")]
+    public class PrepareTopListHomeSectionsRequest : IReturn<PrepareTopListHomeSectionsResponse>
+    {
+        public string TagName { get; set; } = "";
+    }
+
+    public class PrepareTopListHomeSectionsResponse
+    {
+        public bool Success { get; set; }
+        public int UsersCreated { get; set; }
+        public int UsersUpdated { get; set; }
+        public string Message { get; set; } = "";
+    }
+
 public class HomeScreenCompanionService : IService
     {
         private readonly IHttpClient _httpClient;
@@ -866,6 +912,221 @@ public class HomeScreenCompanionService : IService
             {
                 return new DeleteManagedCollectionResponse { Success = false, Message = ex.Message };
             }
+        }
+
+        public object Post(PrepareTopListFolderRequest request)
+        {
+            try
+            {
+                var dataPath = Plugin.Instance.DataFolderPath;
+                var sanitized = SanitizeFolderName(request.TagName);
+                var folderPath = Path.Combine(dataPath, "toplists", sanitized);
+                Directory.CreateDirectory(folderPath);
+
+                // Remove stale .strm files from a previous run
+                foreach (var f in Directory.GetFiles(folderPath, "*.strm"))
+                    File.Delete(f);
+
+                // Write one .strm file per movie that carries this tag
+                var items = _libraryManager.GetItemList(new InternalItemsQuery
+                {
+                    Tags = new[] { request.TagName },
+                    IncludeItemTypes = new[] { "Movie" },
+                    Recursive = true,
+                    IsVirtualItem = false
+                }).ToList();
+
+                // Sort by saved rank order from the last task run (preserves external list order)
+                var rankFile = Path.Combine(Plugin.Instance.DataFolderPath, "tag_ranks", sanitized + ".json");
+                if (File.Exists(rankFile))
+                {
+                    try
+                    {
+                        var rankIds = _jsonSerializer.DeserializeFromFile<List<string>>(rankFile);
+                        if (rankIds != null && rankIds.Count > 0)
+                        {
+                            var rankMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                            for (int i = 0; i < rankIds.Count; i++)
+                                if (!string.IsNullOrEmpty(rankIds[i])) rankMap[rankIds[i]] = i;
+                            items = items.OrderBy(item =>
+                            {
+                                var imdb = item.GetProviderId("Imdb");
+                                return (!string.IsNullOrEmpty(imdb) && rankMap.TryGetValue(imdb, out var rank)) ? rank : int.MaxValue;
+                            }).ToList();
+                        }
+                    }
+                    catch { }
+                }
+
+                // First pass: deduplicate and preserve query order
+                var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var selected = new List<(string BaseName, string Path)>();
+                foreach (var item in items)
+                {
+                    if (string.IsNullOrEmpty(item.Path)) continue;
+                    var baseName = SanitizeFolderName(item.Name);
+                    if (item.ProductionYear.HasValue && item.ProductionYear > 0)
+                        baseName += $" ({item.ProductionYear})";
+                    if (!seenKeys.Add(baseName)) continue;
+                    selected.Add((baseName, item.Path));
+                }
+
+                // Second pass: write with zero-padded numeric prefix
+                int digits = Math.Max(2, selected.Count.ToString().Length);
+                int count = 0;
+                foreach (var entry in selected)
+                {
+                    count++;
+                    var fileName = count.ToString().PadLeft(digits, '0') + " " + entry.BaseName;
+                    File.WriteAllText(Path.Combine(folderPath, fileName + ".strm"), entry.Path);
+                }
+
+                return new PrepareTopListFolderResponse { Success = true, FolderPath = folderPath, FilesCreated = count };
+            }
+            catch (Exception ex)
+            {
+                return new PrepareTopListFolderResponse { Success = false, Message = ex.Message };
+            }
+        }
+
+        public object Get(GetTopListsRequest request)
+        {
+            try
+            {
+                var dataPath = Plugin.Instance.DataFolderPath;
+                var topListsPath = Path.Combine(dataPath, "toplists");
+                var folderNames = new List<string>();
+                if (Directory.Exists(topListsPath))
+                {
+                    foreach (var dir in Directory.GetDirectories(topListsPath))
+                        folderNames.Add(Path.GetFileName(dir));
+                }
+                return new GetTopListsResponse { FolderNames = folderNames };
+            }
+            catch
+            {
+                return new GetTopListsResponse { FolderNames = new List<string>() };
+            }
+        }
+
+        public object Post(DeleteTopListRequest request)
+        {
+            try
+            {
+                var dataPath = Plugin.Instance.DataFolderPath;
+                var sanitized = SanitizeFolderName(request.TagName);
+                var folderPath = Path.Combine(dataPath, "toplists", sanitized);
+                if (Directory.Exists(folderPath))
+                    Directory.Delete(folderPath, true);
+                return new DeleteTopListResponse { Success = true, FolderPath = folderPath };
+            }
+            catch (Exception ex)
+            {
+                return new DeleteTopListResponse { Success = false, Message = ex.Message };
+            }
+        }
+
+        public object Post(PrepareTopListHomeSectionsRequest request)
+        {
+            try
+            {
+                var config = Plugin.Instance?.Configuration;
+                if (config == null)
+                    return new PrepareTopListHomeSectionsResponse { Success = false, Message = "Plugin configuration not available." };
+
+                var tl = config.TopLists?.FirstOrDefault(t =>
+                    string.Equals(t.TagName, request.TagName, StringComparison.OrdinalIgnoreCase));
+
+                if (tl == null)
+                    return new PrepareTopListHomeSectionsResponse { Success = false, Message = $"TopList '{request.TagName}' not found in config." };
+
+                var settingsDict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                try
+                {
+                    if (!string.IsNullOrEmpty(tl.HomeSectionSettings) && tl.HomeSectionSettings != "{}")
+                        settingsDict = _jsonSerializer.DeserializeFromString<Dictionary<string, string>>(tl.HomeSectionSettings) ?? settingsDict;
+                }
+                catch { }
+
+                if (!settingsDict.ContainsKey("SectionType"))
+                    settingsDict["SectionType"] = "items";
+
+                if (string.IsNullOrEmpty(tl.HomeSectionLibraryId) || tl.HomeSectionLibraryId == "auto")
+                    return new PrepareTopListHomeSectionsResponse { Success = false, Message = "HomeSectionLibraryId is not set — library may not be ready yet." };
+
+                var resolvedLibraryId = tl.HomeSectionLibraryId;
+
+                var safeTag = new string((request.TagName ?? "").Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+                var sectionMarker = "hsc__tl__" + safeTag;
+
+                int created = 0, updated = 0;
+
+                foreach (var userId in (tl.HomeSectionUserIds ?? new System.Collections.Generic.List<string>()))
+                {
+                    try
+                    {
+                        var userInternalId = _userManager.GetInternalId(userId);
+                        var currentSections = _userManager.GetHomeSections(userInternalId, CancellationToken.None);
+                        var allSections = currentSections?.Sections ?? Array.Empty<ContentSection>();
+
+                        var tracked = (tl.HomeSectionTracked ?? new System.Collections.Generic.List<HomeSectionTracking>())
+                            .FirstOrDefault(t => t.UserId == userId);
+
+                        ContentSection ownedSection = null;
+                        if (tracked != null && !string.IsNullOrEmpty(tracked.SectionId) && !tracked.SectionId.StartsWith("hsc__"))
+                            ownedSection = allSections.FirstOrDefault(s => s.Id == tracked.SectionId);
+                        if (ownedSection == null)
+                            ownedSection = allSections.FirstOrDefault(s => s.Subtitle == sectionMarker);
+
+                        string trackId;
+                        if (ownedSection != null)
+                        {
+                            var updatedSection = HomeScreenCompanionTask.BuildContentSection(_jsonSerializer, settingsDict, resolvedLibraryId, ownedSection);
+                            typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSection, ownedSection.Id);
+                            _userManager.UpdateHomeSection(userInternalId, updatedSection, CancellationToken.None);
+                            trackId = ownedSection.Id ?? sectionMarker;
+                            updated++;
+                        }
+                        else
+                        {
+                            var beforeIds = new HashSet<string>(
+                                allSections.Where(s => !string.IsNullOrEmpty(s.Id)).Select(s => s.Id));
+                            _userManager.AddHomeSection(userInternalId,
+                                HomeScreenCompanionTask.BuildContentSection(_jsonSerializer, settingsDict, resolvedLibraryId),
+                                CancellationToken.None);
+                            var afterSections = _userManager.GetHomeSections(userInternalId, CancellationToken.None);
+                            var newId = (afterSections?.Sections ?? Array.Empty<ContentSection>())
+                                .Where(s => !string.IsNullOrEmpty(s.Id) && !beforeIds.Contains(s.Id))
+                                .Select(s => s.Id).FirstOrDefault() ?? "";
+                            trackId = !string.IsNullOrEmpty(newId) ? newId : sectionMarker;
+                            created++;
+                        }
+
+                        if (tracked != null)
+                            tracked.SectionId = trackId;
+                        else
+                        {
+                            if (tl.HomeSectionTracked == null) tl.HomeSectionTracked = new System.Collections.Generic.List<HomeSectionTracking>();
+                            tl.HomeSectionTracked.Add(new HomeSectionTracking { UserId = userId, SectionId = trackId });
+                        }
+                    }
+                    catch { }
+                }
+
+                Plugin.Instance.SaveConfiguration();
+                return new PrepareTopListHomeSectionsResponse { Success = true, UsersCreated = created, UsersUpdated = updated, Message = $"Synced: {created} created, {updated} updated." };
+            }
+            catch (Exception ex)
+            {
+                return new PrepareTopListHomeSectionsResponse { Success = false, Message = ex.Message };
+            }
+        }
+
+        private static string SanitizeFolderName(string name)
+        {
+            var invalid = Path.GetInvalidFileNameChars();
+            var safe = new string((name ?? "unknown").Select(c => Array.IndexOf(invalid, c) >= 0 ? '_' : c).ToArray()).Trim('.');
+            return string.IsNullOrWhiteSpace(safe) ? "unknown" : safe;
         }
 
     }

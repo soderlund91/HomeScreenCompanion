@@ -687,6 +687,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             });
             var itemTypesVal = (hseTab.querySelector('.selHseItemTypes') || {}).value || 'Movie,Series';
             hseSettings['ItemTypes'] = JSON.stringify(itemTypesVal.split(','));
+            // Compute excluded library IDs from unchecked boxes → stored in _queryExcludeViewIds → Query.ExcludeUserViewIds
+            var _excludedLibIds = Array.from(hseTab.querySelectorAll('.chkHseLibrary:not(:checked)')).map(function(c) { return c.value; });
+            if (_excludedLibIds.length > 0) hseSettings['_queryExcludeViewIds'] = _excludedLibIds.join(',');
+            else delete hseSettings['_queryExcludeViewIds'];
         } else {
             try { hseSettings = JSON.parse(decodeURIComponent((hseTab && hseTab.dataset.hseSettings) || '%7B%7D')); } catch(ex) {}
         }
@@ -2428,9 +2432,30 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             });
     }
 
+    var _hseLibraryCachePromise = null;
+    function preFetchLibraryData() {
+        if (_hseLibraryCachePromise) return _hseLibraryCachePromise;
+        var tok = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+        _hseLibraryCachePromise = Promise.all([
+            fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/List'), { headers: { 'X-MediaBrowser-Token': tok } })
+                .then(function(r) { return r.json(); }).catch(function() { return { FolderNames: [] }; }),
+            fetch(window.ApiClient.getUrl('Library/VirtualFolders'), { headers: { 'X-MediaBrowser-Token': tok } })
+                .then(function(r) { return r.json(); }).catch(function() { return []; })
+        ]).then(function(results) {
+            return {
+                topListFolderNames: new Set((results[0].FolderNames || []).map(function(n) { return n.toLowerCase(); })),
+                virtualFolders: results[1] || []
+            };
+        }).catch(function() {
+            _hseLibraryCachePromise = null; // tillåt omförsök vid fel
+            return { topListFolderNames: new Set(), virtualFolders: [] };
+        });
+        return _hseLibraryCachePromise;
+    }
 
 
-    function buildHomeSectionFormHtml(savedSettings, defaultSectionType, defaultName, tagEnabled, collEnabled) {
+
+    function buildHomeSectionFormHtml(savedSettings, defaultSectionType, defaultName, tagEnabled, collEnabled, libraryOptions, savedLibraryId, allLibraries) {
         var s = savedSettings || {};
         var html = '';
 
@@ -2539,6 +2564,43 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         [['true','Played'],['false','Unplayed']].forEach(function(o) { html += '<option value="' + o[0] + '"' + (playstateVal === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; });
         html += '</select></div>';
 
+        // Hidden library selector — used only for boxset type (preserves the collection library ID).
+        var curLibId = savedLibraryId || 'auto';
+        html += '<select class="selHseLibrary" style="display:none;">';
+        html += '<option value="auto"' + (curLibId === 'auto' ? ' selected' : '') + '>auto</option>';
+        (libraryOptions || []).forEach(function (lib) {
+            html += '<option value="' + lib.id + '"' + (curLibId === lib.id ? ' selected' : '') + '>' + lib.name + '</option>';
+        });
+        html += '</select>';
+
+        // Multi-library checkboxes for items type.
+        // Excluded IDs are stored in HomeSectionSettings._queryExcludeViewIds → Query.ExcludeUserViewIds in Emby.
+        // Checked = include (not excluded), unchecked = exclude.
+        if (st !== 'boxset' && (allLibraries || []).length > 0) {
+            var excludedIds = new Set();
+            try {
+                var raw = (s._queryExcludeViewIds || '').split(',').map(function(x) { return x.trim(); }).filter(function(x) { return x; });
+                raw.forEach(function(id) { excludedIds.add(id); });
+            } catch {}
+            // Om inga explicita exkluderingar sparats (ny sektion eller legacy), exkludera alla top-list-bibliotek.
+            // Bakåtkompatibelt: befintliga grupper utan _queryExcludeViewIds får top-list auto-avbockat.
+            if (excludedIds.size === 0) {
+                (allLibraries || []).forEach(function(lib) {
+                    if (lib.isTopList) excludedIds.add(lib.id);
+                });
+            }
+            html += '<div class="hse-items-only" style="margin-bottom:12px;">';
+            html += '<label class="selectLabel" style="margin-bottom:6px;display:block;">Libraries</label>';
+            (allLibraries || []).forEach(function (lib) {
+                var isChecked = !excludedIds.has(lib.id);
+                html += '<div style="margin:3px 0;"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;">';
+                html += '<input type="checkbox" is="emby-checkbox" class="chkHseLibrary" value="' + lib.id + '"' + (isChecked ? ' checked' : '') + '/>';
+                html += '<span>' + lib.name + (lib.isTopList ? ' <em style="opacity:0.5;font-size:0.85em;">(top-list)</em>' : '') + '</span>';
+                html += '</label></div>';
+            });
+            html += '</div>';
+        }
+
         return html;
     }
 
@@ -2577,12 +2639,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }
     }
 
-    // Hämta live ContentSection från Emby och spegla värdena i formuläret
+    // Hämta live ContentSection från Emby och spegla värdena i formuläret.
+    // Returns a Promise that resolves when sync is complete (or immediately if no tracked section).
     function syncHomeSectionFromEmby(tab) {
         var tracked = [];
         try { tracked = JSON.parse(decodeURIComponent(tab.dataset.hseTracked || '%5B%5D')); } catch {}
         var entry = tracked.find(function(t) { return t.SectionId && !t.SectionId.startsWith('hsc__'); });
-        if (!entry) return;
+        if (!entry) return Promise.resolve();
 
         var syncHeaders = {};
         var syncToken = window.ApiClient && window.ApiClient.accessToken && window.ApiClient.accessToken();
@@ -2591,7 +2654,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             ? window.ApiClient.getUrl('HomeScreenCompanion/Hsc/UserSections', { UserId: entry.UserId })
             : '/HomeScreenCompanion/Hsc/UserSections?UserId=' + encodeURIComponent(entry.UserId);
 
-        fetch(syncUrl, { headers: syncHeaders })
+        return fetch(syncUrl, { headers: syncHeaders })
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 var sections = (data && data.Sections) || [];
@@ -2640,10 +2703,20 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     }
                 }
 
+                // Sync library checkboxes från Emby's ContentSection.ExcludedFolders (källan till sanning).
+                // Om Emby returnerar en array (även tom) används den — annars behålls UI:ts nuvarande state.
+                console.log('[HSC] syncHomeSectionFromEmby ExcludedFolders:', section.ExcludedFolders);
+                if (Array.isArray(section.ExcludedFolders)) {
+                    var embyExcluded = new Set((section.ExcludedFolders || []).map(function(id) { return String(id); }));
+                    tab.querySelectorAll('.chkHseLibrary').forEach(function(chk) {
+                        chk.checked = !embyExcluded.has(chk.value);
+                    });
+                }
+
                 updateHseItemsOnlyVisibility(tab);
                 updateHseImageTypeState(tab);
             })
-            .catch(function() {}); // ignorera nätverksfel tyst
+            .catch(function() { return undefined; }); // ignorera nätverksfel tyst
     }
 
     function initHomeSectionTab(row) {
@@ -2656,9 +2729,34 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         try { savedUserIds = JSON.parse(decodeURIComponent(tab.dataset.hseUserids || '%5B%5D')); } catch {}
         try { savedSettings = JSON.parse(decodeURIComponent(tab.dataset.hseSettings || '%7B%7D')); } catch {}
         var defaultSectionType = tab.dataset.hseDefaultType || 'items';
+        var savedLibraryId = decodeURIComponent(tab.dataset.hseLibraryid || 'auto');
 
-        getHseUsers()
-            .then(function(users) {
+        Promise.all([getHseUsers(), preFetchLibraryData()])
+            .then(function(results) {
+                var users = results[0];
+                var topListFolderNames = results[1].topListFolderNames;
+                var virtualFolders = results[1].virtualFolders;
+
+                // Build library options for the hidden boxset selector (all non-top-list folders)
+                var libraryOptions = virtualFolders
+                    .filter(function (f) {
+                        return !(f.Locations || []).some(function (loc) {
+                            var parts = loc.replace(/\\/g, '/').split('/');
+                            var folderName = parts[parts.length - 1] || parts[parts.length - 2] || '';
+                            return topListFolderNames.has(folderName.toLowerCase());
+                        });
+                    })
+                    .map(function (f) { return { id: f.ItemId, name: f.Name }; });
+
+                // All libraries with isTopList flag for the multi-checkbox section
+                var allLibraries = virtualFolders.map(function (f) {
+                    var isTopList = (f.Locations || []).some(function (loc) {
+                        var parts = loc.replace(/\\/g, '/').split('/');
+                        var folderName = parts[parts.length - 1] || parts[parts.length - 2] || '';
+                        return topListFolderNames.has(folderName.toLowerCase());
+                    });
+                    return { id: f.ItemId, name: f.Name, isTopList: isTopList };
+                });
 
                 // User list
                 var userHtml = '';
@@ -2672,16 +2770,26 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var defaultTagName = row.querySelector('.txtEntryLabel').value || row.querySelector('.txtTagName').value || '';
                 var tagEnabled  = !!(row.querySelector('.chkEnableTag') || {}).checked;
                 var collEnabled = !!(row.querySelector('.chkEnableCollection') || {}).checked;
-                tab.querySelector('.hse-fields-inner').innerHTML = buildHomeSectionFormHtml(savedSettings, defaultSectionType, defaultTagName, tagEnabled, collEnabled);
+
+                // Check dirty state BEFORE rendering — so we know if user had unsaved changes already
+                var _hseView = document.querySelector('#HomeScreenCompanionConfigPage');
+                var _wasAlreadyDirty = _hseView && originalConfigState &&
+                    JSON.stringify(getUiConfig(_hseView, true)) !== originalConfigState;
+
+                tab.querySelector('.hse-fields-inner').innerHTML = buildHomeSectionFormHtml(savedSettings, defaultSectionType, defaultTagName, tagEnabled, collEnabled, libraryOptions, savedLibraryId, allLibraries);
                 wireHomeSectionTypeChange(tab);
 
                 // Mark as fully loaded only after form is in DOM so getUiConfig reads form values
                 tab.dataset.hseLoaded = '1';
 
-                // Spegla live-värden från Emby ovanpå de sparade inställningarna
-                syncHomeSectionFromEmby(tab);
-
-                setTimeout(checkFormState, 0);
+                // Sync live values from Emby, then re-anchor baseline and check form state.
+                // Re-anchoring happens AFTER sync so changes made by sync don't trigger a false dirty state.
+                syncHomeSectionFromEmby(tab).then(function() {
+                    if (!_wasAlreadyDirty && _hseView && originalConfigState) {
+                        try { originalConfigState = JSON.stringify(getUiConfig(_hseView, true)); } catch {}
+                    }
+                    setTimeout(checkFormState, 0);
+                });
             })
             .catch(function(e) {
                 tab.querySelector('.hse-fields-inner').innerHTML = '<em style="color:#cc4444">Failed to load: ' + e.message + '</em>';
@@ -2818,6 +2926,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 });
                 var itemTypesVal = (hseTab.querySelector('.selHseItemTypes') || {}).value || 'Movie,Series';
                 hseSettings['ItemTypes'] = JSON.stringify(itemTypesVal.split(','));
+                // Compute excluded library IDs from unchecked boxes → stored in _queryExcludeViewIds → Query.ExcludeUserViewIds
+                // Also stored in ExcludedFolders → ContentSection.ExcludedFolders (visas i Embys native-meny)
+                var _excludedLibIds2 = Array.from(hseTab.querySelectorAll('.chkHseLibrary:not(:checked)')).map(function(c) { return c.value; });
+                if (_excludedLibIds2.length > 0) {
+                    hseSettings['_queryExcludeViewIds'] = _excludedLibIds2.join(',');
+                    hseSettings['ExcludedFolders'] = _excludedLibIds2.join(',');
+                } else {
+                    delete hseSettings['_queryExcludeViewIds'];
+                    delete hseSettings['ExcludedFolders'];
+                }
             } else {
                 try { hseSettings = JSON.parse(decodeURIComponent((hseTab && hseTab.dataset.hseSettings) || '%7B%7D')); } catch {}
             }
@@ -2836,7 +2954,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 MediaInfoTargetEpisode: false, MediaInfoTargetSeason: false, MediaInfoTargetSeries: false,
                 MediaInfoTargetType: '', MediaInfoSeasonMode: false,
                 EnableHomeSection: enableHse, HomeSectionLibraryId: hseLibraryId, HomeSectionUserIds: hseUserIds,
-                HomeSectionSettings: JSON.stringify(hseSettings), HomeSectionTracked: hseTracked
+                HomeSectionSettings: JSON.stringify(hseSettings),
+                HomeSectionTracked: hseTracked
             };
 
             if (st === 'External') {
@@ -3844,6 +3963,631 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         });
     }
 
+    function showTopListModal(tagName, displayName, onSuccess) {
+        function escAttr(s) { return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;'); }
+        function escHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+        var inputStyle = 'background:rgba(128,128,128,0.08);border:1px solid var(--line-color);border-radius:4px;padding:6px 10px;font-size:0.9em;color:inherit;width:100%;box-sizing:border-box;';
+        var labelStyle = 'font-size:0.82em;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;opacity:0.65;display:block;margin-bottom:5px;';
+        var fieldStyle = 'margin-bottom:16px;';
+
+        var modal = document.createElement('div');
+        modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:center;justify-content:center;';
+
+        function renderBox(content) {
+            modal.innerHTML =
+                '<div style="background:var(--plugin-popup-bg,#2a2a2a);color:var(--plugin-popup-color,#e8e8e8);' +
+                'border:1px solid var(--plugin-popup-border,rgba(255,255,255,0.12));border-radius:8px;' +
+                'padding:28px;max-width:520px;width:90%;max-height:85vh;overflow-y:auto;">' +
+                content + '</div>';
+        }
+
+        renderBox('<div style="padding:10px 0;display:flex;align-items:center;gap:10px;">Loading <span class="tc-dot-loader"><span></span><span></span><span></span></span></div>');
+        document.body.appendChild(modal);
+
+        getHseUsers().then(function (users) {
+            var usersHtml = users.length > 0
+                ? users.map(function (u) {
+                    return '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:4px 0;">' +
+                        '<input type="checkbox" class="chkTlmUser" value="' + escAttr(u.Id) + '">' +
+                        '<span>' + escHtml(u.Name) + '</span></label>';
+                }).join('')
+                : '<em style="opacity:0.5">No users found</em>';
+
+
+            var html =
+                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:22px;">' +
+                '<h3 style="margin:0;font-size:1.1em;color:#52B54B;">Create Top-List: ' + escHtml(displayName) + '</h3>' +
+                '<button type="button" class="btnTlmClose" style="background:transparent;border:none;color:inherit;cursor:pointer;padding:2px;opacity:0.6;line-height:1;"><i class="md-icon">close</i></button>' +
+                '</div>' +
+
+                '<div style="' + fieldStyle + '">' +
+                '<span style="' + labelStyle + '">Target Users</span>' +
+                '<div class="tlm-user-list">' + usersHtml + '</div>' +
+                '</div>' +
+
+                '<div style="' + fieldStyle + '">' +
+                '<label style="' + labelStyle + '">Show this section</label>' +
+                '<select class="tlm-display-mode" style="' + inputStyle + '">' +
+                '<option value="">Always</option>' +
+                '<option value="tv">When TV Display Mode is on</option>' +
+                '<option value="mobile,desktop">When TV Display Mode is off</option>' +
+                '</select></div>' +
+
+                '<div style="' + fieldStyle + '">' +
+                '<label style="' + labelStyle + '">Custom Title</label>' +
+                '<input type="text" class="tlm-custom-name" style="' + inputStyle + '" placeholder="' + escAttr(displayName) + '" />' +
+                '</div>' +
+
+                '<div style="' + fieldStyle + '">' +
+                '<label style="' + labelStyle + '">Image Type</label>' +
+                '<select class="tlm-image-type" style="' + inputStyle + '">' +
+                '<option value="">Auto</option>' +
+                '<option value="Primary">Primary</option>' +
+                '<option value="Thumb">Thumb</option>' +
+                '</select></div>' +
+
+
+
+                '<div class="tlm-error" style="color:#cc3333;font-size:0.85em;min-height:1.2em;margin-bottom:4px;"></div>' +
+                '<div style="border-top:1px solid var(--line-color);padding-top:16px;display:flex;gap:10px;align-items:center;justify-content:flex-end;">' +
+                '<button type="button" class="btnTlmCancel" style="cursor:pointer;border:1px solid var(--line-color);background:transparent;color:var(--theme-text-primary);border-radius:3px;padding:8px 18px;font-size:0.9em;">Cancel</button>' +
+                '<button type="button" class="btnTlmSave" style="cursor:pointer;border:none;background:#52B54B;color:#fff;border-radius:4px;padding:10px 26px;font-size:0.95em;font-weight:600;">' +
+                '<i class="md-icon" style="font-size:1em;vertical-align:middle;margin-right:6px;">check</i>Save and apply</button>' +
+                '</div>';
+
+            renderBox(html);
+
+            modal.querySelector('.btnTlmClose').addEventListener('click', function () { modal.remove(); });
+            modal.querySelector('.btnTlmCancel').addEventListener('click', function () { modal.remove(); });
+            modal.addEventListener('click', function (e) { if (e.target === modal) modal.remove(); });
+
+            modal.querySelector('.btnTlmSave').addEventListener('click', function () {
+                var saveBtn = this;
+                var errEl = modal.querySelector('.tlm-error');
+                errEl.textContent = '';
+
+                var selectedUserIds = Array.from(modal.querySelectorAll('.chkTlmUser:checked')).map(function (c) { return c.value; });
+                if (selectedUserIds.length === 0) {
+                    errEl.textContent = 'Please select at least one target user.';
+                    return;
+                }
+
+                var customName    = modal.querySelector('.tlm-custom-name').value.trim() || displayName;
+                var displayMode   = modal.querySelector('.tlm-display-mode').value;
+                var imageType     = modal.querySelector('.tlm-image-type').value;
+                var tok = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+
+                saveBtn.disabled = true;
+                saveBtn.innerHTML = 'Preparing files <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
+
+                // Step 1: Create folder + write .strm files
+                fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/PrepareFolder'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Emby-Token': tok },
+                    body: JSON.stringify({ TagName: tagName })
+                })
+                .then(function (r) { return r.json(); })
+                .then(function (prepareResult) {
+                    if (!prepareResult.Success) throw new Error(prepareResult.Message || 'Failed to create folder.');
+                    saveBtn.innerHTML = 'Creating library <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
+
+                    // Step 2: Create the virtual library
+                    return fetch(window.ApiClient.getUrl('Library/VirtualFolders'), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Emby-Token': tok },
+                        body: JSON.stringify({
+                            Name: customName,
+                            CollectionType: 'movies',
+                            RefreshLibrary: false,
+                            Paths: [prepareResult.FolderPath],
+                            LibraryOptions: {}
+                        })
+                    }).then(function () { return prepareResult; });
+                })
+                .then(function (prepareResult) {
+                    saveBtn.innerHTML = 'Saving settings <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
+
+                    // Step 3: Find the newly created library to get its ItemId
+                    return fetch(window.ApiClient.getUrl('Library/VirtualFolders'), {
+                        headers: { 'X-MediaBrowser-Token': tok }
+                    })
+                    .then(function (r) { return r.json(); })
+                    .then(function (folders) {
+                        var match = (folders || []).find(function (f) {
+                            return (f.Locations || []).some(function (loc) {
+                                return loc.toLowerCase() === prepareResult.FolderPath.toLowerCase();
+                            });
+                        });
+                        var newLibId = match ? match.ItemId : null;
+
+                        // Also fetch user views to capture special views (e.g. Live TV) not in VirtualFolders
+                        var userId = selectedUserIds[0];
+                        var viewsPromise = userId
+                            ? fetch(window.ApiClient.getUrl('Users/' + userId + '/Views'), { headers: { 'X-MediaBrowser-Token': tok } })
+                                .then(function (r) { return r.json(); })
+                                .catch(function () { return { Items: [] }; })
+                            : Promise.resolve({ Items: [] });
+
+                        return viewsPromise.then(function (viewsResult) {
+                            var allViewIds = new Set();
+                            (folders || []).forEach(function (f) { if (f.ItemId) allViewIds.add(f.ItemId); });
+                            ((viewsResult && viewsResult.Items) || []).forEach(function (v) { if (v.Id) allViewIds.add(v.Id); });
+                            var excludedViewIds = Array.from(allViewIds)
+                                .filter(function (id) { return !newLibId || id !== newLibId; })
+                                .join(',');
+                            return { prepareResult: prepareResult, libraryItemId: newLibId, excludedViewIds: excludedViewIds };
+                        });
+                    });
+                })
+                .then(function (ctx) {
+                    // Step 4: Save top-list home section config (separate from TAG & COLLECT tags)
+                    return window.ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                        var topLists = config.TopLists || [];
+                        var existing = topLists.find(function (t) {
+                            return (t.TagName || '').toLowerCase() === tagName.toLowerCase();
+                        });
+                        var hseSettings = JSON.stringify({
+                            SectionType: 'items',
+                            DisplayMode: displayMode,
+                            CustomName: customName,
+                            ViewType: '',
+                            ImageType: imageType,
+                            SortBy: 'SortName',
+                            SortOrder: 'Ascending',
+                            ScrollDirection: '',
+                            ItemTypes: JSON.stringify(['Movie']),
+                            _queryIsPlayed: '',
+                            _queryExcludeViewIds: ctx.excludedViewIds,
+                            ExcludedFolders: ctx.excludedViewIds
+                        });
+                        if (existing) {
+                            existing.HomeSectionUserIds = selectedUserIds;
+                            existing.HomeSectionLibraryId = ctx.libraryItemId || 'auto';
+                            existing.HomeSectionSettings = hseSettings;
+                            existing.HomeSectionTracked = existing.HomeSectionTracked || [];
+                        } else {
+                            topLists.push({
+                                TagName: tagName,
+                                HomeSectionUserIds: selectedUserIds,
+                                HomeSectionLibraryId: ctx.libraryItemId || 'auto',
+                                HomeSectionSettings: hseSettings,
+                                HomeSectionTracked: []
+                            });
+                        }
+                        config.TopLists = topLists;
+                        return window.ApiClient.updatePluginConfiguration(pluginId, config)
+                            .then(function () { return ctx.prepareResult; });
+                    });
+                })
+                .then(function (prepareResult) {
+                    // Step 5: Create home sections immediately
+                    saveBtn.innerHTML = 'Creating home sections <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
+                    var tok5 = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+                    return fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/SyncHomeSections'), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Emby-Token': tok5 },
+                        body: JSON.stringify({ TagName: tagName })
+                    })
+                    .then(function (r) { return r.json(); })
+                    .then(function (syncResult) {
+                        if (!syncResult.Success) throw new Error(syncResult.Message || 'Failed to create home sections.');
+                        return prepareResult;
+                    });
+                })
+                .then(function (prepareResult) {
+                    var innerBox = modal.querySelector('div');
+                    innerBox.innerHTML =
+                        '<div style="text-align:center;padding:10px 0 20px;">' +
+                        '<i class="md-icon" style="font-size:2.5em;color:#52B54B;display:block;margin-bottom:12px;">check_circle</i>' +
+                        '<p style="margin:0 0 6px;font-size:1.05em;font-weight:500;">Library created!</p>' +
+                        '<p style="margin:0;opacity:0.65;font-size:0.9em;">' + prepareResult.FilesCreated + ' .strm file' + (prepareResult.FilesCreated !== 1 ? 's' : '') + ' written.</p>' +
+                        '</div>' +
+                        '<div style="display:flex;justify-content:center;padding-top:16px;border-top:1px solid var(--line-color);margin-top:20px;">' +
+                        '<button type="button" class="btnTlmDone" style="cursor:pointer;border:none;background:#52B54B;color:#fff;border-radius:3px;padding:8px 22px;font-size:0.9em;font-weight:500;">Close</button>' +
+                        '</div>';
+                    modal.querySelector('.btnTlmDone').addEventListener('click', function () { modal.remove(); if (typeof onSuccess === 'function') onSuccess(); });
+                })
+                .catch(function (err) {
+                    saveBtn.disabled = false;
+                    saveBtn.innerHTML = '<i class="md-icon" style="font-size:1em;vertical-align:middle;margin-right:6px;">check</i>Save and apply';
+                    errEl.textContent = err.message || String(err);
+                });
+            });
+        }).catch(function (err) {
+            renderBox('<div style="color:#cc3333;padding:10px 0;">Failed to load: ' + (err.message || err) + '</div>' +
+                '<div style="margin-top:16px;text-align:right;"><button type="button" class="btnTlmClose" style="cursor:pointer;border:1px solid var(--line-color);background:transparent;color:inherit;border-radius:3px;padding:6px 14px;font-size:0.9em;">Close</button></div>');
+            modal.querySelector('.btnTlmClose').addEventListener('click', function () { modal.remove(); });
+        });
+    }
+
+    function loadTopListsTab(view) {
+        var container = view.querySelector('#tlContainer');
+        if (!container) return;
+
+        container.innerHTML = '<div style="padding:20px;color:var(--theme-text-secondary);display:flex;align-items:center;gap:10px;">Loading <span class="tc-dot-loader"><span></span><span></span><span></span></span></div>';
+
+        var token = window.ApiClient.accessToken();
+
+        Promise.all([
+            fetch(window.ApiClient.getUrl('HomeScreenCompanion/Manage/Tags'), { headers: { 'X-MediaBrowser-Token': token } }).then(function (r) { return r.json(); }),
+            fetch(window.ApiClient.getUrl('HomeScreenCompanion/Manage/Collections'), { headers: { 'X-MediaBrowser-Token': token } }).then(function (r) { return r.json(); }),
+            window.ApiClient.getPluginConfiguration(pluginId).catch(function () { return { Tags: [] }; }),
+            fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/List'), { headers: { 'X-MediaBrowser-Token': token } }).then(function (r) { return r.json(); }).catch(function () { return { FolderNames: [] }; })
+        ]).then(function (results) {
+            var tagsData = results[0];
+            var collectionsData = results[1];
+            var pluginConfig = results[2];
+            var existingTopLists = new Set((results[3].FolderNames || []).map(function (n) { return n.toLowerCase(); }));
+
+            var managedTagMap = {};
+            var managedCollMap = {};
+            var seenGroupByTag = {};
+            (pluginConfig.Tags || []).forEach(function (t, idx) {
+                if (!t.Tag) return;
+                var tName = t.Tag.trim();
+                var tKey = tName.toLowerCase();
+                if (seenGroupByTag[tKey]) return;
+                seenGroupByTag[tKey] = true;
+                var groupLabel = (t.Name && t.Name.trim() && t.Name.trim().toLowerCase() !== tKey) ? t.Name.trim() : tName;
+                var entry = { displayName: groupLabel, groupIndex: idx, groupActive: !!t.Active };
+                if (!managedTagMap[tKey]) managedTagMap[tKey] = [];
+                managedTagMap[tKey].push(entry);
+                if (t.EnableCollection) {
+                    var cName = (t.CollectionName && t.CollectionName.trim()) ? t.CollectionName.trim() : tName;
+                    var cKey = cName.toLowerCase();
+                    if (!managedCollMap[cKey]) managedCollMap[cKey] = [];
+                    managedCollMap[cKey].push(entry);
+                }
+            });
+
+            function escAttr(s) { return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;'); }
+            function escHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+            var btnStyle = 'cursor:pointer;border:none;border-radius:3px;padding:4px 12px;font-size:0.82em;font-weight:500;';
+
+            function sanitizeTlName(name) {
+                var safe = (name || 'unknown').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/^\.+|\.+$/g, '').trim();
+                return safe.length === 0 ? 'unknown' : safe;
+            }
+
+            function renderSection(title, items, isTagSection, headerExtra, existingSet) {
+                var sectionId = isTagSection ? 'tlTagSection' : 'tlCollSection';
+                var rows = items.length === 0
+                    ? '<div style="color:var(--theme-text-secondary);padding:8px 0;">No items found.</div>'
+                    : items.map(function (item) {
+                        var id = item.Id || '';
+                        var name = item.Name || '';
+                        var count = item.ItemCount != null ? item.ItemCount : 0;
+                        var managed = isTagSection ? managedTagMap[name.toLowerCase()] : managedCollMap[name.toLowerCase()];
+                        var typesVal = isTagSection ? (item.ItemTypes || []).map(function (t) { return t.toLowerCase(); }).join(',') : '';
+                        var hasTopList = isTagSection && existingSet && existingSet.has(sanitizeTlName(name).toLowerCase());
+                        var actionBtn = hasTopList
+                            ? '<button type="button" class="btnTlDelete" style="' + btnStyle + 'background:#c45454;color:#fff;" data-id="' + escAttr(id) + '" data-name="' + escAttr(name) + '" data-count="' + count + '" data-type="' + (isTagSection ? 'tag' : 'coll') + '">Delete top-list</button>'
+                            : '<button type="button" class="btnTlCreate" style="' + btnStyle + 'background:#5cb85c;color:#fff;" data-id="' + escAttr(id) + '" data-name="' + escAttr(name) + '" data-count="' + count + '" data-type="' + (isTagSection ? 'tag' : 'coll') + '">Create top-list</button>';
+                        return '<tr class="tl-manage-row" data-rowname="' + escAttr(name.toLowerCase()) + '" data-managed="' + (managed && managed.length > 0 ? '1' : '0') + '" data-count="' + count + '" data-types="' + escAttr(typesVal) + '">' +
+                            '<td style="padding:9px 4px;border-bottom:1px solid var(--line-color);width:100%;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+                            (id
+                                ? '<a class="tl-item-name tl-nav-link" href="javascript:void(0)" data-navid="' + escAttr(id) + '" style="color:inherit;text-decoration:none;cursor:pointer;" onmouseover="this.style.textDecoration=\'underline\'" onmouseout="this.style.textDecoration=\'none\'">' + escHtml(name) + '</a>'
+                                : '<span class="tl-item-name">' + escHtml(name) + '</span>') +
+                            '</td>' +
+                            '<td style="padding:9px 4px 9px 16px;border-bottom:1px solid var(--line-color);white-space:nowrap;color:var(--theme-text-secondary);font-size:0.88em;">' + count + ' items</td>' +
+                            '<td style="padding:9px 4px 9px 8px;border-bottom:1px solid var(--line-color);white-space:nowrap;">' +
+                            actionBtn +
+                            '</td>' +
+                            '</tr>';
+                    }).join('');
+
+                return '<div id="' + sectionId + '" style="flex:1 1 300px;min-width:0;">' +
+                    '<div style="display:flex;align-items:center;gap:30px;margin-bottom:12px;">' +
+                    '<h3 style="margin:0;font-size:1em;text-transform:uppercase;letter-spacing:1px;color:#52B54B;">' + escHtml(title) + '</h3>' +
+                    (headerExtra || '') +
+                    '<button type="button" class="btnTlRefresh" style="' + btnStyle + 'background:transparent;color:var(--theme-text-secondary);border:1px solid var(--line-color);margin-left:auto;"><i class="md-icon" style="font-size:1em;vertical-align:middle;">refresh</i></button>' +
+                    '</div>' +
+                    '<table class="tl-manage-list" style="width:100%;border-collapse:collapse;"><tbody>' + rows + '</tbody></table>' +
+                    '</div>';
+            }
+
+            var searchInputStyle = 'background:rgba(128,128,128,0.08);border:1px solid var(--line-color);border-radius:4px;padding:5px 10px;font-size:0.9em;color:inherit;width:400px;max-width:100%;';
+
+            var tlTypeGroups = [
+                { label: 'Movies',       types: ['movie'] },
+                { label: 'Series',       types: ['series'] },
+                { label: 'Episodes',     types: ['episode'] },
+                { label: 'Seasons',      types: ['season'] },
+                { label: 'Music',        types: ['audio', 'musicvideo', 'musicalbum', 'musicartist'] },
+                { label: 'Books',        types: ['book'] },
+                { label: 'Games',        types: ['game'] },
+                { label: 'Trailers',     types: ['trailer'] },
+                { label: 'Theme songs',  types: ['themesong'] },
+                { label: 'Theme videos', types: ['themevideo', 'video'] },
+                { label: 'Extras',       types: ['behindthescenes', 'deletedscene', 'interview', 'scene', 'clip', 'featurette', 'short'] },
+                { label: 'People',       types: ['person'] },
+                { label: 'Collections',  types: ['boxset'] },
+                { label: 'Photos',       types: ['photo', 'photoalbum'] },
+                { label: 'Playlists',    types: ['playlist'] },
+                { label: 'Recordings',   types: ['recording'] },
+                { label: 'Studios',      types: ['studio'] }
+            ];
+
+            var presentGroups = tlTypeGroups.filter(function (g) {
+                return (tagsData.Tags || []).some(function (tag) {
+                    return (tag.ItemTypes || []).some(function (t) {
+                        return g.types.indexOf(t.toLowerCase()) !== -1;
+                    });
+                });
+            });
+
+            var typeFilterDropdownHtml = presentGroups.length > 0
+                ? '<div class="filter-dropdown-wrapper" id="tlTypeFilterWrap">' +
+                  '<div class="filter-dropdown-btn" id="tlTypeFilterBtn">' +
+                  '<i class="md-icon" style="font-size:1.1em;">filter_list</i>' +
+                  '<span id="tlTypeFilterLabel">Filter tags</span>' +
+                  '<i class="md-icon" style="font-size:0.9em;opacity:0.6;" id="tlTypeFilterCaret">expand_more</i>' +
+                  '</div>' +
+                  '<div class="filter-dropdown-panel" id="tlTypeFilterDropdown">' +
+                  '<div class="filter-dropdown-label">Media type</div>' +
+                  presentGroups.map(function (g) {
+                      return '<label class="filter-chk-row"><input type="checkbox" class="cbTlTypeFilter" data-group="' + escAttr(g.label) + '"> <span>' + escHtml(g.label) + '</span></label>';
+                  }).join('') +
+                  '</div></div>'
+                : '';
+
+            container.innerHTML =
+                '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">' +
+                '<input type="text" id="tlSearch" placeholder="Search…" style="' + searchInputStyle + '" />' +
+                '<select is="emby-select" id="tlSort" style="color:inherit;background:rgba(128,128,128,0.08);border:1px solid var(--line-color);padding:5px;border-radius:4px;font-size:0.9em;cursor:pointer;">' +
+                '<option value="name-asc">Name A–Z</option>' +
+                '<option value="name-desc">Name Z–A</option>' +
+                '<option value="count-desc">Most items</option>' +
+                '<option value="count-asc">Fewest items</option>' +
+                '<option value="managed">Managed first</option>' +
+                '</select>' +
+                '</div>' +
+                '<div id="tlSectionsWrap" style="display:flex;gap:40px;align-items:flex-start;">' +
+                renderSection('Tags', tagsData.Tags || [], true, typeFilterDropdownHtml, existingTopLists) +
+                renderSection('Collections', collectionsData.Collections || [], false, undefined, existingTopLists) +
+                '</div>';
+
+            container.dataset.loaded = '1';
+
+            function getSelectedTypeGroups() {
+                return Array.from(container.querySelectorAll('.cbTlTypeFilter:checked')).map(function (cb) { return cb.dataset.group; });
+            }
+
+            function rowMatchesTypeFilter(row, selectedGroups) {
+                if (selectedGroups.length === 0) return true;
+                var rowTypes = (row.dataset.types || '').split(',').filter(Boolean);
+                return selectedGroups.some(function (groupLabel) {
+                    var group = tlTypeGroups.find(function (g) { return g.label === groupLabel; });
+                    if (!group) return false;
+                    return rowTypes.some(function (t) { return group.types.indexOf(t) !== -1; });
+                });
+            }
+
+            function updateTypeFilterBtn() {
+                var btn = container.querySelector('#tlTypeFilterBtn');
+                var lbl = container.querySelector('#tlTypeFilterLabel');
+                if (!btn || !lbl) return;
+                var selected = getSelectedTypeGroups();
+                lbl.textContent = selected.length === 0 ? 'Filter tags' : selected.length + ' type' + (selected.length > 1 ? 's' : '');
+                if (selected.length > 0) btn.classList.add('active');
+                else btn.classList.remove('active');
+            }
+
+            function applySearchSort() {
+                var query = (container.querySelector('#tlSearch').value || '').toLowerCase();
+                var sort = container.querySelector('#tlSort').value;
+                var selectedGroups = getSelectedTypeGroups();
+
+                ['tlTagSection', 'tlCollSection'].forEach(function (sectionId) {
+                    var section = container.querySelector('#' + sectionId);
+                    if (!section) return;
+                    var rows = Array.from(section.querySelectorAll('.tl-manage-row'));
+                    var isTagSection = sectionId === 'tlTagSection';
+
+                    rows.forEach(function (row) {
+                        var rowName = row.dataset.rowname || '';
+                        var nameMatch = !query || rowName.indexOf(query) !== -1;
+                        var typeMatch = !isTagSection || rowMatchesTypeFilter(row, selectedGroups);
+                        row.style.display = (nameMatch && typeMatch) ? '' : 'none';
+                    });
+
+                    var list = section.querySelector('.tl-manage-list');
+                    if (!list) return;
+                    var visibleRows = rows.filter(function (r) { return r.style.display !== 'none'; });
+                    visibleRows.sort(function (a, b) {
+                        var nameA = a.dataset.rowname || '';
+                        var nameB = b.dataset.rowname || '';
+                        var countA = parseInt(a.dataset.count || '0', 10);
+                        var countB = parseInt(b.dataset.count || '0', 10);
+                        var managedA = a.dataset.managed === '1';
+                        var managedB = b.dataset.managed === '1';
+                        if (sort === 'name-asc') return nameA.localeCompare(nameB);
+                        if (sort === 'name-desc') return nameB.localeCompare(nameA);
+                        if (sort === 'count-desc') return countB - countA;
+                        if (sort === 'count-asc') return countA - countB;
+                        if (sort === 'managed') return (managedB ? 1 : 0) - (managedA ? 1 : 0) || nameA.localeCompare(nameB);
+                        return 0;
+                    });
+                    visibleRows.forEach(function (r) { list.appendChild(r); });
+                });
+            }
+
+            container.querySelector('#tlSearch').addEventListener('input', applySearchSort);
+            container.querySelector('#tlSort').addEventListener('change', applySearchSort);
+
+            var typeFilterBtn = container.querySelector('#tlTypeFilterBtn');
+            var typeFilterDropdown = container.querySelector('#tlTypeFilterDropdown');
+            var typeFilterCaret = container.querySelector('#tlTypeFilterCaret');
+            if (typeFilterBtn && typeFilterDropdown) {
+                typeFilterBtn.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    var open = typeFilterDropdown.classList.toggle('open');
+                    if (typeFilterCaret) typeFilterCaret.textContent = open ? 'expand_less' : 'expand_more';
+                });
+                typeFilterDropdown.addEventListener('change', function (e) {
+                    if (e.target.classList.contains('cbTlTypeFilter')) {
+                        updateTypeFilterBtn();
+                        applySearchSort();
+                    }
+                });
+                document.addEventListener('click', function closeTlTypeFilter(e) {
+                    if (!typeFilterDropdown.contains(e.target) && !typeFilterBtn.contains(e.target)) {
+                        typeFilterDropdown.classList.remove('open');
+                        if (typeFilterCaret) typeFilterCaret.textContent = 'expand_more';
+                    }
+                    if (!container.isConnected) document.removeEventListener('click', closeTlTypeFilter);
+                });
+            }
+
+            applySearchSort();
+
+            var tlTooltip = document.createElement('div');
+            tlTooltip.style.cssText = 'position:fixed;z-index:9999;pointer-events:none;display:none;' +
+                'background:var(--plugin-popup-bg,#2a2a2a);color:var(--plugin-popup-color,#eee);' +
+                'border:1px solid var(--plugin-popup-border,#444);border-radius:6px;' +
+                'padding:8px 12px;font-size:0.82em;line-height:1.6;max-width:210px;' +
+                'box-shadow:0 4px 14px rgba(0,0,0,0.4);';
+            document.body.appendChild(tlTooltip);
+
+            var tlTooltipObserver = new MutationObserver(function () {
+                if (!container.isConnected) { tlTooltip.remove(); tlTooltipObserver.disconnect(); }
+            });
+            if (container.parentNode) tlTooltipObserver.observe(container.parentNode, { childList: true });
+
+            function getTypeLabels(typesStr) {
+                var rawTypes = (typesStr || '').split(',').filter(Boolean);
+                if (!rawTypes.length) return null;
+                var seen = {};
+                var labels = [];
+                tlTypeGroups.forEach(function (g) {
+                    if (!seen[g.label] && rawTypes.some(function (t) { return g.types.indexOf(t) !== -1; })) {
+                        seen[g.label] = true;
+                        labels.push(g.label);
+                    }
+                });
+                return labels.length ? labels : null;
+            }
+
+            var tlTagSection = container.querySelector('#tlTagSection');
+            if (tlTagSection) {
+                tlTagSection.addEventListener('mouseover', function (e) {
+                    var nameEl = e.target.closest('.tl-item-name');
+                    if (!nameEl) { tlTooltip.style.display = 'none'; return; }
+                    var row = nameEl.closest('.tl-manage-row');
+                    if (!row) return;
+                    var labels = getTypeLabels(row.dataset.types);
+                    if (!labels) { tlTooltip.style.display = 'none'; return; }
+                    tlTooltip.innerHTML =
+                        '<div style="font-weight:600;opacity:0.55;font-size:0.85em;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:5px;">Found in</div>' +
+                        labels.map(function (l) {
+                            return '<div style="display:flex;align-items:center;gap:6px;">' +
+                                '<i class="md-icon" style="font-size:0.95em;opacity:0.7;">label</i>' +
+                                escHtml(l) + '</div>';
+                        }).join('');
+                    tlTooltip.style.display = 'block';
+                });
+                tlTagSection.addEventListener('mousemove', function (e) {
+                    var nameEl = e.target.closest('.tl-item-name');
+                    if (!nameEl) { tlTooltip.style.display = 'none'; return; }
+                    tlTooltip.style.left = (e.clientX + 16) + 'px';
+                    tlTooltip.style.top = (e.clientY + 12) + 'px';
+                    var rect = tlTooltip.getBoundingClientRect();
+                    if (rect.right > window.innerWidth - 8) tlTooltip.style.left = (e.clientX - rect.width - 16) + 'px';
+                    if (rect.bottom > window.innerHeight - 8) tlTooltip.style.top = (e.clientY - rect.height - 12) + 'px';
+                });
+                tlTagSection.addEventListener('mouseout', function (e) {
+                    var nameEl = e.target.closest('.tl-item-name');
+                    if (!nameEl) return;
+                    if (e.relatedTarget && nameEl.contains(e.relatedTarget)) return;
+                    tlTooltip.style.display = 'none';
+                });
+            }
+
+            if (container._tlClickHandler) container.removeEventListener('click', container._tlClickHandler);
+            container._tlClickHandler = function (e) {
+                var navLink = e.target.closest('.tl-nav-link');
+                if (navLink) {
+                    var navId = navLink.dataset.navid;
+                    var baseUrl = window.location.href.split('#')[0];
+                    var serverId = (window.ApiClient && window.ApiClient.serverId) ? window.ApiClient.serverId() : '';
+                    var url = baseUrl + '#!/item?id=' + encodeURIComponent(navId) +
+                              (serverId ? '&serverId=' + encodeURIComponent(serverId) : '');
+                    window.open(url, '_blank');
+                    return;
+                }
+
+                var btn = e.target.closest('button');
+                if (!btn) return;
+
+                if (btn.classList.contains('btnTlCreate')) {
+                    var createName = btn.dataset.name;
+                    showTopListModal(createName, createName, function () {
+                        container.dataset.loaded = '';
+                        loadTopListsTab(view);
+                    });
+                    return;
+                }
+
+                if (btn.classList.contains('btnTlDelete')) {
+                    var deleteName = btn.dataset.name;
+                    if (!confirm('Delete top-list for "' + deleteName + '"?\n\nThis will remove the folder, all .strm files, and the virtual library.')) return;
+                    btn.disabled = true;
+                    btn.textContent = 'Deleting…';
+                    var deleteToken = window.ApiClient.accessToken();
+                    fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/Delete'), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-MediaBrowser-Token': deleteToken },
+                        body: JSON.stringify({ TagName: deleteName })
+                    })
+                    .then(function (r) { return r.json(); })
+                    .then(function (delResult) {
+                        if (!delResult.Success) throw new Error(delResult.Message || 'Delete failed');
+                        var folderPath = delResult.FolderPath;
+                        return fetch(window.ApiClient.getUrl('Library/VirtualFolders'), {
+                            headers: { 'X-MediaBrowser-Token': deleteToken }
+                        })
+                        .then(function (r) { return r.json(); })
+                        .then(function (folders) {
+                            var match = (folders || []).find(function (f) {
+                                return (f.Locations || []).some(function (loc) {
+                                    return loc.toLowerCase() === folderPath.toLowerCase();
+                                });
+                            });
+                            if (match && match.ItemId) {
+                                return fetch(window.ApiClient.getUrl('Library/VirtualFolders') + '?Id=' + encodeURIComponent(match.ItemId) + '&RefreshLibrary=false', {
+                                    method: 'DELETE',
+                                    headers: { 'X-MediaBrowser-Token': deleteToken }
+                                });
+                            }
+                        });
+                    })
+                    .then(function () {
+                        container.dataset.loaded = '';
+                        loadTopListsTab(view);
+                    })
+                    .catch(function (err) {
+                        btn.disabled = false;
+                        btn.textContent = 'Delete top-list';
+                        alert('Error deleting top-list: ' + (err.message || err));
+                    });
+                    return;
+                }
+
+                if (btn.classList.contains('btnTlRefresh')) {
+                    container.dataset.loaded = '';
+                    loadTopListsTab(view);
+                    return;
+                }
+            };
+            container.addEventListener('click', container._tlClickHandler);
+
+        }).catch(function (err) {
+            container.innerHTML = '<div style="color:#cc3333;padding:20px;">Failed to load: ' + err + '</div>';
+        });
+    }
+
     function loadHscManageTab(view) {
         var container = view.querySelector('#hscManageContainer');
         if (!container) return;
@@ -4482,7 +5226,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'X-Emby-Token': tok },
                         body: JSON.stringify({ TagName: tc.Name || tc.Tag })
-                    }).catch(function() {});
+                    }).then(function(r) { return r.json(); }).then(function(res) {
+                        console.log('[HSC] ApplyTagHomeSections', tc.Name || tc.Tag, res);
+                    }).catch(function(e) { console.warn('[HSC] ApplyTagHomeSections failed', tc.Name || tc.Tag, e); });
                 });
             });
         });
@@ -4551,6 +5297,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }, { once: true });
 
         function loadConfig() {
+            _hseLibraryCachePromise = null; // återställ cache så nya bibliotek (t.ex. ny top-list) hämtas
+            preFetchLibraryData();          // starta hämtning direkt vid sidladdning
             return window.ApiClient.getPluginConfiguration(pluginId).then(config => {
                 lastHscConfig = {
                     HomeSyncEnabled:       config.HomeSyncEnabled       || false,
@@ -4633,6 +5381,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 } else if (target === 'Cleanup') {
                     var container = view.querySelector('#tcManageContainer');
                     if (container && !container.dataset.loaded) loadTagManageTab(view);
+                } else if (target === 'TopLists') {
+                    var tlContainer = view.querySelector('#tlContainer');
+                    if (tlContainer && !tlContainer.dataset.loaded) loadTopListsTab(view);
                 }
             });
         });

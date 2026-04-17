@@ -135,10 +135,17 @@ namespace HomeScreenCompanion
                     IsVirtualItem = false
                 }).ToList();
 
+                // Items that live under the top-list folder are .strm virtual copies — never tag them
+                // so they don't bleed into tag-based home screen sections.
+                var topListsFolder = Path.Combine(Plugin.Instance.DataFolderPath, "toplists") + Path.DirectorySeparatorChar;
+
                 var imdbLookup = new Dictionary<string, List<BaseItem>>(StringComparer.OrdinalIgnoreCase);
                 foreach (var item in allItems)
                 {
                     if (item.LocationType != LocationType.FileSystem) continue;
+                    if (!string.IsNullOrEmpty(item.Path) &&
+                        item.Path.StartsWith(topListsFolder, StringComparison.OrdinalIgnoreCase))
+                        continue;
                     var imdb = item.GetProviderId("Imdb");
                     if (!string.IsNullOrEmpty(imdb))
                     {
@@ -827,6 +834,26 @@ namespace HomeScreenCompanion
                         foreach (var id in collectionOutputItems.Select(i => i.Id)) allOutputIds.Add(id);
                         gs.MatchCount = allOutputIds.Count;
                         matchCount += allOutputIds.Count;
+
+                        // Save rank file so top-list .strm files can be numbered in list order
+                        if (!dryRun)
+                        {
+                            try
+                            {
+                                var rankDir = Path.Combine(Plugin.Instance.DataFolderPath, "tag_ranks");
+                                Directory.CreateDirectory(rankDir);
+                                var invalidChars = Path.GetInvalidFileNameChars();
+                                var rankSafe = new string((tagName ?? "unknown").Select(c => Array.IndexOf(invalidChars, c) >= 0 ? '_' : c).ToArray()).Trim('.');
+                                if (string.IsNullOrWhiteSpace(rankSafe)) rankSafe = "unknown";
+                                var rankFile = Path.Combine(rankDir, rankSafe + ".json");
+                                var rankIds = matchedLocalItems
+                                    .Select(i => i.GetProviderId("Imdb") ?? "")
+                                    .Where(id => !string.IsNullOrEmpty(id))
+                                    .ToList();
+                                _jsonSerializer.SerializeToFile(rankIds, rankFile);
+                            }
+                            catch { }
+                        }
 
                         // If this is a priority-override entry but produced zero results,
                         // remove it from the override sets so other entries for the same tag are not suppressed.
@@ -2517,6 +2544,42 @@ namespace HomeScreenCompanion
                             tagIdsProp.SetValue(extQuery, new[] { qTagId });
                     }
 
+                    // Specialfall: _queryExcludeViewIds → ExcludeUserViewIds[]
+                    if (settings.TryGetValue("_queryExcludeViewIds", out var qExcludeViewIds) && !string.IsNullOrWhiteSpace(qExcludeViewIds))
+                    {
+                        var excludeProp = queryProps.FirstOrDefault(p => p.Name == "ExcludeUserViewIds");
+                        if (excludeProp != null && excludeProp.CanWrite)
+                        {
+                            var ids = qExcludeViewIds.Split(',')
+                                .Select(s => s.Trim()).Where(s => s.Length > 0).ToArray();
+                            if (ids.Length > 0)
+                            {
+                                try
+                                {
+                                    if (excludeProp.PropertyType == typeof(string[]))
+                                        excludeProp.SetValue(extQuery, ids);
+                                    else if (excludeProp.PropertyType == typeof(Guid[]))
+                                        excludeProp.SetValue(extQuery, ids.Select(id => Guid.TryParse(id, out var g) ? g : Guid.Empty).ToArray());
+                                }
+                                catch { }
+                            }
+                        }
+                    }
+
+                    // Bakåtkompatibilitet: sätt ContentSection.ExcludedFolders från _queryExcludeViewIds
+                    // om ExcludedFolders inte sparats explicit (gamla plugin-versioner).
+                    if (!settings.ContainsKey("ExcludedFolders") &&
+                        settings.TryGetValue("_queryExcludeViewIds", out var qExcludeFolders) &&
+                        !string.IsNullOrWhiteSpace(qExcludeFolders))
+                    {
+                        var folderIds = qExcludeFolders.Split(',')
+                            .Select(s => s.Trim()).Where(s => s.Length > 0).ToArray();
+                        var exFoldersProp = props.FirstOrDefault(p => p.Name == "ExcludedFolders" && p.CanWrite
+                                                                  && p.PropertyType == typeof(string[]));
+                        if (exFoldersProp != null && folderIds.Length > 0)
+                            exFoldersProp.SetValue(section, folderIds);
+                    }
+
                     // Specialfall: _queryIsPlayed → IsPlayed; tomt = Any = null
                     // Emby 4.10.0.10+: IsPlayed finns nativt i ItemsQuery.
                     //   true  → Played   (IsPlayed = true)
@@ -2545,7 +2608,8 @@ namespace HomeScreenCompanion
                     foreach (var key in settings.Keys.Where(k =>
                         k.StartsWith("_query", StringComparison.OrdinalIgnoreCase) &&
                         !string.Equals(k, "_queryTagId", StringComparison.OrdinalIgnoreCase) &&
-                        !string.Equals(k, "_queryIsPlayed", StringComparison.OrdinalIgnoreCase)))
+                        !string.Equals(k, "_queryIsPlayed", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(k, "_queryExcludeViewIds", StringComparison.OrdinalIgnoreCase)))
                     {
                         var val = settings[key];
                         if (string.IsNullOrEmpty(val)) continue;

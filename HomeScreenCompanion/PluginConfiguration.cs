@@ -15,6 +15,7 @@ namespace HomeScreenCompanion
         public bool DryRunMode { get; set; } = false;
         public bool PreserveTagsOnEmptyResult { get; set; } = true;
         public List<TagConfig> Tags { get; set; } = new List<TagConfig>();
+        public List<TopListHomeSection> TopLists { get; set; } = new List<TopListHomeSection>();
         public List<SavedMediaInfoFilter> SavedFilters { get; set; } = new List<SavedMediaInfoFilter>();
 
         public bool HomeSyncEnabled { get; set; } = false;
@@ -78,6 +79,15 @@ namespace HomeScreenCompanion
         public List<HomeSectionTracking> HomeSectionTracked { get; set; } = new List<HomeSectionTracking>();
 
         public DateTime LastModified { get; set; } = DateTime.MinValue;
+    }
+
+    public class TopListHomeSection
+    {
+        public string TagName { get; set; } = "";
+        public List<string> HomeSectionUserIds { get; set; } = new List<string>();
+        public string HomeSectionLibraryId { get; set; } = "auto";
+        public string HomeSectionSettings { get; set; } = "{}";
+        public List<HomeSectionTracking> HomeSectionTracked { get; set; } = new List<HomeSectionTracking>();
     }
 
     public class HomeSectionTracking
