@@ -2589,14 +2589,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     if (lib.isTopList) excludedIds.add(lib.id);
                 });
             }
-            html += '<div class="hse-items-only" style="margin-bottom:12px;">';
-            html += '<label class="selectLabel" style="margin-bottom:6px;display:block;">Libraries</label>';
+            // Hidden checkboxes — library exclusions managed automatically under the hood
+            html += '<div style="display:none;">';
             (allLibraries || []).forEach(function (lib) {
                 var isChecked = !excludedIds.has(lib.id);
-                html += '<div style="margin:3px 0;"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;">';
-                html += '<input type="checkbox" is="emby-checkbox" class="chkHseLibrary" value="' + lib.id + '"' + (isChecked ? ' checked' : '') + '/>';
-                html += '<span>' + lib.name + (lib.isTopList ? ' <em style="opacity:0.5;font-size:0.85em;">(top-list)</em>' : '') + '</span>';
-                html += '</label></div>';
+                html += '<input type="checkbox" class="chkHseLibrary" value="' + lib.id + '"' + (isChecked ? ' checked' : '') + '/>';
             });
             html += '</div>';
         }
@@ -5188,7 +5185,44 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         t.HomeSectionTracked = existing.HomeSectionTracked;
                     }
                 });
-                return window.ApiClient.updatePluginConfiguration(pluginId, configObj);
+
+                // Ensure all items-type home sections exclude top-list libraries automatically
+                return preFetchLibraryData().then(function(libData) {
+                    var topListIds = new Set(
+                        libData.virtualFolders
+                            .filter(function(f) {
+                                return (f.Locations || []).some(function(loc) {
+                                    var parts = loc.replace(/\\/g, '/').split('/');
+                                    var fn = (parts[parts.length - 1] || parts[parts.length - 2] || '').toLowerCase();
+                                    return libData.topListFolderNames.has(fn);
+                                });
+                            })
+                            .map(function(f) { return f.ItemId; })
+                    );
+                    if (topListIds.size > 0) {
+                        configObj.Tags.forEach(function(tag) {
+                            if (!tag.EnableHomeSection) return;
+                            var settings = {};
+                            try { settings = JSON.parse(tag.HomeSectionSettings || '{}'); } catch {}
+                            if ((settings.SectionType || 'items') !== 'items') return;
+                            var excluded = new Set(
+                                (settings._queryExcludeViewIds || '').split(',')
+                                    .map(function(id) { return id.trim(); }).filter(Boolean)
+                            );
+                            var changed = false;
+                            topListIds.forEach(function(id) {
+                                if (!excluded.has(id)) { excluded.add(id); changed = true; }
+                            });
+                            if (changed) {
+                                var excStr = Array.from(excluded).join(',');
+                                settings._queryExcludeViewIds = excStr;
+                                settings.ExcludedFolders = excStr;
+                                tag.HomeSectionSettings = JSON.stringify(settings);
+                            }
+                        });
+                    }
+                    return window.ApiClient.updatePluginConfiguration(pluginId, configObj);
+                });
             }).then(r => {
                 window.Dashboard.processPluginConfigurationUpdateResult(r);
 

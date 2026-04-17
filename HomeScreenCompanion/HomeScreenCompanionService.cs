@@ -1113,6 +1113,74 @@ public class HomeScreenCompanionService : IService
                     catch { }
                 }
 
+                // Inject the new top-list library into _queryExcludeViewIds of every existing
+                // TAG & COLLECT items-type section and apply immediately (no task run needed).
+                if (!string.IsNullOrEmpty(resolvedLibraryId))
+                {
+                    foreach (var tc in (config.Tags ?? new System.Collections.Generic.List<TagConfig>()))
+                    {
+                        if (!tc.EnableHomeSection) continue;
+
+                        var tcSettings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                        try
+                        {
+                            if (!string.IsNullOrEmpty(tc.HomeSectionSettings) && tc.HomeSectionSettings != "{}")
+                                tcSettings = _jsonSerializer.DeserializeFromString<Dictionary<string, string>>(tc.HomeSectionSettings) ?? tcSettings;
+                        }
+                        catch { }
+
+                        tcSettings.TryGetValue("SectionType", out var tcSt);
+                        if (tcSt != "items") continue;
+
+                        var existingExcluded = (tcSettings.TryGetValue("_queryExcludeViewIds", out var ev) ? ev : "")
+                            .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                            .Select(s => s.Trim()).ToList();
+
+                        if (existingExcluded.Contains(resolvedLibraryId)) continue;
+
+                        existingExcluded.Add(resolvedLibraryId);
+                        var excStr = string.Join(",", existingExcluded);
+                        tcSettings["_queryExcludeViewIds"] = excStr;
+                        tcSettings["ExcludedFolders"] = excStr;
+                        tc.HomeSectionSettings = _jsonSerializer.SerializeToString(tcSettings);
+
+                        // Resolve tag ID for items-type query
+                        if (!string.IsNullOrEmpty(tc.Tag))
+                        {
+                            var tagItem = _libraryManager.GetItemList(new MediaBrowser.Controller.Entities.InternalItemsQuery
+                            {
+                                IncludeItemTypes = new[] { "Tag" },
+                                Name = tc.Tag,
+                                Recursive = true
+                            }).FirstOrDefault();
+                            if (tagItem != null) tcSettings["_queryTagId"] = tagItem.InternalId.ToString();
+                        }
+
+                        var tcSafeTag = new string((tc.Name ?? tc.Tag ?? "").Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+                        var tcMarker = "hsc__" + tcSafeTag;
+
+                        var realTracked = (tc.HomeSectionTracked ?? new System.Collections.Generic.List<HomeSectionTracking>())
+                            .Where(t => !string.IsNullOrEmpty(t.SectionId) && !t.SectionId.StartsWith("hsc__"))
+                            .ToList();
+
+                        foreach (var tracking in realTracked)
+                        {
+                            try
+                            {
+                                var uid = _userManager.GetInternalId(tracking.UserId);
+                                var secs = _userManager.GetHomeSections(uid, CancellationToken.None)?.Sections ?? Array.Empty<ContentSection>();
+                                var owned = secs.FirstOrDefault(s => s.Id == tracking.SectionId)
+                                    ?? secs.FirstOrDefault(s => s.Subtitle == tcMarker);
+                                if (owned == null) continue;
+                                var updatedSec = HomeScreenCompanionTask.BuildContentSection(_jsonSerializer, tcSettings, null, owned);
+                                typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSec, owned.Id);
+                                _userManager.UpdateHomeSection(uid, updatedSec, CancellationToken.None);
+                            }
+                            catch { }
+                        }
+                    }
+                }
+
                 Plugin.Instance.SaveConfiguration();
                 return new PrepareTopListHomeSectionsResponse { Success = true, UsersCreated = created, UsersUpdated = updated, Message = $"Synced: {created} created, {updated} updated." };
             }
