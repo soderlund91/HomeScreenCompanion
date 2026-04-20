@@ -4024,7 +4024,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<option value="Thumb">Thumb</option>' +
                 '</select></div>' +
 
-
+                '<div style="' + fieldStyle + '">' +
+                '<label style="' + labelStyle + '">Max items <span style="font-weight:400;text-transform:none;letter-spacing:0;opacity:0.7;">(0 = all)</span></label>' +
+                '<input type="number" class="tlm-max-items" min="0" step="1" style="' + inputStyle + '" placeholder="0" />' +
+                '</div>' +
 
                 '<div class="tlm-error" style="color:#cc3333;font-size:0.85em;min-height:1.2em;margin-bottom:4px;"></div>' +
                 '<div style="border-top:1px solid var(--line-color);padding-top:16px;display:flex;gap:10px;align-items:center;justify-content:flex-end;">' +
@@ -4053,6 +4056,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var customName    = modal.querySelector('.tlm-custom-name').value.trim() || displayName;
                 var displayMode   = modal.querySelector('.tlm-display-mode').value;
                 var imageType     = modal.querySelector('.tlm-image-type').value;
+                var maxItems      = Math.max(0, parseInt(modal.querySelector('.tlm-max-items').value, 10) || 0);
                 var tok = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
 
                 saveBtn.disabled = true;
@@ -4062,7 +4066,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/PrepareFolder'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'X-Emby-Token': tok },
-                    body: JSON.stringify({ TagName: tagName })
+                    body: JSON.stringify({ TagName: tagName, MaxItems: maxItems })
                 })
                 .then(function (r) { return r.json(); })
                 .then(function (prepareResult) {
@@ -4078,7 +4082,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             CollectionType: 'movies',
                             RefreshLibrary: false,
                             Paths: [prepareResult.FolderPath],
-                            LibraryOptions: {}
+                            LibraryOptions: {
+                                EnableInternetProviders: true,
+                                TypeOptions: [{
+                                    Type: 'Movie',
+                                    MetadataFetchers: ['Nfo', 'TheMovieDb', 'TheTVDB'],
+                                    MetadataFetcherOrder: ['Nfo', 'TheMovieDb', 'TheTVDB'],
+                                    ImageFetchers: ['TheMovieDb', 'TheTVDB'],
+                                    ImageFetcherOrder: ['TheMovieDb', 'TheTVDB']
+                                }]
+                            }
                         })
                     }).then(function () { return prepareResult; });
                 })
@@ -4128,6 +4141,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             SectionType: 'items',
                             DisplayMode: displayMode,
                             CustomName: customName,
+                            MaxItems: String(maxItems),
                             ViewType: '',
                             ImageType: imageType,
                             SortBy: 'SortName',
@@ -4154,10 +4168,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         }
                         config.TopLists = topLists;
                         return window.ApiClient.updatePluginConfiguration(pluginId, config)
-                            .then(function () { return ctx.prepareResult; });
+                            .then(function () { return { prepareResult: ctx.prepareResult, libraryItemId: ctx.libraryItemId }; });
                     });
                 })
-                .then(function (prepareResult) {
+                .then(function (ctx2) {
                     // Step 5: Create home sections immediately
                     saveBtn.innerHTML = 'Creating home sections <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
                     var tok5 = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
@@ -4169,16 +4183,36 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     .then(function (r) { return r.json(); })
                     .then(function (syncResult) {
                         if (!syncResult.Success) throw new Error(syncResult.Message || 'Failed to create home sections.');
-                        return prepareResult;
+                        return ctx2;
                     });
+                })
+                .then(function (ctx2) {
+                    // Step 6: Scan the newly created library only
+                    if (ctx2.libraryItemId) {
+                        saveBtn.innerHTML = 'Scanning library <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
+                        var tok6 = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+                        return fetch(window.ApiClient.getUrl('Items/' + ctx2.libraryItemId + '/Refresh') + '?Recursive=true&MetadataRefreshMode=Default&ImageRefreshMode=Default', {
+                            method: 'POST',
+                            headers: { 'X-MediaBrowser-Token': tok6 }
+                        }).catch(function () {}).then(function () { return ctx2.prepareResult; });
+                    }
+                    return ctx2.prepareResult;
+                })
+                .then(function (prepareResult) {
+                    // Step 7: Sync all top-list home sections so exclusion lists are up to date
+                    var tok7 = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+                    return fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/SyncAllSections'), {
+                        method: 'POST',
+                        headers: { 'X-MediaBrowser-Token': tok7 }
+                    }).catch(function () {}).then(function () { return prepareResult; });
                 })
                 .then(function (prepareResult) {
                     var innerBox = modal.querySelector('div');
                     innerBox.innerHTML =
                         '<div style="text-align:center;padding:10px 0 20px;">' +
                         '<i class="md-icon" style="font-size:2.5em;color:#52B54B;display:block;margin-bottom:12px;">check_circle</i>' +
-                        '<p style="margin:0 0 6px;font-size:1.05em;font-weight:500;">Library created!</p>' +
-                        '<p style="margin:0;opacity:0.65;font-size:0.9em;">' + prepareResult.FilesCreated + ' .strm file' + (prepareResult.FilesCreated !== 1 ? 's' : '') + ' written.</p>' +
+                        '<p style="margin:0 0 6px;font-size:1.05em;font-weight:500;">Top-list created!</p>' +
+                        '<p style="margin:0;opacity:0.65;font-size:0.9em;">' + prepareResult.FilesCreated + ' movie' + (prepareResult.FilesCreated !== 1 ? 's' : '') + ' included.</p>' +
                         '</div>' +
                         '<div style="display:flex;justify-content:center;padding-top:16px;border-top:1px solid var(--line-color);margin-top:20px;">' +
                         '<button type="button" class="btnTlmDone" style="cursor:pointer;border:none;background:#52B54B;color:#fff;border-radius:3px;padding:8px 22px;font-size:0.9em;font-weight:500;">Close</button>' +
@@ -4217,6 +4251,20 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var pluginConfig = results[2];
             var existingTopLists = new Set((results[3].FolderNames || []).map(function (n) { return n.toLowerCase(); }));
 
+            function sanitizeTlName(name) {
+                var safe = (name || 'unknown').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/^\.+|\.+$/g, '').trim();
+                return safe.length === 0 ? 'unknown' : safe;
+            }
+
+            var topListCustomNameMap = {};
+            (pluginConfig.TopLists || []).forEach(function (tl) {
+                if (!tl.TagName) return;
+                var key = sanitizeTlName(tl.TagName).toLowerCase();
+                var settings = {};
+                try { settings = JSON.parse(tl.HomeSectionSettings || '{}'); } catch (e) {}
+                if (settings.CustomName) topListCustomNameMap[key] = settings.CustomName;
+            });
+
             var managedTagMap = {};
             var managedCollMap = {};
             var seenGroupByTag = {};
@@ -4243,11 +4291,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
             var btnStyle = 'cursor:pointer;border:none;border-radius:3px;padding:4px 12px;font-size:0.82em;font-weight:500;';
 
-            function sanitizeTlName(name) {
-                var safe = (name || 'unknown').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/^\.+|\.+$/g, '').trim();
-                return safe.length === 0 ? 'unknown' : safe;
-            }
-
             function renderSection(title, items, isTagSection, headerExtra, existingSet) {
                 var sectionId = isTagSection ? 'tlTagSection' : 'tlCollSection';
                 var rows = items.length === 0
@@ -4255,20 +4298,24 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     : items.map(function (item) {
                         var id = item.Id || '';
                         var name = item.Name || '';
-                        var count = item.ItemCount != null ? item.ItemCount : 0;
+                        var count = isTagSection
+                            ? (item.MovieCount != null ? item.MovieCount : (item.ItemCount != null ? item.ItemCount : 0))
+                            : (item.ItemCount != null ? item.ItemCount : 0);
                         var managed = isTagSection ? managedTagMap[name.toLowerCase()] : managedCollMap[name.toLowerCase()];
                         var typesVal = isTagSection ? (item.ItemTypes || []).map(function (t) { return t.toLowerCase(); }).join(',') : '';
                         var hasTopList = isTagSection && existingSet && existingSet.has(sanitizeTlName(name).toLowerCase());
+                        var customName = hasTopList ? (topListCustomNameMap[sanitizeTlName(name).toLowerCase()] || '') : '';
                         var actionBtn = hasTopList
                             ? '<button type="button" class="btnTlDelete" style="' + btnStyle + 'background:#c45454;color:#fff;" data-id="' + escAttr(id) + '" data-name="' + escAttr(name) + '" data-count="' + count + '" data-type="' + (isTagSection ? 'tag' : 'coll') + '">Delete top-list</button>'
                             : '<button type="button" class="btnTlCreate" style="' + btnStyle + 'background:#5cb85c;color:#fff;" data-id="' + escAttr(id) + '" data-name="' + escAttr(name) + '" data-count="' + count + '" data-type="' + (isTagSection ? 'tag' : 'coll') + '">Create top-list</button>';
                         return '<tr class="tl-manage-row" data-rowname="' + escAttr(name.toLowerCase()) + '" data-managed="' + (managed && managed.length > 0 ? '1' : '0') + '" data-count="' + count + '" data-types="' + escAttr(typesVal) + '">' +
-                            '<td style="padding:9px 4px;border-bottom:1px solid var(--line-color);width:100%;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+                            '<td style="padding:9px 4px;border-bottom:1px solid var(--line-color);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
                             (id
                                 ? '<a class="tl-item-name tl-nav-link" href="javascript:void(0)" data-navid="' + escAttr(id) + '" style="color:inherit;text-decoration:none;cursor:pointer;" onmouseover="this.style.textDecoration=\'underline\'" onmouseout="this.style.textDecoration=\'none\'">' + escHtml(name) + '</a>'
                                 : '<span class="tl-item-name">' + escHtml(name) + '</span>') +
                             '</td>' +
-                            '<td style="padding:9px 4px 9px 16px;border-bottom:1px solid var(--line-color);white-space:nowrap;color:var(--theme-text-secondary);font-size:0.88em;">' + count + ' items</td>' +
+                            '<td style="padding:9px 4px 9px 16px;border-bottom:1px solid var(--line-color);width:100%;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--theme-text-secondary);font-size:0.88em;font-style:italic;">' + escHtml(customName) + '</td>' +
+                            '<td style="padding:9px 4px 9px 16px;border-bottom:1px solid var(--line-color);white-space:nowrap;color:var(--theme-text-secondary);font-size:0.88em;">' + count + ' movies</td>' +
                             '<td style="padding:9px 4px 9px 8px;border-bottom:1px solid var(--line-color);white-space:nowrap;">' +
                             actionBtn +
                             '</td>' +
@@ -4281,7 +4328,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     (headerExtra || '') +
                     '<button type="button" class="btnTlRefresh" style="' + btnStyle + 'background:transparent;color:var(--theme-text-secondary);border:1px solid var(--line-color);margin-left:auto;"><i class="md-icon" style="font-size:1em;vertical-align:middle;">refresh</i></button>' +
                     '</div>' +
-                    '<table class="tl-manage-list" style="width:100%;border-collapse:collapse;"><tbody>' + rows + '</tbody></table>' +
+                    '<table class="tl-manage-list" style="width:100%;border-collapse:collapse;">' +
+                    '<thead><tr>' +
+                    '<th style="padding:4px 4px 8px;text-align:left;font-size:0.78em;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--theme-text-secondary);border-bottom:2px solid var(--line-color);width:40%;">Tag</th>' +
+                    '<th style="padding:4px 4px 8px 16px;text-align:left;font-size:0.78em;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--theme-text-secondary);border-bottom:2px solid var(--line-color);width:40%;">Top-List name</th>' +
+                    '<th style="padding:4px 4px 8px 16px;text-align:left;font-size:0.78em;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--theme-text-secondary);border-bottom:2px solid var(--line-color);">Movies</th>' +
+                    '<th style="padding:4px 4px 8px 8px;border-bottom:2px solid var(--line-color);"></th>' +
+                    '</tr></thead>' +
+                    '<tbody>' + rows + '</tbody></table>' +
                     '</div>';
             }
 
@@ -4331,6 +4385,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 : '';
 
             container.innerHTML =
+                '<div style="background:rgba(82,181,75,0.08);border:1px solid rgba(82,181,75,0.3);border-radius:6px;padding:12px 16px;margin-bottom:20px;font-size:0.9em;color:var(--theme-text-secondary);line-height:1.5;">' +
+                '<strong style="color:var(--theme-text);">Top Lists</strong> — Skapa en dedikerad hemskärmsektion från en tagg. ' +
+                'Observera att top-listor för tillfället <strong style="color:var(--theme-text);">enbart fungerar för filmer</strong>.' +
+                '</div>' +
                 '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">' +
                 '<input type="text" id="tlSearch" placeholder="Search…" style="' + searchInputStyle + '" />' +
                 '<select is="emby-select" id="tlSort" style="color:inherit;background:rgba(128,128,128,0.08);border:1px solid var(--line-color);padding:5px;border-radius:4px;font-size:0.9em;cursor:pointer;">' +
@@ -4530,45 +4588,46 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 if (btn.classList.contains('btnTlDelete')) {
                     var deleteName = btn.dataset.name;
                     if (!confirm('Delete top-list for "' + deleteName + '"?\n\nThis will remove the folder, all .strm files, and the virtual library.')) return;
-                    btn.disabled = true;
-                    btn.textContent = 'Deleting…';
+                    var deleteBtn = btn;
+                    deleteBtn.disabled = true;
+                    deleteBtn.textContent = 'Deleting…';
                     var deleteToken = window.ApiClient.accessToken();
-                    fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/Delete'), {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'X-MediaBrowser-Token': deleteToken },
-                        body: JSON.stringify({ TagName: deleteName })
-                    })
-                    .then(function (r) { return r.json(); })
-                    .then(function (delResult) {
-                        if (!delResult.Success) throw new Error(delResult.Message || 'Delete failed');
-                        var folderPath = delResult.FolderPath;
-                        return fetch(window.ApiClient.getUrl('Library/VirtualFolders'), {
-                            headers: { 'X-MediaBrowser-Token': deleteToken }
+                        fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/Delete'), {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'X-MediaBrowser-Token': deleteToken },
+                            body: JSON.stringify({ TagName: deleteName })
                         })
                         .then(function (r) { return r.json(); })
-                        .then(function (folders) {
-                            var match = (folders || []).find(function (f) {
-                                return (f.Locations || []).some(function (loc) {
-                                    return loc.toLowerCase() === folderPath.toLowerCase();
+                        .then(function (delResult) {
+                            if (!delResult.Success) throw new Error(delResult.Message || 'Delete failed');
+                            var folderPath = delResult.FolderPath;
+                            return fetch(window.ApiClient.getUrl('Library/VirtualFolders'), {
+                                headers: { 'X-MediaBrowser-Token': deleteToken }
+                            })
+                            .then(function (r) { return r.json(); })
+                            .then(function (folders) {
+                                var match = (folders || []).find(function (f) {
+                                    return (f.Locations || []).some(function (loc) {
+                                        return loc.toLowerCase() === folderPath.toLowerCase();
+                                    });
                                 });
+                                if (match && match.ItemId) {
+                                    return fetch(window.ApiClient.getUrl('Library/VirtualFolders') + '?Id=' + encodeURIComponent(match.ItemId) + '&RefreshLibrary=false', {
+                                        method: 'DELETE',
+                                        headers: { 'X-MediaBrowser-Token': deleteToken }
+                                    });
+                                }
                             });
-                            if (match && match.ItemId) {
-                                return fetch(window.ApiClient.getUrl('Library/VirtualFolders') + '?Id=' + encodeURIComponent(match.ItemId) + '&RefreshLibrary=false', {
-                                    method: 'DELETE',
-                                    headers: { 'X-MediaBrowser-Token': deleteToken }
-                                });
-                            }
+                        })
+                        .then(function () {
+                            container.dataset.loaded = '';
+                            loadTopListsTab(view);
+                        })
+                        .catch(function (err) {
+                            deleteBtn.disabled = false;
+                            deleteBtn.textContent = 'Delete top-list';
+                            alert('Error deleting top-list: ' + (err.message || err));
                         });
-                    })
-                    .then(function () {
-                        container.dataset.loaded = '';
-                        loadTopListsTab(view);
-                    })
-                    .catch(function (err) {
-                        btn.disabled = false;
-                        btn.textContent = 'Delete top-list';
-                        alert('Error deleting top-list: ' + (err.message || err));
-                    });
                     return;
                 }
 

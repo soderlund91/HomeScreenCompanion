@@ -93,7 +93,7 @@ namespace HomeScreenCompanion
 
     [Route("/HomeScreenCompanion/Manage/Tags", "GET")]
     public class GetManagedTagsRequest : IReturn<GetManagedTagsResponse> { }
-    public class ManagedTagInfo { public string Id { get; set; } = ""; public string Name { get; set; } = ""; public int ItemCount { get; set; } public List<string> ItemTypes { get; set; } = new List<string>(); }
+    public class ManagedTagInfo { public string Id { get; set; } = ""; public string Name { get; set; } = ""; public int ItemCount { get; set; } public int MovieCount { get; set; } public List<string> ItemTypes { get; set; } = new List<string>(); }
     public class GetManagedTagsResponse { public List<ManagedTagInfo> Tags { get; set; } = new List<ManagedTagInfo>(); }
 
     [Route("/HomeScreenCompanion/Manage/Collections", "GET")]
@@ -117,6 +117,7 @@ namespace HomeScreenCompanion
     public class PrepareTopListFolderRequest : IReturn<PrepareTopListFolderResponse>
     {
         public string TagName { get; set; } = "";
+        public int MaxItems { get; set; } = 0;
     }
     public class PrepareTopListFolderResponse
     {
@@ -156,6 +157,15 @@ namespace HomeScreenCompanion
         public bool Success { get; set; }
         public int UsersCreated { get; set; }
         public int UsersUpdated { get; set; }
+        public string Message { get; set; } = "";
+    }
+
+    [Route("/HomeScreenCompanion/TopList/SyncAllSections", "POST")]
+    public class SyncAllTopListSectionsRequest : IReturn<SyncAllTopListSectionsResponse> { }
+    public class SyncAllTopListSectionsResponse
+    {
+        public bool Success { get; set; }
+        public int UpdatedSections { get; set; }
         public string Message { get; set; } = "";
     }
 
@@ -742,16 +752,32 @@ public class HomeScreenCompanionService : IService
             catch { }
 
             var tagCount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var tagMovieKeys = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
             var tagTypes = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
             foreach (var item in allItems)
             {
                 if (item.Tags == null) continue;
                 var typeKey = GetItemTypeKey(item);
+                var isMovie = item is MediaBrowser.Controller.Entities.Movies.Movie;
+                string movieKey = null;
+                if (isMovie)
+                {
+                    var imdb = item.GetProviderId("Imdb");
+                    movieKey = !string.IsNullOrEmpty(imdb)
+                        ? imdb
+                        : (item.Name ?? "") + "_" + (item.ProductionYear?.ToString() ?? "");
+                }
                 foreach (var tag in item.Tags)
                 {
                     if (string.IsNullOrWhiteSpace(tag)) continue;
                     tagCount.TryGetValue(tag, out var c);
                     tagCount[tag] = c + 1;
+                    if (isMovie && movieKey != null)
+                    {
+                        if (!tagMovieKeys.TryGetValue(tag, out var seen))
+                            tagMovieKeys[tag] = seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        seen.Add(movieKey);
+                    }
                     if (!tagTypes.TryGetValue(tag, out var typeSet))
                         tagTypes[tag] = typeSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     typeSet.Add(typeKey);
@@ -772,6 +798,7 @@ public class HomeScreenCompanionService : IService
                 {
                     Name = kv.Key,
                     ItemCount = kv.Value,
+                    MovieCount = tagMovieKeys.TryGetValue(kv.Key, out var movieSet) ? movieSet.Count : 0,
                     Id = tagIdMap.TryGetValue(kv.Key, out var tid) ? tid : "",
                     ItemTypes = tagTypes.TryGetValue(kv.Key, out var typeSet2) ? typeSet2.ToList() : new List<string>()
                 })
@@ -923,8 +950,10 @@ public class HomeScreenCompanionService : IService
                 var folderPath = Path.Combine(dataPath, "toplists", sanitized);
                 Directory.CreateDirectory(folderPath);
 
-                // Remove stale .strm files from a previous run
+                // Remove stale .strm and .nfo files from a previous run
                 foreach (var f in Directory.GetFiles(folderPath, "*.strm"))
+                    File.Delete(f);
+                foreach (var f in Directory.GetFiles(folderPath, "*.nfo"))
                     File.Delete(f);
 
                 // Write one .strm file per movie that carries this tag
@@ -971,14 +1000,21 @@ public class HomeScreenCompanionService : IService
                     selected.Add((baseName, item.Path));
                 }
 
-                // Second pass: write with zero-padded numeric prefix
+                // Apply max-items limit before writing
+                if (request.MaxItems > 0 && selected.Count > request.MaxItems)
+                    selected = selected.Take(request.MaxItems).ToList();
+
+                // Second pass: write .strm and .nfo (sorttitle carries the order prefix)
                 int digits = Math.Max(2, selected.Count.ToString().Length);
                 int count = 0;
                 foreach (var entry in selected)
                 {
                     count++;
-                    var fileName = count.ToString().PadLeft(digits, '0') + " " + entry.BaseName;
+                    var sortPrefix = count.ToString().PadLeft(digits, '0');
+                    var fileName = entry.BaseName;
                     File.WriteAllText(Path.Combine(folderPath, fileName + ".strm"), entry.Path);
+                    var nfo = $"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<movie>\n  <sorttitle>{sortPrefix}</sorttitle>\n  <lockedfields>SortName</lockedfields>\n</movie>";
+                    File.WriteAllText(Path.Combine(folderPath, fileName + ".nfo"), nfo);
                 }
 
                 return new PrepareTopListFolderResponse { Success = true, FolderPath = folderPath, FilesCreated = count };
@@ -1018,6 +1054,29 @@ public class HomeScreenCompanionService : IService
                 var folderPath = Path.Combine(dataPath, "toplists", sanitized);
                 if (Directory.Exists(folderPath))
                     Directory.Delete(folderPath, true);
+
+                var config = Plugin.Instance?.Configuration;
+                if (config?.TopLists != null)
+                {
+                    var tl = config.TopLists.FirstOrDefault(t =>
+                        string.Equals(SanitizeFolderName(t.TagName), sanitized, StringComparison.OrdinalIgnoreCase));
+                    if (tl != null)
+                    {
+                        foreach (var tracking in tl.HomeSectionTracked ?? new List<HomeSectionTracking>())
+                        {
+                            if (string.IsNullOrEmpty(tracking.UserId) || string.IsNullOrEmpty(tracking.SectionId)) continue;
+                            try
+                            {
+                                var internalId = _userManager.GetInternalId(tracking.UserId);
+                                _userManager.DeleteHomeSections(internalId, new[] { tracking.SectionId }, CancellationToken.None);
+                            }
+                            catch { }
+                        }
+                        config.TopLists.Remove(tl);
+                        Plugin.Instance.SaveConfiguration();
+                    }
+                }
+
                 return new DeleteTopListResponse { Success = true, FolderPath = folderPath };
             }
             catch (Exception ex)
@@ -1055,6 +1114,31 @@ public class HomeScreenCompanionService : IService
                     return new PrepareTopListHomeSectionsResponse { Success = false, Message = "HomeSectionLibraryId is not set — library may not be ready yet." };
 
                 var resolvedLibraryId = tl.HomeSectionLibraryId;
+
+                // Dynamically ensure all OTHER top-list libraries are excluded from this section.
+                // This keeps the exclusion list correct over time as new top-lists are added.
+                var otherTopListIds = (config.TopLists ?? new System.Collections.Generic.List<TopListHomeSection>())
+                    .Where(other => !string.Equals(other.HomeSectionLibraryId, resolvedLibraryId, StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrEmpty(other.HomeSectionLibraryId) && other.HomeSectionLibraryId != "auto")
+                    .Select(other => other.HomeSectionLibraryId)
+                    .ToList();
+
+                if (otherTopListIds.Count > 0)
+                {
+                    var excList = (settingsDict.TryGetValue("_queryExcludeViewIds", out var ev2) ? ev2 : "")
+                        .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                        .Select(s => s.Trim()).ToList();
+                    bool excChanged = false;
+                    foreach (var id in otherTopListIds)
+                        if (!excList.Contains(id, StringComparer.OrdinalIgnoreCase))
+                        { excList.Add(id); excChanged = true; }
+                    if (excChanged)
+                    {
+                        var excStr = string.Join(",", excList);
+                        settingsDict["_queryExcludeViewIds"] = excStr;
+                        settingsDict["ExcludedFolders"] = excStr;
+                    }
+                }
 
                 var safeTag = new string((request.TagName ?? "").Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
                 var sectionMarker = "hsc__tl__" + safeTag;
@@ -1187,6 +1271,19 @@ public class HomeScreenCompanionService : IService
             catch (Exception ex)
             {
                 return new PrepareTopListHomeSectionsResponse { Success = false, Message = ex.Message };
+            }
+        }
+
+        public object Post(SyncAllTopListSectionsRequest request)
+        {
+            try
+            {
+                var (updated, msg) = TopListSyncTask.SyncAll(_libraryManager, _userManager, _jsonSerializer, CancellationToken.None);
+                return new SyncAllTopListSectionsResponse { Success = true, UpdatedSections = updated, Message = msg };
+            }
+            catch (Exception ex)
+            {
+                return new SyncAllTopListSectionsResponse { Success = false, Message = ex.Message };
             }
         }
 

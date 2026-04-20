@@ -2208,6 +2208,32 @@ namespace HomeScreenCompanion
 
                 settingsDict.TryGetValue("SectionType", out var sectionType);
 
+                // For items-type sections, dynamically ensure all top-list libraries are excluded
+                if (sectionType == "items")
+                {
+                    var topListLibIds = (config?.TopLists ?? new System.Collections.Generic.List<TopListHomeSection>())
+                        .Where(t => !string.IsNullOrEmpty(t.HomeSectionLibraryId) && t.HomeSectionLibraryId != "auto")
+                        .Select(t => t.HomeSectionLibraryId)
+                        .ToList();
+                    if (topListLibIds.Count > 0)
+                    {
+                        var current = (settingsDict.TryGetValue("_queryExcludeViewIds", out var ev) ? ev : "")
+                            .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                            .Select(s => s.Trim())
+                            .ToList();
+                        bool excChanged = false;
+                        foreach (var id in topListLibIds)
+                            if (!current.Contains(id, StringComparer.OrdinalIgnoreCase))
+                            { current.Add(id); excChanged = true; }
+                        if (excChanged)
+                        {
+                            var excStr = string.Join(",", current);
+                            settingsDict["_queryExcludeViewIds"] = excStr;
+                            settingsDict["ExcludedFolders"] = excStr;
+                        }
+                    }
+                }
+
                 string resolvedLibraryId = null;
                 if (sectionType == "boxset")
                 {

@@ -284,6 +284,17 @@
             line-height: 1.6;
         }
 
+        .help-nav-link {
+            color: var(--theme-text-secondary);
+            text-decoration: none;
+            font-size: 0.88em;
+            transition: color 0.15s;
+        }
+
+        .help-nav-link:hover {
+            color: #52B54B;
+        }
+
         .help-link {
             color: #52B54B;
             text-decoration: none;
@@ -1146,8 +1157,23 @@
             </div>
             <div class="modal-body-scroll">
 
+                <!-- NAV MENU -->
+                <nav style="background:rgba(128,128,128,0.06);border:1px solid var(--line-color);border-radius:6px;padding:10px 16px;margin-bottom:20px;">
+                    <div style="font-size:0.75em;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--theme-text-secondary);margin-bottom:8px;">Contents</div>
+                    <ol style="margin:0;padding:0 0 0 18px;display:grid;grid-template-columns:1fr 1fr;gap:3px 24px;">
+                        <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-1').scrollIntoView({behavior:'smooth'});return false;">Quick Start</a></li>
+                        <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-2').scrollIntoView({behavior:'smooth'});return false;">Source Types</a></li>
+                        <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-3').scrollIntoView({behavior:'smooth'});return false;">Source Settings</a></li>
+                        <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-4').scrollIntoView({behavior:'smooth'});return false;">Tags &amp; Collections</a></li>
+                        <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-5').scrollIntoView({behavior:'smooth'});return false;">Scheduling</a></li>
+                        <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-6').scrollIntoView({behavior:'smooth'});return false;">MediaInfo Filters</a></li>
+                        <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-7').scrollIntoView({behavior:'smooth'});return false;">Home Screen Companion</a></li>
+                        <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-8').scrollIntoView({behavior:'smooth'});return false;">Settings &amp; Utilities</a></li>
+                    </ol>
+                </nav>
+
                 <!-- 1. QUICK START -->
-                <div class="help-section" style="margin-top:0;">
+                <div id="help-sec-1" class="help-section" style="margin-top:0;">
                     <i class="md-icon help-section-icon">rocket_launch</i>
                     <span>Quick Start</span>
                 </div>
@@ -1184,7 +1210,7 @@
                 </div>
 
                 <!-- 2. SOURCE TYPES -->
-                <div class="help-section">
+                <div id="help-sec-2" class="help-section">
                     <i class="md-icon help-section-icon">input</i>
                     <span>Source Types</span>
                 </div>
@@ -1208,7 +1234,7 @@
                 </div>
 
                 <!-- 3. SOURCE SETTINGS (new) -->
-                <div class="help-section">
+                <div id="help-sec-3" class="help-section">
                     <i class="md-icon help-section-icon">tab</i>
                     <span>Source Settings</span>
                 </div>
@@ -1248,7 +1274,7 @@
                 </div>
 
                 <!-- 4. TAGS & COLLECTIONS -->
-                <div class="help-section">
+                <div id="help-sec-4" class="help-section">
                     <i class="md-icon help-section-icon">local_offer</i>
                     <span>Tags &amp; Collections</span>
                 </div>
@@ -1286,7 +1312,7 @@
                 </div>
 
                 <!-- 5. SCHEDULING -->
-                <div class="help-section">
+                <div id="help-sec-5" class="help-section">
                     <i class="md-icon help-section-icon">calendar_month</i>
                     <span>Scheduling</span>
                 </div>
@@ -1304,7 +1330,7 @@
                 </div>
 
                 <!-- 6. MEDIAINFO FILTERS -->
-                <div class="help-section">
+                <div id="help-sec-6" class="help-section">
                     <i class="md-icon help-section-icon">analytics</i>
                     <span>MediaInfo Filters</span>
                 </div>
@@ -1337,7 +1363,7 @@
                 </div>
 
                 <!-- 7. HOME SCREEN COMPANION -->
-                <div class="help-section">
+                <div id="help-sec-7" class="help-section">
                     <i class="md-icon help-section-icon">home</i>
                     <span>Home Screen Companion</span>
                 </div>
@@ -1356,7 +1382,7 @@
                 </div>
 
                 <!-- 8. SETTINGS & UTILITIES (new) -->
-                <div class="help-section">
+                <div id="help-sec-8" class="help-section">
                     <i class="md-icon help-section-icon">settings</i>
                     <span>Settings &amp; Utilities</span>
                 </div>
