@@ -161,84 +161,150 @@ namespace HomeScreenCompanion
             return $"https://api.mdblist.com{fallback}/items";
         }
 
-        private string ExtractTmdbListId(string url)
+        private class TmdbApiTarget
+        {
+            public string ListId { get; set; }
+            public string Endpoint { get; set; }
+            public string MediaType { get; set; }
+        }
+
+        private TmdbApiTarget ExtractTmdbApiTarget(string url)
         {
             try
             {
                 var uri = new Uri(url);
-                var segments = uri.Segments;
-                if (segments.Length >= 3 && segments[1].TrimEnd('/') == "list")
+                var segments = uri.Segments.Select(s => s.TrimEnd('/')).Where(s => !string.IsNullOrEmpty(s)).ToList();
+
+                if (segments.Count >= 2 && segments[0] == "list")
                 {
-                    return segments[2].TrimEnd('/');
+                    return new TmdbApiTarget { ListId = segments[1] };
                 }
-                else if (segments.Length >= 3 && segments[1].TrimEnd('/') == "list" && segments.Length > 2)
+
+                if (segments.Count >= 1 && (segments[0] == "movie" || segments[0] == "tv"))
                 {
-                    return segments[2].TrimEnd('/');
+                    string type = segments[0];
+                    string category = segments.Count > 1 ? segments[1].Replace("-", "_") : "popular";
+
+                    var validCategories = new[] { "popular", "top_rated", "now_playing", "upcoming", "on_the_air", "airing_today" };
+                    if (validCategories.Contains(category))
+                    {
+                        return new TmdbApiTarget { Endpoint = $"{type}/{category}", MediaType = type };
+                    }
                 }
             }
             catch { }
-            return string.Empty;
+            return null;
         }
 
         private async Task<List<ExternalItemDto>> FetchTmdb(string url, string apiKey, int limit, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(apiKey)) return new List<ExternalItemDto>();
 
-            var listId = ExtractTmdbListId(url);
-            if (string.IsNullOrEmpty(listId)) return new List<ExternalItemDto>();
+            var target = ExtractTmdbApiTarget(url);
+            if (target == null) return new List<ExternalItemDto>();
 
             var all = new List<ExternalItemDto>();
             int page = 1;
+            bool isToken = apiKey.Length > 100 || apiKey.Contains(".");
+            bool useV4 = !string.IsNullOrEmpty(target.ListId);
+            bool useV3 = true;
 
             while (true)
             {
-                var apiUrl = $"https://api.themoviedb.org/3/list/{listId}?api_key={apiKey}&page={page}";
-                try
+                TmdbListResponse result = null;
+
+                if (useV4 && !string.IsNullOrEmpty(target.ListId))
                 {
-                    var options = new HttpRequestOptions { Url = apiUrl, CancellationToken = cancellationToken };
-                    using (var stream = await _httpClient.Get(options))
+                    var apiUrl = $"https://api.themoviedb.org/4/list/{target.ListId}?page={page}";
+                    if (!isToken) apiUrl += $"&api_key={apiKey}";
+
+                    try
                     {
-                        var result = _jsonSerializer.DeserializeFromStream<TmdbListResponse>(stream);
-                        if (result == null) break;
-
-                        var items = result.items ?? result.results;
-                        if (items == null || items.Count == 0) break;
-
-                        foreach (var item in items)
+                        var options = new HttpRequestOptions { Url = apiUrl, CancellationToken = cancellationToken };
+                        if (isToken)
                         {
-                            var dto = new ExternalItemDto
-                            {
-                                Name = item.title ?? item.name,
-                                Tmdb = item.id.ToString()
-                            };
-
-                            try
-                            {
-                                var type = item.media_type == "tv" ? "tv" : "movie";
-                                var extUrl = $"https://api.themoviedb.org/3/{type}/{item.id}/external_ids?api_key={apiKey}";
-                                using (var extStream = await _httpClient.Get(new HttpRequestOptions { Url = extUrl, CancellationToken = cancellationToken }))
-                                {
-                                    var extIds = _jsonSerializer.DeserializeFromStream<TmdbExternalIds>(extStream);
-                                    if (extIds != null && !string.IsNullOrEmpty(extIds.imdb_id))
-                                    {
-                                        dto.Imdb = extIds.imdb_id;
-                                    }
-                                }
-                            }
-                            catch { }
-
-                            all.Add(dto);
-                            if (limit > 0 && all.Count >= limit) return all.Take(limit).ToList();
+                            options.RequestHeaders.Add("Authorization", $"Bearer {apiKey}");
                         }
-
-                        if (page >= result.total_pages) break;
-                        page++;
+                        using (var stream = await _httpClient.Get(options))
+                        {
+                            result = _jsonSerializer.DeserializeFromStream<TmdbListResponse>(stream);
+                            useV3 = false;
+                        }
+                    }
+                    catch
+                    {
+                        useV4 = false;
                     }
                 }
-                catch
+
+                if (useV3 && result == null)
                 {
-                    break;
+                    var apiUrl = string.IsNullOrEmpty(target.Endpoint) 
+                        ? $"https://api.themoviedb.org/3/list/{target.ListId}?page={page}"
+                        : $"https://api.themoviedb.org/3/{target.Endpoint}?page={page}";
+                        
+                    if (!isToken) apiUrl += $"&api_key={apiKey}";
+
+                    try
+                    {
+                        var options = new HttpRequestOptions { Url = apiUrl, CancellationToken = cancellationToken };
+                        if (isToken)
+                        {
+                            options.RequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+                        }
+                        using (var stream = await _httpClient.Get(options))
+                        {
+                            result = _jsonSerializer.DeserializeFromStream<TmdbListResponse>(stream);
+                        }
+                    }
+                    catch
+                    {
+                        break;
+                    }
                 }
+
+                if (result == null) break;
+
+                var items = (result.items != null && result.items.Count > 0) ? result.items : result.results;
+                if (items == null || items.Count == 0) break;
+
+                foreach (var item in items)
+                {
+                    var dto = new ExternalItemDto
+                    {
+                        Name = item.title ?? item.name,
+                        Tmdb = item.id.ToString()
+                    };
+
+                    try
+                    {
+                        var type = target.MediaType ?? (item.media_type == "tv" ? "tv" : "movie");
+                        var extUrl = $"https://api.themoviedb.org/3/{type}/{item.id}/external_ids";
+                        if (!isToken) extUrl += $"?api_key={apiKey}";
+                        
+                        var extOptions = new HttpRequestOptions { Url = extUrl, CancellationToken = cancellationToken };
+                        if (isToken)
+                        {
+                            extOptions.RequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+                        }
+
+                        using (var extStream = await _httpClient.Get(extOptions))
+                        {
+                            var extIds = _jsonSerializer.DeserializeFromStream<TmdbExternalIds>(extStream);
+                            if (extIds != null && !string.IsNullOrEmpty(extIds.imdb_id))
+                            {
+                                dto.Imdb = extIds.imdb_id;
+                            }
+                        }
+                    }
+                    catch { }
+
+                    all.Add(dto);
+                    if (limit > 0 && all.Count >= limit) return all.Take(limit).ToList();
+                }
+
+                if (page >= result.total_pages) break;
+                page++;
             }
 
             return all;

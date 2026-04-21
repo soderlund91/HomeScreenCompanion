@@ -176,14 +176,16 @@ public class HomeScreenCompanionService : IService
         private readonly IUserManager _userManager;
         private readonly ILibraryManager _libraryManager;
         private readonly IUserDataManager _userDataManager;
+        private readonly IUserViewManager _userViewManager;
 
-        public HomeScreenCompanionService(IHttpClient httpClient, IJsonSerializer jsonSerializer, IUserManager userManager, ILibraryManager libraryManager, IUserDataManager userDataManager)
+        public HomeScreenCompanionService(IHttpClient httpClient, IJsonSerializer jsonSerializer, IUserManager userManager, ILibraryManager libraryManager, IUserDataManager userDataManager, IUserViewManager userViewManager)
         {
             _httpClient = httpClient;
             _jsonSerializer = jsonSerializer;
             _userManager = userManager;
             _libraryManager = libraryManager;
             _userDataManager = userDataManager;
+            _userViewManager = userViewManager;
         }
 
         public object Get(VersionRequest request)
@@ -1115,30 +1117,59 @@ public class HomeScreenCompanionService : IService
 
                 var resolvedLibraryId = tl.HomeSectionLibraryId;
 
-                // Dynamically ensure all OTHER top-list libraries are excluded from this section.
-                // This keeps the exclusion list correct over time as new top-lists are added.
-                var otherTopListIds = (config.TopLists ?? new System.Collections.Generic.List<TopListHomeSection>())
-                    .Where(other => !string.Equals(other.HomeSectionLibraryId, resolvedLibraryId, StringComparison.OrdinalIgnoreCase)
-                        && !string.IsNullOrEmpty(other.HomeSectionLibraryId) && other.HomeSectionLibraryId != "auto")
-                    .Select(other => other.HomeSectionLibraryId)
+                // Exclude ALL libraries except this top-list's own; use GetUserViews to capture
+                // Live TV's user-view ID (GetVirtualFolders does not include Live TV).
+                var allLibIds = _libraryManager.GetVirtualFolders()
+                    .Where(f => !string.IsNullOrEmpty(f.ItemId))
+                    .Select(f => f.ItemId.Trim().ToLowerInvariant())
                     .ToList();
-
-                if (otherTopListIds.Count > 0)
+                var firstUserIdForViews = tl.HomeSectionUserIds?.FirstOrDefault();
+                if (!string.IsNullOrEmpty(firstUserIdForViews))
                 {
-                    var excList = (settingsDict.TryGetValue("_queryExcludeViewIds", out var ev2) ? ev2 : "")
-                        .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
-                        .Select(s => s.Trim()).ToList();
-                    bool excChanged = false;
-                    foreach (var id in otherTopListIds)
-                        if (!excList.Contains(id, StringComparer.OrdinalIgnoreCase))
-                        { excList.Add(id); excChanged = true; }
-                    if (excChanged)
+                    try
                     {
-                        var excStr = string.Join(",", excList);
-                        settingsDict["_queryExcludeViewIds"] = excStr;
-                        settingsDict["ExcludedFolders"] = excStr;
+                        var uid = _userManager.GetInternalId(firstUserIdForViews);
+                        Guid.TryParse(firstUserIdForViews, out var userGuid);
+                        var ifMethod = typeof(IUserViewManager).GetMethod("GetUserViews");
+                        if (ifMethod != null)
+                        {
+                            var queryParams = ifMethod.GetParameters();
+                            object queryArg = null;
+                            if (queryParams.Length > 0)
+                            {
+                                try
+                                {
+                                    queryArg = Activator.CreateInstance(queryParams[0].ParameterType);
+                                    var uidProp = queryParams[0].ParameterType.GetProperty("UserId");
+                                    if (uidProp?.PropertyType == typeof(long))
+                                        uidProp.SetValue(queryArg, uid);
+                                    else
+                                        uidProp?.SetValue(queryArg, userGuid);
+                                }
+                                catch { queryArg = null; }
+                            }
+                            var result = ifMethod.Invoke(_userViewManager, new[] { queryArg });
+                            if (result is System.Collections.IEnumerable views)
+                                foreach (var v in views)
+                                {
+                                    var idProp = v?.GetType().GetProperty("Id");
+                                    if (idProp?.GetValue(v) is Guid vid && vid != Guid.Empty)
+                                        allLibIds.Add(vid.ToString("N").ToLowerInvariant());
+                                }
+                        }
                     }
+                    catch { }
                 }
+                allLibIds = allLibIds.Distinct().ToList();
+                var ownIdLower = resolvedLibraryId.Trim().ToLowerInvariant();
+                var storedExclude = (settingsDict.TryGetValue("_queryExcludeViewIds", out var storedEv) ? storedEv : "")
+                    .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(s => s.Trim().ToLowerInvariant()).Where(s => s.Length > 0);
+                var mergedIds = allLibIds.Concat(storedExclude).Where(id => id != ownIdLower).Distinct().ToList();
+                var excStr = string.Join(",", mergedIds);
+                settingsDict["_queryExcludeViewIds"] = excStr;
+                settingsDict["ExcludedFolders"] = excStr;
+                tl.HomeSectionSettings = _jsonSerializer.SerializeToString(settingsDict);
 
                 var safeTag = new string((request.TagName ?? "").Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
                 var sectionMarker = "hsc__tl__" + safeTag;
@@ -1199,6 +1230,7 @@ public class HomeScreenCompanionService : IService
 
                 // Inject the new top-list library into _queryExcludeViewIds of every existing
                 // TAG & COLLECT items-type section and apply immediately (no task run needed).
+                var resolvedLibraryIdLower = resolvedLibraryId.Trim().ToLowerInvariant();
                 if (!string.IsNullOrEmpty(resolvedLibraryId))
                 {
                     foreach (var tc in (config.Tags ?? new System.Collections.Generic.List<TagConfig>()))
@@ -1214,18 +1246,18 @@ public class HomeScreenCompanionService : IService
                         catch { }
 
                         tcSettings.TryGetValue("SectionType", out var tcSt);
-                        if (tcSt != "items") continue;
+                        if (tcSt == "boxset") continue;
 
                         var existingExcluded = (tcSettings.TryGetValue("_queryExcludeViewIds", out var ev) ? ev : "")
                             .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
                             .Select(s => s.Trim()).ToList();
 
-                        if (existingExcluded.Contains(resolvedLibraryId)) continue;
+                        if (existingExcluded.Contains(resolvedLibraryIdLower, StringComparer.OrdinalIgnoreCase)) continue;
 
-                        existingExcluded.Add(resolvedLibraryId);
-                        var excStr = string.Join(",", existingExcluded);
-                        tcSettings["_queryExcludeViewIds"] = excStr;
-                        tcSettings["ExcludedFolders"] = excStr;
+                        existingExcluded.Add(resolvedLibraryIdLower);
+                        var tcExcStr = string.Join(",", existingExcluded);
+                        tcSettings["_queryExcludeViewIds"] = tcExcStr;
+                        tcSettings["ExcludedFolders"] = tcExcStr;
                         tc.HomeSectionSettings = _jsonSerializer.SerializeToString(tcSettings);
 
                         // Resolve tag ID for items-type query
@@ -1265,6 +1297,66 @@ public class HomeScreenCompanionService : IService
                     }
                 }
 
+                // Also inject the new top-list library into other existing top-list sections.
+                if (!string.IsNullOrEmpty(resolvedLibraryId))
+                {
+                    foreach (var otherTl in (config.TopLists ?? new System.Collections.Generic.List<TopListHomeSection>()))
+                    {
+                        if (otherTl == tl) continue;
+                        if (string.IsNullOrEmpty(otherTl.HomeSectionLibraryId) || otherTl.HomeSectionLibraryId == "auto") continue;
+
+                        var otherSettings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                        try
+                        {
+                            if (!string.IsNullOrEmpty(otherTl.HomeSectionSettings) && otherTl.HomeSectionSettings != "{}")
+                                otherSettings = _jsonSerializer.DeserializeFromString<Dictionary<string, string>>(otherTl.HomeSectionSettings) ?? otherSettings;
+                        }
+                        catch { }
+
+                        var otherExisting = (otherSettings.TryGetValue("_queryExcludeViewIds", out var otherEv) ? otherEv : "")
+                            .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                            .Select(s => s.Trim()).ToList();
+
+                        if (otherExisting.Contains(resolvedLibraryIdLower, StringComparer.OrdinalIgnoreCase)) continue;
+
+                        otherExisting.Add(resolvedLibraryIdLower);
+                        var otherExcStr = string.Join(",", otherExisting);
+                        otherSettings["_queryExcludeViewIds"] = otherExcStr;
+                        otherSettings["ExcludedFolders"] = otherExcStr;
+                        otherTl.HomeSectionSettings = _jsonSerializer.SerializeToString(otherSettings);
+
+                        var otherSafeTag = new string((otherTl.TagName ?? "").Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+                        var otherMarker = "hsc__tl__" + otherSafeTag;
+
+                        var otherTracked = (otherTl.HomeSectionTracked ?? new System.Collections.Generic.List<HomeSectionTracking>())
+                            .Where(t => !string.IsNullOrEmpty(t.SectionId) && !t.SectionId.StartsWith("hsc__"))
+                            .ToList();
+
+                        foreach (var tracking in otherTracked)
+                        {
+                            try
+                            {
+                                var uid = _userManager.GetInternalId(tracking.UserId);
+                                var secs = _userManager.GetHomeSections(uid, CancellationToken.None)?.Sections ?? Array.Empty<ContentSection>();
+                                var owned = secs.FirstOrDefault(s => s.Id == tracking.SectionId)
+                                    ?? secs.FirstOrDefault(s => s.Subtitle == otherMarker);
+                                if (owned == null) continue;
+                                var updatedSec = HomeScreenCompanionTask.BuildContentSection(_jsonSerializer, otherSettings, otherTl.HomeSectionLibraryId, owned);
+                                typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSec, owned.Id);
+                                _userManager.UpdateHomeSection(uid, updatedSec, CancellationToken.None);
+                            }
+                            catch { }
+                        }
+                    }
+                }
+
+                // Aggressive: exclude the new top-list library from ALL untracked, non-library-scoped sections
+                // so top-list content never bleeds into manually created or native Emby sections.
+                HomeScreenCompanionTask.UpdateUntrackedSections(
+                    _jsonSerializer, _userManager, config,
+                    new[] { resolvedLibraryIdLower },
+                    CancellationToken.None);
+
                 Plugin.Instance.SaveConfiguration();
                 return new PrepareTopListHomeSectionsResponse { Success = true, UsersCreated = created, UsersUpdated = updated, Message = $"Synced: {created} created, {updated} updated." };
             }
@@ -1278,7 +1370,7 @@ public class HomeScreenCompanionService : IService
         {
             try
             {
-                var (updated, msg) = TopListSyncTask.SyncAll(_libraryManager, _userManager, _jsonSerializer, CancellationToken.None);
+                var (updated, msg) = TopListSyncTask.SyncAll(_libraryManager, _userViewManager, _userManager, _jsonSerializer, CancellationToken.None);
                 return new SyncAllTopListSectionsResponse { Success = true, UpdatedSections = updated, Message = msg };
             }
             catch (Exception ex)

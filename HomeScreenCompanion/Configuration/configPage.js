@@ -4257,12 +4257,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
 
             var topListCustomNameMap = {};
+            var topListLibraryIdMap = {};
             (pluginConfig.TopLists || []).forEach(function (tl) {
                 if (!tl.TagName) return;
                 var key = sanitizeTlName(tl.TagName).toLowerCase();
                 var settings = {};
                 try { settings = JSON.parse(tl.HomeSectionSettings || '{}'); } catch (e) {}
                 if (settings.CustomName) topListCustomNameMap[key] = settings.CustomName;
+                if (tl.HomeSectionLibraryId && tl.HomeSectionLibraryId !== 'auto')
+                    topListLibraryIdMap[key] = tl.HomeSectionLibraryId;
             });
 
             var managedTagMap = {};
@@ -4304,7 +4307,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         var managed = isTagSection ? managedTagMap[name.toLowerCase()] : managedCollMap[name.toLowerCase()];
                         var typesVal = isTagSection ? (item.ItemTypes || []).map(function (t) { return t.toLowerCase(); }).join(',') : '';
                         var hasTopList = isTagSection && existingSet && existingSet.has(sanitizeTlName(name).toLowerCase());
-                        var customName = hasTopList ? (topListCustomNameMap[sanitizeTlName(name).toLowerCase()] || '') : '';
+                        var tlKey = sanitizeTlName(name).toLowerCase();
+                        var customName = hasTopList ? (topListCustomNameMap[tlKey] || '') : '';
+                        var libraryId = hasTopList ? (topListLibraryIdMap[tlKey] || '') : '';
                         var actionBtn = hasTopList
                             ? '<button type="button" class="btnTlDelete" style="' + btnStyle + 'background:#c45454;color:#fff;" data-id="' + escAttr(id) + '" data-name="' + escAttr(name) + '" data-count="' + count + '" data-type="' + (isTagSection ? 'tag' : 'coll') + '">Delete top-list</button>'
                             : '<button type="button" class="btnTlCreate" style="' + btnStyle + 'background:#5cb85c;color:#fff;" data-id="' + escAttr(id) + '" data-name="' + escAttr(name) + '" data-count="' + count + '" data-type="' + (isTagSection ? 'tag' : 'coll') + '">Create top-list</button>';
@@ -4314,7 +4319,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                                 ? '<a class="tl-item-name tl-nav-link" href="javascript:void(0)" data-navid="' + escAttr(id) + '" style="color:inherit;text-decoration:none;cursor:pointer;" onmouseover="this.style.textDecoration=\'underline\'" onmouseout="this.style.textDecoration=\'none\'">' + escHtml(name) + '</a>'
                                 : '<span class="tl-item-name">' + escHtml(name) + '</span>') +
                             '</td>' +
-                            '<td style="padding:9px 4px 9px 16px;border-bottom:1px solid var(--line-color);width:100%;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--theme-text-secondary);font-size:0.88em;font-style:italic;">' + escHtml(customName) + '</td>' +
+                            '<td style="padding:9px 4px 9px 16px;border-bottom:1px solid var(--line-color);width:100%;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.88em;font-style:italic;">' +
+                            (customName && libraryId
+                                ? '<a class="tl-lib-nav-link" href="javascript:void(0)" data-navid="' + escAttr(libraryId) + '" style="color:inherit;text-decoration:none;cursor:pointer;" onmouseover="this.style.textDecoration=\'underline\'" onmouseout="this.style.textDecoration=\'none\'">' + escHtml(customName) + '</a>'
+                                : '<span style="color:var(--theme-text-secondary);">' + escHtml(customName) + '</span>') +
+                            '</td>' +
                             '<td style="padding:9px 4px 9px 16px;border-bottom:1px solid var(--line-color);white-space:nowrap;color:var(--theme-text-secondary);font-size:0.88em;">' + count + ' movies</td>' +
                             '<td style="padding:9px 4px 9px 8px;border-bottom:1px solid var(--line-color);white-space:nowrap;">' +
                             actionBtn +
@@ -4354,7 +4363,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 { label: 'Theme videos', types: ['themevideo', 'video'] },
                 { label: 'Extras',       types: ['behindthescenes', 'deletedscene', 'interview', 'scene', 'clip', 'featurette', 'short'] },
                 { label: 'People',       types: ['person'] },
-                { label: 'Collections',  types: ['boxset'] },
                 { label: 'Photos',       types: ['photo', 'photoalbum'] },
                 { label: 'Playlists',    types: ['playlist'] },
                 { label: 'Recordings',   types: ['recording'] },
@@ -4385,6 +4393,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 : '';
 
             container.innerHTML =
+                '<div style="max-width:900px;">' +
                 '<div style="background:rgba(82,181,75,0.08);border:1px solid rgba(82,181,75,0.3);border-radius:6px;padding:12px 16px;margin-bottom:20px;font-size:0.9em;color:var(--theme-text-secondary);line-height:1.5;">' +
                 '<strong style="color:var(--theme-text);">Top Lists</strong> — Skapa en dedikerad hemskärmsektion från en tagg. ' +
                 'Observera att top-listor för tillfället <strong style="color:var(--theme-text);">enbart fungerar för filmer</strong>.' +
@@ -4401,7 +4410,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '</div>' +
                 '<div id="tlSectionsWrap" style="display:flex;gap:40px;align-items:flex-start;">' +
                 renderSection('Tags', tagsData.Tags || [], true, typeFilterDropdownHtml, existingTopLists) +
-                renderSection('Collections', collectionsData.Collections || [], false, undefined, existingTopLists) +
+                '</div>' +
                 '</div>';
 
             container.dataset.loaded = '1';
@@ -4562,7 +4571,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
             if (container._tlClickHandler) container.removeEventListener('click', container._tlClickHandler);
             container._tlClickHandler = function (e) {
-                var navLink = e.target.closest('.tl-nav-link');
+                var navLink = e.target.closest('.tl-nav-link, .tl-lib-nav-link');
                 if (navLink) {
                     var navId = navLink.dataset.navid;
                     var baseUrl = window.location.href.split('#')[0];

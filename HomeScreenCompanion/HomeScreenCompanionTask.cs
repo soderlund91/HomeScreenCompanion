@@ -2506,6 +2506,97 @@ namespace HomeScreenCompanion
             return removed;
         }
 
+        internal static int UpdateUntrackedSections(
+            IJsonSerializer jsonSerializer,
+            IUserManager userManager,
+            PluginConfiguration config,
+            IEnumerable<string> libraryIdsToExclude,
+            CancellationToken cancellationToken)
+        {
+            var allTrackedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var tag in config.Tags ?? new List<TagConfig>())
+                foreach (var tr in tag.HomeSectionTracked ?? new List<HomeSectionTracking>())
+                    if (!string.IsNullOrEmpty(tr.SectionId)) allTrackedIds.Add(tr.SectionId);
+            foreach (var topList in config.TopLists ?? new List<TopListHomeSection>())
+                foreach (var tr in topList.HomeSectionTracked ?? new List<HomeSectionTracking>())
+                    if (!string.IsNullOrEmpty(tr.SectionId)) allTrackedIds.Add(tr.SectionId);
+
+            var managedUserIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var tag in config.Tags ?? new List<TagConfig>())
+                foreach (var uid in tag.HomeSectionUserIds ?? new List<string>())
+                    managedUserIds.Add(uid);
+            foreach (var topList in config.TopLists ?? new List<TopListHomeSection>())
+                foreach (var uid in topList.HomeSectionUserIds ?? new List<string>())
+                    managedUserIds.Add(uid);
+
+            var libIds = libraryIdsToExclude
+                .Select(s => s.Trim().ToLowerInvariant()).Where(s => s.Length > 0)
+                .Distinct().ToList();
+            if (libIds.Count == 0) return 0;
+
+            var parentIdProp  = typeof(ContentSection).GetProperty("ParentId");
+            var exFoldersProp = typeof(ContentSection).GetProperty("ExcludedFolders");
+            var queryPropInfo = typeof(ContentSection).GetProperty("Query");
+            int updated = 0;
+
+            foreach (var userId in managedUserIds)
+            {
+                try
+                {
+                    var uid = userManager.GetInternalId(userId);
+                    var allSecs = userManager.GetHomeSections(uid, cancellationToken)?.Sections
+                        ?? Array.Empty<ContentSection>();
+
+                    foreach (var sec in allSecs)
+                    {
+                        if (string.IsNullOrEmpty(sec.Id)) continue;
+                        if (allTrackedIds.Contains(sec.Id)) continue;
+
+                        // Skip library-scoped sections — they already filter to one library
+                        var parentId = parentIdProp?.GetValue(sec) as string;
+                        if (!string.IsNullOrEmpty(parentId)) continue;
+
+                        // Collect current exclusions from ExcludedFolders and Query.ExcludeUserViewIds
+                        var existingExcluded = ((exFoldersProp?.GetValue(sec) as string[]) ?? Array.Empty<string>())
+                            .Select(s => s.Trim().ToLowerInvariant()).Where(s => s.Length > 0).ToList();
+                        try
+                        {
+                            var query = queryPropInfo?.GetValue(sec);
+                            if (query != null)
+                            {
+                                var excProp = query.GetType().GetProperty("ExcludeUserViewIds");
+                                var viewIds = excProp?.GetValue(query) as string[];
+                                if (viewIds != null)
+                                    existingExcluded.AddRange(
+                                        viewIds.Select(s => s.Trim().ToLowerInvariant()).Where(s => s.Length > 0));
+                            }
+                        }
+                        catch { }
+
+                        existingExcluded = existingExcluded.Distinct().ToList();
+                        var missing = libIds
+                            .Where(id => !existingExcluded.Contains(id, StringComparer.OrdinalIgnoreCase))
+                            .ToList();
+                        if (missing.Count == 0) continue;
+
+                        existingExcluded.AddRange(missing);
+                        var excStr = string.Join(",", existingExcluded);
+                        var minSettings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            ["_queryExcludeViewIds"] = excStr,
+                            ["ExcludedFolders"]      = excStr
+                        };
+                        var updatedSec = BuildContentSection(jsonSerializer, minSettings, string.Empty, sec);
+                        typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSec, sec.Id);
+                        userManager.UpdateHomeSection(uid, updatedSec, cancellationToken);
+                        updated++;
+                    }
+                }
+                catch { }
+            }
+            return updated;
+        }
+
         internal static ContentSection BuildContentSection(IJsonSerializer jsonSerializer, Dictionary<string, string> settings, string libraryId, ContentSection existing = null)
         {
             var section = existing ?? new ContentSection();
