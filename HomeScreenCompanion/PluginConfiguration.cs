@@ -84,6 +84,7 @@ namespace HomeScreenCompanion
     public class TopListHomeSection
     {
         public string TagName { get; set; } = "";
+        public int MaxItems { get; set; } = 0;
         public List<string> HomeSectionUserIds { get; set; } = new List<string>();
         public string HomeSectionLibraryId { get; set; } = "auto";
         public string HomeSectionSettings { get; set; } = "{}";

@@ -1187,6 +1187,7 @@ namespace HomeScreenCompanion
 
                 tagsRemoved += CleanupBoxSetTags(config, dryRun, cancellationToken);
                 if (!dryRun) ManageHomeSections(config, cancellationToken, debug, statsList);
+                SyncTopListFolders(config, dryRun);
 
                 progress.Report(100);
                 var elapsed = DateTime.Now - startTime;
@@ -3734,6 +3735,114 @@ namespace HomeScreenCompanion
 
             if (metaChanged)
                 _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null);
+        }
+
+        private void SyncTopListFolders(PluginConfiguration config, bool dryRun)
+        {
+            var dataPath = Plugin.Instance.DataFolderPath;
+            var topListsPath = Path.Combine(dataPath, "toplists");
+
+            var configuredNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var tl in config.TopLists ?? new List<TopListHomeSection>())
+                if (!string.IsNullOrWhiteSpace(tl.TagName))
+                    configuredNames.Add(SanitizeTopListFolderName(tl.TagName));
+
+            // Remove folders for tags that no longer exist in config
+            if (Directory.Exists(topListsPath))
+            {
+                foreach (var dir in Directory.GetDirectories(topListsPath))
+                {
+                    var folderName = Path.GetFileName(dir);
+                    if (!configuredNames.Contains(folderName))
+                    {
+                        if (!dryRun)
+                        {
+                            try { Directory.Delete(dir, true); }
+                            catch (Exception ex) { LogSummary($"Top-list cleanup: could not delete '{folderName}' — {ex.Message}", "Warn"); }
+                        }
+                        LogSummary($"Top-list folder removed (tag no longer configured): {folderName}");
+                    }
+                }
+            }
+
+            if (dryRun) return;
+
+            // Recreate .strm/.nfo files for each configured top-list
+            foreach (var tl in config.TopLists ?? new List<TopListHomeSection>())
+            {
+                if (string.IsNullOrWhiteSpace(tl.TagName)) continue;
+
+                var sanitized = SanitizeTopListFolderName(tl.TagName);
+                var folderPath = Path.Combine(topListsPath, sanitized);
+                Directory.CreateDirectory(folderPath);
+
+                foreach (var f in Directory.GetFiles(folderPath, "*.strm")) File.Delete(f);
+                foreach (var f in Directory.GetFiles(folderPath, "*.nfo")) File.Delete(f);
+
+                var items = _libraryManager.GetItemList(new InternalItemsQuery
+                {
+                    Tags = new[] { tl.TagName },
+                    IncludeItemTypes = new[] { "Movie" },
+                    Recursive = true,
+                    IsVirtualItem = false
+                }).ToList();
+
+                var rankFile = Path.Combine(dataPath, "tag_ranks", sanitized + ".json");
+                if (File.Exists(rankFile))
+                {
+                    try
+                    {
+                        var rankIds = _jsonSerializer.DeserializeFromFile<List<string>>(rankFile);
+                        if (rankIds?.Count > 0)
+                        {
+                            var rankMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                            for (int i = 0; i < rankIds.Count; i++)
+                                if (!string.IsNullOrEmpty(rankIds[i])) rankMap[rankIds[i]] = i;
+                            items = items.OrderBy(item =>
+                            {
+                                var imdb = item.GetProviderId("Imdb");
+                                return (!string.IsNullOrEmpty(imdb) && rankMap.TryGetValue(imdb, out var rank)) ? rank : int.MaxValue;
+                            }).ToList();
+                        }
+                    }
+                    catch { }
+                }
+
+                var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var selected = new List<(string BaseName, string Path)>();
+                foreach (var item in items)
+                {
+                    if (string.IsNullOrEmpty(item.Path)) continue;
+                    var baseName = SanitizeTopListFolderName(item.Name);
+                    if (item.ProductionYear.HasValue && item.ProductionYear > 0)
+                        baseName += $" ({item.ProductionYear})";
+                    if (!seenKeys.Add(baseName)) continue;
+                    selected.Add((baseName, item.Path));
+                }
+
+                if (tl.MaxItems > 0 && selected.Count > tl.MaxItems)
+                    selected = selected.Take(tl.MaxItems).ToList();
+
+                int digits = Math.Max(2, selected.Count.ToString().Length);
+                int count = 0;
+                foreach (var entry in selected)
+                {
+                    count++;
+                    var sortPrefix = count.ToString().PadLeft(digits, '0');
+                    File.WriteAllText(Path.Combine(folderPath, entry.BaseName + ".strm"), entry.Path);
+                    var nfo = $"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<movie>\n  <sorttitle>{sortPrefix}</sorttitle>\n  <lockedfields>SortName</lockedfields>\n</movie>";
+                    File.WriteAllText(Path.Combine(folderPath, entry.BaseName + ".nfo"), nfo);
+                }
+
+                LogSummary($"Top-list '{tl.TagName}': {count} .strm files synced");
+            }
+        }
+
+        private static string SanitizeTopListFolderName(string name)
+        {
+            var invalid = Path.GetInvalidFileNameChars();
+            var safe = new string((name ?? "unknown").Select(c => Array.IndexOf(invalid, c) >= 0 ? '_' : c).ToArray()).Trim('.');
+            return string.IsNullOrWhiteSpace(safe) ? "unknown" : safe;
         }
     }
 }

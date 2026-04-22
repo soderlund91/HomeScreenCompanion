@@ -50,6 +50,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     var lastHscConfig = {};
     var currentManageSections = [];
     var savedFilters = [];
+    var _topListTagNames = new Set();
 
     var customCss = `
     <style id="homeScreenCompanionCustomCss">
@@ -114,9 +115,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }
 
         .tag-indicator.collection {
-            color: var(--theme-text-primary);
-            background: rgba(128,128,128,0.12);
-            border: 1px solid rgba(128,128,128,0.3);
+            color: #8459ca;
+            background: rgba(126, 77, 172, 0.15);
+            border: 1px solid rgba(126, 77, 172, 0.35);
         }
 
         .tag-indicator.homescreen {
@@ -145,6 +146,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             color: #FFC107;
             background: rgba(255,193,7,0.15);
             border: 1px solid rgba(255,193,7,0.35);
+        }
+
+        .tag-indicator.toplist {
+            color: #fffb00;
+            background: rgba(255, 255, 0, 0.15);
+            border: 1px solid rgba(255, 255, 0, 0.35);
         }
 
         .tag-indicator.source {
@@ -1297,6 +1304,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         if (tagConfig.EnableTag) {
             indicatorsHtml += `<span class="tag-indicator tag"><i class="md-icon" style="font-size:1.1em;">label</i> Tag</span>`;
         }
+        if (_topListTagNames.has(tagName.toLowerCase())) {
+            indicatorsHtml += `<span class="tag-indicator toplist"><i class="md-icon" style="font-size:1.1em;">format_list_numbered</i> Top-List</span>`;
+        }
 
         var initialStyle = isNew ? 'display:block;' : 'display:none;';
         var initialIcon = isNew ? 'expand_less' : 'expand_more';
@@ -1365,7 +1375,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     <div class="source-external-container" style="display: ${sourceType === 'External' ? 'block' : 'none'};">
                         <div style="display:flex; align-items:baseline; gap:10px; margin:10px 0 10px 0;">
                             <p style="margin:0; font-size:0.9em; font-weight:bold; opacity:0.7;">Source URLs</p>
-                            <span style="font-size:0.75em; opacity:0.5;">— Find lists: <a href="https://trakt.tv/discover" target="_blank" style="color:inherit; text-decoration:underline;">Trakt</a> &middot; <a href="https://mdblist.com/toplists/" target="_blank" style="color:inherit; text-decoration:underline;">MDBList</a></span>
+                            <span style="font-size:0.75em; opacity:0.5;">— Find lists: <a href="https://trakt.tv/discover" target="_blank" style="color:inherit; text-decoration:underline;">Trakt</a> &middot; <a href="https://mdblist.com/toplists/" target="_blank" style="color:inherit; text-decoration:underline;">MDBList</a> &middot; <a href="https://www.themoviedb.org/" target="_blank" style="color:inherit; text-decoration:underline;">TMDb</a></span>
                         </div>
                         <div class="url-list-container">${urls.map(u => getUrlRowHtml(u.url, u.limit)).join('')}</div>
                         <div style="margin-top:10px;"><button is="emby-button" type="button" class="raised btnAddUrl" style="width:100%; background:transparent; border:2px dashed rgba(128,128,128,0.4); color:var(--theme-text-secondary);"><i class="md-icon" style="margin-right:5px;">add</i>Add another URL</button></div>
@@ -1659,6 +1669,25 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }
     }
 
+    function refreshTopListBadges() {
+        document.querySelectorAll('.tag-row').forEach(function (row) {
+            var container = row.querySelector('.badge-container');
+            if (!container) return;
+            var tagName = (row.dataset.tag || '').toLowerCase();
+            var existing = container.querySelector('.tag-indicator.toplist');
+            if (_topListTagNames.has(tagName)) {
+                if (!existing) {
+                    var span = document.createElement('span');
+                    span.className = 'tag-indicator toplist';
+                    span.innerHTML = '<i class="md-icon" style="font-size:1.1em;">format_list_numbered</i> Top-List';
+                    container.appendChild(span);
+                }
+            } else if (existing) {
+                existing.remove();
+            }
+        });
+    }
+
     function setupRowEvents(row) {
         function updateBadges(row) {
             var container = row.querySelector('.badge-container');
@@ -1695,6 +1724,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
             if (hasTag) {
                 html += `<span class="tag-indicator tag"><i class="md-icon" style="font-size:1.1em;">label</i> Tag</span>`;
+            }
+            if (_topListTagNames.has((row.dataset.tag || '').toLowerCase())) {
+                html += `<span class="tag-indicator toplist"><i class="md-icon" style="font-size:1.1em;">format_list_numbered</i> Top-List</span>`;
             }
             container.innerHTML = html;
         }
@@ -4207,6 +4239,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     }).catch(function () {}).then(function () { return prepareResult; });
                 })
                 .then(function (prepareResult) {
+                    _topListTagNames.add(tagName.toLowerCase());
+                    refreshTopListBadges();
                     var innerBox = modal.querySelector('div');
                     innerBox.innerHTML =
                         '<div style="text-align:center;padding:10px 0 20px;">' +
@@ -4394,9 +4428,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
             container.innerHTML =
                 '<div style="max-width:900px;">' +
-                '<div style="background:rgba(82,181,75,0.08);border:1px solid rgba(82,181,75,0.3);border-radius:6px;padding:12px 16px;margin-bottom:20px;font-size:0.9em;color:var(--theme-text-secondary);line-height:1.5;">' +
-                '<strong style="color:var(--theme-text);">Top Lists</strong> — Skapa en dedikerad hemskärmsektion från en tagg. ' +
-                'Observera att top-listor för tillfället <strong style="color:var(--theme-text);">enbart fungerar för filmer</strong>.' +
+                '<div style="border-radius:6px;padding:12px 16px;margin-bottom:20px;font-size:1em;color:var(--theme-text-secondary);line-height:1.5;">' +
+                '<strong style="color:var(--theme-text);">Top Lists</strong> — Create a top-list home section from a tag managed by the plugin. Top-list only work with movies.' +
                 '</div>' +
                 '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">' +
                 '<input type="text" id="tlSearch" placeholder="Search…" style="' + searchInputStyle + '" />' +
@@ -4576,8 +4609,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var navId = navLink.dataset.navid;
                     var baseUrl = window.location.href.split('#')[0];
                     var serverId = (window.ApiClient && window.ApiClient.serverId) ? window.ApiClient.serverId() : '';
-                    var url = baseUrl + '#!/item?id=' + encodeURIComponent(navId) +
+                    var url;
+                    if (navLink.classList.contains('tl-lib-nav-link')) {
+                        url = baseUrl + '#!/videos?' +
+                              (serverId ? 'serverId=' + encodeURIComponent(serverId) + '&' : '') +
+                              'parentId=' + encodeURIComponent(navId);
+                    } else {
+                        url = baseUrl + '#!/item?id=' + encodeURIComponent(navId) +
                               (serverId ? '&serverId=' + encodeURIComponent(serverId) : '');
+                    }
                     window.open(url, '_blank');
                     return;
                 }
@@ -4629,6 +4669,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             });
                         })
                         .then(function () {
+                            _topListTagNames.delete(deleteName.toLowerCase());
+                            refreshTopListBadges();
                             container.dataset.loaded = '';
                             loadTopListsTab(view);
                         })
@@ -5159,6 +5201,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             view.querySelector('#chkPreserveTagsOnEmptyResult').checked = config.PreserveTagsOnEmptyResult !== false;
 
                             var container = view.querySelector('#tagListContainer'); container.innerHTML = '';
+                            _topListTagNames = new Set((config.TopLists || []).map(function (tl) { return (tl.TagName || '').toLowerCase(); }).filter(Boolean));
                             var grouped = groupConfigTags(config.Tags);
 
                             var keys = Object.keys(grouped);
@@ -5253,6 +5296,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         t.HomeSectionTracked = existing.HomeSectionTracked;
                     }
                 });
+                configObj.TopLists = currentConfig.TopLists || [];
 
                 // Ensure all items-type home sections exclude top-list libraries automatically
                 return preFetchLibraryData().then(function(libData) {
@@ -5293,6 +5337,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 });
             }).then(r => {
                 window.Dashboard.processPluginConfigurationUpdateResult(r);
+                _topListTagNames = new Set((configObj.TopLists || []).map(function (tl) { return (tl.TagName || '').toLowerCase(); }).filter(Boolean));
 
                 var newGrouped = groupConfigTags(configObj.Tags);
                 view.querySelectorAll('.tag-row').forEach(row => {
@@ -5429,6 +5474,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 ].forEach(id => { var el = view.querySelector(id); if (el) el.checked = false; });
                 var lbl = view.querySelector('#filterDropdownLabel'); if (lbl) lbl.textContent = 'Filter';
                 var btn = view.querySelector('#btnFilterDropdown'); if (btn) btn.classList.remove('active');
+
+                _topListTagNames = new Set((config.TopLists || []).map(function (tl) { return (tl.TagName || '').toLowerCase(); }).filter(Boolean));
 
                 var grouped = groupConfigTags(config.Tags);
 
