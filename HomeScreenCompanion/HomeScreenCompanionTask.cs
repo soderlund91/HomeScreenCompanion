@@ -2581,15 +2581,27 @@ namespace HomeScreenCompanion
                         if (missing.Count == 0) continue;
 
                         existingExcluded.AddRange(missing);
-                        var excStr = string.Join(",", existingExcluded);
-                        var minSettings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                        var newExcluded = existingExcluded.ToArray();
+
+                        exFoldersProp?.SetValue(sec, newExcluded);
+                        try
                         {
-                            ["_queryExcludeViewIds"] = excStr,
-                            ["ExcludedFolders"]      = excStr
-                        };
-                        var updatedSec = BuildContentSection(jsonSerializer, minSettings, string.Empty, sec);
-                        typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSec, sec.Id);
-                        userManager.UpdateHomeSection(uid, updatedSec, cancellationToken);
+                            var query = queryPropInfo?.GetValue(sec);
+                            if (query != null)
+                            {
+                                var excViewProp = query.GetType().GetProperty("ExcludeUserViewIds");
+                                if (excViewProp?.CanWrite == true)
+                                {
+                                    if (excViewProp.PropertyType == typeof(string[]))
+                                        excViewProp.SetValue(query, newExcluded);
+                                    else if (excViewProp.PropertyType == typeof(Guid[]))
+                                        excViewProp.SetValue(query, newExcluded
+                                            .Select(id => Guid.TryParse(id, out var g) ? g : Guid.Empty).ToArray());
+                                }
+                            }
+                        }
+                        catch { }
+                        userManager.UpdateHomeSection(uid, sec, cancellationToken);
                         updated++;
                     }
                 }
