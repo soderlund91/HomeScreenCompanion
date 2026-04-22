@@ -143,15 +143,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }
 
         .tag-indicator.tag {
-            color: #FFC107;
-            background: rgba(255,193,7,0.15);
-            border: 1px solid rgba(255,193,7,0.35);
+            color: #909090;
+            background: rgba(80,80,80,0.18);
+            border: 1px solid rgba(80,80,80,0.35);
         }
 
         .tag-indicator.toplist {
-            color: #fffb00;
-            background: rgba(255, 255, 0, 0.15);
-            border: 1px solid rgba(255, 255, 0, 0.35);
+            color: #c9a84c;
+            background: rgba(180,140,50,0.15);
+            border: 1px solid rgba(180,140,50,0.4);
         }
 
         .tag-indicator.source {

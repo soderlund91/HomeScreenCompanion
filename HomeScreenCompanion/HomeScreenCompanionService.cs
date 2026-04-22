@@ -1,4 +1,5 @@
 ﻿using MediaBrowser.Common.Net;
+using SkiaSharp;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
@@ -952,10 +953,12 @@ public class HomeScreenCompanionService : IService
                 var folderPath = Path.Combine(dataPath, "toplists", sanitized);
                 Directory.CreateDirectory(folderPath);
 
-                // Remove stale .strm and .nfo files from a previous run
+                // Remove stale files from a previous run
                 foreach (var f in Directory.GetFiles(folderPath, "*.strm"))
                     File.Delete(f);
                 foreach (var f in Directory.GetFiles(folderPath, "*.nfo"))
+                    File.Delete(f);
+                foreach (var f in Directory.GetFiles(folderPath, "*.jpg"))
                     File.Delete(f);
 
                 // Write one .strm file per movie that carries this tag
@@ -991,7 +994,7 @@ public class HomeScreenCompanionService : IService
 
                 // First pass: deduplicate and preserve query order
                 var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var selected = new List<(string BaseName, string Path)>();
+                var selected = new List<(string BaseName, string FilePath, string? PosterPath)>();
                 foreach (var item in items)
                 {
                     if (string.IsNullOrEmpty(item.Path)) continue;
@@ -999,14 +1002,15 @@ public class HomeScreenCompanionService : IService
                     if (item.ProductionYear.HasValue && item.ProductionYear > 0)
                         baseName += $" ({item.ProductionYear})";
                     if (!seenKeys.Add(baseName)) continue;
-                    selected.Add((baseName, item.Path));
+                    var posterPath = item.ImageInfos?.FirstOrDefault(i => i.Type == ImageType.Primary)?.Path;
+                    selected.Add((baseName, item.Path, posterPath));
                 }
 
                 // Apply max-items limit before writing
                 if (request.MaxItems > 0 && selected.Count > request.MaxItems)
                     selected = selected.Take(request.MaxItems).ToList();
 
-                // Second pass: write .strm and .nfo (sorttitle carries the order prefix)
+                // Second pass: write .strm, .nfo and ranked poster
                 int digits = Math.Max(2, selected.Count.ToString().Length);
                 int count = 0;
                 foreach (var entry in selected)
@@ -1014,9 +1018,11 @@ public class HomeScreenCompanionService : IService
                     count++;
                     var sortPrefix = count.ToString().PadLeft(digits, '0');
                     var fileName = entry.BaseName;
-                    File.WriteAllText(Path.Combine(folderPath, fileName + ".strm"), entry.Path);
-                    var nfo = $"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<movie>\n  <sorttitle>{sortPrefix}</sorttitle>\n  <lockedfields>SortName</lockedfields>\n</movie>";
+                    File.WriteAllText(Path.Combine(folderPath, fileName + ".strm"), entry.FilePath);
+                    var nfo = $"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<movie>\n  <sorttitle>{sortPrefix}</sorttitle>\n  <lockedfields>SortName|Images</lockedfields>\n</movie>";
                     File.WriteAllText(Path.Combine(folderPath, fileName + ".nfo"), nfo);
+                    if (!string.IsNullOrEmpty(entry.PosterPath) && File.Exists(entry.PosterPath))
+                        CreateRankedPoster(entry.PosterPath, count, Path.Combine(folderPath, fileName + ".jpg"));
                 }
 
                 return new PrepareTopListFolderResponse { Success = true, FolderPath = folderPath, FilesCreated = count };
@@ -1025,6 +1031,49 @@ public class HomeScreenCompanionService : IService
             {
                 return new PrepareTopListFolderResponse { Success = false, Message = ex.Message };
             }
+        }
+
+        private void CreateRankedPoster(string sourcePath, int rank, string outputPath)
+        {
+            using var original = SKBitmap.Decode(sourcePath);
+            if (original == null) return;
+
+            using var surface = SKSurface.Create(new SKImageInfo(original.Width, original.Height));
+            var canvas = surface.Canvas;
+            canvas.DrawBitmap(original, 0, 0);
+
+            float radius = original.Width * 0.15f;
+            float margin = original.Width * 0.04f;
+            float cx = margin + radius;
+            float cy = margin + radius;
+
+            using var bgPaint = new SKPaint { Color = new SKColor(0, 0, 0, 210), IsAntialias = true };
+            canvas.DrawCircle(cx, cy, radius, bgPaint);
+
+            var text = rank.ToString();
+            float fontSize = rank < 10 ? radius * 1.1f : radius * 0.75f;
+
+            using var fontStream = System.Reflection.Assembly.GetExecutingAssembly()
+                .GetManifestResourceStream("HomeScreenCompanion.LemonMilk.otf");
+            using var typeface = fontStream != null ? SKTypeface.FromStream(fontStream) : SKTypeface.Default;
+            using var textPaint = new SKPaint
+            {
+                Color = SKColors.White,
+                TextSize = fontSize,
+                IsAntialias = true,
+                Typeface = typeface
+            };
+
+            float textWidth = textPaint.MeasureText(text);
+            var metrics = textPaint.FontMetrics;
+            float textX = cx - textWidth / 2;
+            float textY = cy - (metrics.Ascent + metrics.Descent) / 2;
+            canvas.DrawText(text, textX, textY, textPaint);
+
+            using var image = surface.Snapshot();
+            using var data = image.Encode(SKEncodedImageFormat.Jpeg, 92);
+            using var stream = File.OpenWrite(outputPath);
+            data.SaveTo(stream);
         }
 
         public object Get(GetTopListsRequest request)
