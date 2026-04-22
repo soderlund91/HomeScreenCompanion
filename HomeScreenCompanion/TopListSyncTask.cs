@@ -29,7 +29,7 @@ namespace HomeScreenCompanion
 
         public string Key => "TopListSyncTask";
         public string Name => "Top-list section sync";
-        public string Description => "Ensures each top-list home section only shows items from its own library, and that regular home sections never include top-list libraries.";
+        public string Description => "Run after manually creating a new library. Ensures each top-list home section only shows items from its own library, and that regular home sections never include top-list libraries.";
         public string Category => "Home Screen Companion";
 
         public IEnumerable<TaskTriggerInfo> GetDefaultTriggers() => Array.Empty<TaskTriggerInfo>();

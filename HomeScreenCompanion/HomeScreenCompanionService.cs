@@ -6,6 +6,7 @@ using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Querying;
 using MediaBrowser.Model.Serialization;
 using MediaBrowser.Model.Services;
+using MediaBrowser.Model.Tasks;
 using MediaBrowser.Model.Users;
 using System;
 using System.Collections.Generic;
@@ -178,8 +179,9 @@ public class HomeScreenCompanionService : IService
         private readonly ILibraryManager _libraryManager;
         private readonly IUserDataManager _userDataManager;
         private readonly IUserViewManager _userViewManager;
+        private readonly ITaskManager _taskManager;
 
-        public HomeScreenCompanionService(IHttpClient httpClient, IJsonSerializer jsonSerializer, IUserManager userManager, ILibraryManager libraryManager, IUserDataManager userDataManager, IUserViewManager userViewManager)
+        public HomeScreenCompanionService(IHttpClient httpClient, IJsonSerializer jsonSerializer, IUserManager userManager, ILibraryManager libraryManager, IUserDataManager userDataManager, IUserViewManager userViewManager, ITaskManager taskManager)
         {
             _httpClient = httpClient;
             _jsonSerializer = jsonSerializer;
@@ -187,6 +189,7 @@ public class HomeScreenCompanionService : IService
             _libraryManager = libraryManager;
             _userDataManager = userDataManager;
             _userViewManager = userViewManager;
+            _taskManager = taskManager;
         }
 
         public object Get(VersionRequest request)
@@ -1407,6 +1410,7 @@ public class HomeScreenCompanionService : IService
                     CancellationToken.None);
 
                 Plugin.Instance.SaveConfiguration();
+                _taskManager.QueueScheduledTask<TopListSyncTask>();
                 return new PrepareTopListHomeSectionsResponse { Success = true, UsersCreated = created, UsersUpdated = updated, Message = $"Synced: {created} created, {updated} updated." };
             }
             catch (Exception ex)
