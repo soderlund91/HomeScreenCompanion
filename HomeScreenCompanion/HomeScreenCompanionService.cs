@@ -134,6 +134,23 @@ namespace HomeScreenCompanion
     public class GetTopListsResponse
     {
         public List<string> FolderNames { get; set; } = new List<string>();
+        public Dictionary<string, int> MovieCounts { get; set; } = new Dictionary<string, int>();
+    }
+
+    [Route("/HomeScreenCompanion/TopList/ManualItems", "GET")]
+    public class GetManualTopListItemsRequest : IReturn<GetManualTopListItemsResponse>
+    {
+        public string ListName { get; set; } = "";
+    }
+    public class GetManualTopListItemsResponse
+    {
+        public bool Success { get; set; }
+        public List<MovieItem> Movies { get; set; } = new List<MovieItem>();
+        public string CustomName { get; set; } = "";
+        public string DisplayMode { get; set; } = "";
+        public string ImageType { get; set; } = "";
+        public List<string> UserIds { get; set; } = new List<string>();
+        public string Message { get; set; } = "";
     }
 
     [Route("/HomeScreenCompanion/TopList/Delete", "POST")]
@@ -169,6 +186,32 @@ namespace HomeScreenCompanion
         public bool Success { get; set; }
         public int UpdatedSections { get; set; }
         public string Message { get; set; } = "";
+    }
+
+    [Route("/HomeScreenCompanion/TopList/AllMovies", "GET")]
+    public class GetAllMoviesRequest : IReturn<GetAllMoviesResponse> { }
+    public class MovieItem
+    {
+        public string Name   { get; set; } = "";
+        public int?   Year   { get; set; }
+        public string ImdbId { get; set; } = "";
+        public string ItemId { get; set; } = "";
+    }
+    public class GetAllMoviesResponse
+    {
+        public List<MovieItem> Movies { get; set; } = new List<MovieItem>();
+    }
+
+    [Route("/HomeScreenCompanion/TopList/PrepareManualFolder", "POST")]
+    public class PrepareManualTopListFolderRequest : IReturn<PrepareTopListFolderResponse>
+    {
+        public string ListName { get; set; } = "";
+        public List<ManualTopListItem> Items { get; set; } = new List<ManualTopListItem>();
+    }
+    public class ManualTopListItem
+    {
+        public string ImdbId { get; set; } = "";
+        public string ItemId { get; set; } = "";
     }
 
 public class HomeScreenCompanionService : IService
@@ -1036,6 +1079,99 @@ public class HomeScreenCompanionService : IService
             }
         }
 
+        public object Get(GetAllMoviesRequest request)
+        {
+            try
+            {
+                var items = _libraryManager.GetItemList(new InternalItemsQuery
+                {
+                    IncludeItemTypes = new[] { "Movie" },
+                    Recursive = true,
+                    IsVirtualItem = false
+                });
+                var toplistsFolder = Path.Combine(Plugin.Instance.DataFolderPath, "toplists");
+                var movies = items
+                    .Where(i => !string.IsNullOrEmpty(i.Path)
+                             && !i.Path.StartsWith(toplistsFolder, StringComparison.OrdinalIgnoreCase))
+                    .Select(i => new MovieItem
+                    {
+                        Name   = i.Name ?? "",
+                        Year   = i.ProductionYear,
+                        ImdbId = i.GetProviderId("Imdb") ?? "",
+                        ItemId = i.Id.ToString("N")
+                    })
+                    .OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(m => m.Year)
+                    .ToList();
+                return new GetAllMoviesResponse { Movies = movies };
+            }
+            catch { return new GetAllMoviesResponse { Movies = new List<MovieItem>() }; }
+        }
+
+        public object Post(PrepareManualTopListFolderRequest request)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(request.ListName))
+                    return new PrepareTopListFolderResponse { Success = false, Message = "ListName is required." };
+
+                var dataPath   = Plugin.Instance.DataFolderPath;
+                var sanitized  = SanitizeFolderName(request.ListName);
+                var folderPath = Path.Combine(dataPath, "toplists", sanitized);
+                Directory.CreateDirectory(folderPath);
+
+                foreach (var f in Directory.GetFiles(folderPath, "*.strm")) File.Delete(f);
+                foreach (var f in Directory.GetFiles(folderPath, "*.nfo"))  File.Delete(f);
+                foreach (var f in Directory.GetFiles(folderPath, "*.jpg"))  File.Delete(f);
+
+                var items    = request.Items ?? new List<ManualTopListItem>();
+                var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var selected = new List<(string BaseName, string FilePath, string? PosterPath)>();
+
+                foreach (var entry in items)
+                {
+                    if (!Guid.TryParse(entry.ItemId, out var guid)) continue;
+                    var mediaItem = _libraryManager.GetItemById(guid);
+                    if (mediaItem == null || string.IsNullOrEmpty(mediaItem.Path)) continue;
+                    var baseName = SanitizeFolderName(mediaItem.Name);
+                    if (mediaItem.ProductionYear.HasValue && mediaItem.ProductionYear > 0)
+                        baseName += $" ({mediaItem.ProductionYear})";
+                    if (!seenKeys.Add(baseName)) continue;
+                    var posterPath = mediaItem.ImageInfos?.FirstOrDefault(i => i.Type == ImageType.Primary)?.Path;
+                    selected.Add((baseName, mediaItem.Path, posterPath));
+                }
+
+                int digits = Math.Max(2, selected.Count.ToString().Length);
+                int count  = 0;
+                foreach (var entry in selected)
+                {
+                    count++;
+                    var sortPrefix = count.ToString().PadLeft(digits, '0');
+                    File.WriteAllText(Path.Combine(folderPath, entry.BaseName + ".strm"), entry.FilePath);
+                    var nfo = $"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<movie>\n  <sorttitle>{sortPrefix}</sorttitle>\n  <lockedfields>SortName|Images</lockedfields>\n</movie>";
+                    File.WriteAllText(Path.Combine(folderPath, entry.BaseName + ".nfo"), nfo);
+                    if (!string.IsNullOrEmpty(entry.PosterPath) && File.Exists(entry.PosterPath))
+                        CreateRankedPoster(entry.PosterPath, count, Path.Combine(folderPath, entry.BaseName + ".jpg"));
+                }
+
+                try
+                {
+                    var rankDir = Path.Combine(dataPath, "tag_ranks");
+                    Directory.CreateDirectory(rankDir);
+                    var rankIds = items.Where(i => !string.IsNullOrWhiteSpace(i.ImdbId))
+                                       .Select(i => i.ImdbId).ToList();
+                    _jsonSerializer.SerializeToFile(rankIds, Path.Combine(rankDir, sanitized + ".json"));
+                }
+                catch { }
+
+                return new PrepareTopListFolderResponse { Success = true, FolderPath = folderPath, FilesCreated = count };
+            }
+            catch (Exception ex)
+            {
+                return new PrepareTopListFolderResponse { Success = false, Message = ex.Message };
+            }
+        }
+
         private void CreateRankedPoster(string sourcePath, int rank, string outputPath)
         {
             using var original = SKBitmap.Decode(sourcePath);
@@ -1086,16 +1222,115 @@ public class HomeScreenCompanionService : IService
                 var dataPath = Plugin.Instance.DataFolderPath;
                 var topListsPath = Path.Combine(dataPath, "toplists");
                 var folderNames = new List<string>();
+                var movieCounts = new Dictionary<string, int>();
                 if (Directory.Exists(topListsPath))
                 {
                     foreach (var dir in Directory.GetDirectories(topListsPath))
-                        folderNames.Add(Path.GetFileName(dir));
+                    {
+                        var name = Path.GetFileName(dir);
+                        folderNames.Add(name);
+                        movieCounts[name.ToLowerInvariant()] = Directory.GetFiles(dir, "*.strm").Length;
+                    }
                 }
-                return new GetTopListsResponse { FolderNames = folderNames };
+                return new GetTopListsResponse { FolderNames = folderNames, MovieCounts = movieCounts };
             }
             catch
             {
                 return new GetTopListsResponse { FolderNames = new List<string>() };
+            }
+        }
+
+        public object Get(GetManualTopListItemsRequest request)
+        {
+            try
+            {
+                var sanitized  = SanitizeFolderName(request.ListName);
+                var folderPath = Path.Combine(Plugin.Instance.DataFolderPath, "toplists", sanitized);
+                if (!Directory.Exists(folderPath))
+                    return new GetManualTopListItemsResponse { Success = false, Message = "Folder not found." };
+
+                var config   = Plugin.Instance.Configuration;
+                var tlConfig = (config.TopLists ?? new System.Collections.Generic.List<TopListHomeSection>())
+                    .FirstOrDefault(t => string.Equals(SanitizeFolderName(t.TagName), sanitized, StringComparison.OrdinalIgnoreCase));
+
+                var customName  = "";
+                var displayMode = "";
+                var imageType   = "";
+                var userIds     = new List<string>();
+                if (tlConfig != null)
+                {
+                    try
+                    {
+                        var settings = _jsonSerializer.DeserializeFromString<Dictionary<string, string>>(tlConfig.HomeSectionSettings ?? "{}") ?? new Dictionary<string, string>();
+                        customName  = settings.TryGetValue("CustomName",  out var cn) ? cn  : "";
+                        displayMode = settings.TryGetValue("DisplayMode", out var dm) ? dm  : "";
+                        imageType   = settings.TryGetValue("ImageType",   out var it) ? it  : "";
+                    }
+                    catch { }
+                    userIds = tlConfig.HomeSectionUserIds ?? new List<string>();
+                }
+
+                // Read .strm files sorted by rank from .nfo sorttitle
+                var strmFiles = Directory.GetFiles(folderPath, "*.strm");
+                var entries   = new List<(int Rank, string MoviePath)>();
+                foreach (var strmFile in strmFiles)
+                {
+                    var baseName = Path.GetFileNameWithoutExtension(strmFile);
+                    var nfoFile  = Path.Combine(folderPath, baseName + ".nfo");
+                    int rank     = int.MaxValue;
+                    if (File.Exists(nfoFile))
+                    {
+                        try
+                        {
+                            var nfoContent = File.ReadAllText(nfoFile);
+                            var match = System.Text.RegularExpressions.Regex.Match(nfoContent, @"<sorttitle>(\d+)</sorttitle>");
+                            if (match.Success) rank = int.Parse(match.Groups[1].Value);
+                        }
+                        catch { }
+                    }
+                    entries.Add((rank, File.ReadAllText(strmFile).Trim()));
+                }
+                entries.Sort((a, b) => a.Rank.CompareTo(b.Rank));
+
+                // Build path→item lookup once
+                var allItems = _libraryManager.GetItemList(new InternalItemsQuery
+                {
+                    IncludeItemTypes = new[] { "Movie" },
+                    Recursive = true,
+                    IsVirtualItem = false
+                })
+                .Where(i => !string.IsNullOrEmpty(i.Path))
+                .GroupBy(i => i.Path, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+                var movies = new List<MovieItem>();
+                foreach (var entry in entries)
+                {
+                    if (allItems.TryGetValue(entry.MoviePath, out var item))
+                    {
+                        movies.Add(new MovieItem
+                        {
+                            Name   = item.Name ?? "",
+                            Year   = item.ProductionYear,
+                            ImdbId = item.GetProviderId("Imdb") ?? "",
+                            ItemId = item.Id.ToString("N")
+                        });
+                    }
+                }
+
+                return new GetManualTopListItemsResponse
+                {
+                    Success     = true,
+                    Movies      = movies,
+                    CustomName  = customName,
+                    DisplayMode = displayMode,
+                    ImageType   = imageType,
+                    UserIds     = userIds
+                };
+            }
+            catch (Exception ex)
+            {
+                return new GetManualTopListItemsResponse { Success = false, Message = ex.Message };
             }
         }
 

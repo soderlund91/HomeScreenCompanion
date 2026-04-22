@@ -3992,6 +3992,167 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         });
     }
 
+    function executeTopListCreationSteps(tagName, displayName, selectedUserIds, displayMode, customName, imageType, maxItems, prepareResult, ui, onSuccess) {
+        var saveBtn = ui.saveBtn;
+        var errEl   = ui.errEl;
+        var modal   = ui.modal;
+        var tok = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+
+        saveBtn.innerHTML = 'Creating library <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
+
+        // Step 2: Create the virtual library
+        fetch(window.ApiClient.getUrl('Library/VirtualFolders'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Emby-Token': tok },
+            body: JSON.stringify({
+                Name: customName,
+                CollectionType: 'movies',
+                RefreshLibrary: false,
+                Paths: [prepareResult.FolderPath],
+                LibraryOptions: {
+                    EnableInternetProviders: true,
+                    TypeOptions: [{
+                        Type: 'Movie',
+                        MetadataFetchers: ['Nfo', 'TheMovieDb', 'TheTVDB'],
+                        MetadataFetcherOrder: ['Nfo', 'TheMovieDb', 'TheTVDB'],
+                        ImageFetchers: ['TheMovieDb', 'TheTVDB'],
+                        ImageFetcherOrder: ['TheMovieDb', 'TheTVDB']
+                    }]
+                }
+            })
+        }).then(function () { return prepareResult; })
+        .then(function (prepareResult) {
+            saveBtn.innerHTML = 'Saving settings <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
+
+            // Step 3: Find the newly created library to get its ItemId
+            return fetch(window.ApiClient.getUrl('Library/VirtualFolders'), {
+                headers: { 'X-MediaBrowser-Token': tok }
+            })
+            .then(function (r) { return r.json(); })
+            .then(function (folders) {
+                var match = (folders || []).find(function (f) {
+                    return (f.Locations || []).some(function (loc) {
+                        return loc.toLowerCase() === prepareResult.FolderPath.toLowerCase();
+                    });
+                });
+                var newLibId = match ? match.ItemId : null;
+
+                var userId = selectedUserIds[0];
+                var viewsPromise = userId
+                    ? fetch(window.ApiClient.getUrl('Users/' + userId + '/Views'), { headers: { 'X-MediaBrowser-Token': tok } })
+                        .then(function (r) { return r.json(); })
+                        .catch(function () { return { Items: [] }; })
+                    : Promise.resolve({ Items: [] });
+
+                return viewsPromise.then(function (viewsResult) {
+                    var allViewIds = new Set();
+                    (folders || []).forEach(function (f) { if (f.ItemId) allViewIds.add(f.ItemId); });
+                    ((viewsResult && viewsResult.Items) || []).forEach(function (v) { if (v.Id) allViewIds.add(v.Id); });
+                    var excludedViewIds = Array.from(allViewIds)
+                        .filter(function (id) { return !newLibId || id !== newLibId; })
+                        .join(',');
+                    return { prepareResult: prepareResult, libraryItemId: newLibId, excludedViewIds: excludedViewIds };
+                });
+            });
+        })
+        .then(function (ctx) {
+            // Step 4: Save top-list home section config
+            return window.ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                var topLists = config.TopLists || [];
+                var existing = topLists.find(function (t) {
+                    return (t.TagName || '').toLowerCase() === tagName.toLowerCase();
+                });
+                var hseSettings = JSON.stringify({
+                    SectionType: 'items',
+                    DisplayMode: displayMode,
+                    CustomName: customName,
+                    MaxItems: String(maxItems),
+                    ViewType: '',
+                    ImageType: imageType,
+                    SortBy: 'SortName',
+                    SortOrder: 'Ascending',
+                    ScrollDirection: '',
+                    ItemTypes: JSON.stringify(['Movie']),
+                    _queryIsPlayed: '',
+                    _queryExcludeViewIds: ctx.excludedViewIds,
+                    ExcludedFolders: ctx.excludedViewIds
+                });
+                if (existing) {
+                    existing.HomeSectionUserIds = selectedUserIds;
+                    existing.HomeSectionLibraryId = ctx.libraryItemId || 'auto';
+                    existing.HomeSectionSettings = hseSettings;
+                    existing.HomeSectionTracked = existing.HomeSectionTracked || [];
+                } else {
+                    topLists.push({
+                        TagName: tagName,
+                        HomeSectionUserIds: selectedUserIds,
+                        HomeSectionLibraryId: ctx.libraryItemId || 'auto',
+                        HomeSectionSettings: hseSettings,
+                        HomeSectionTracked: []
+                    });
+                }
+                config.TopLists = topLists;
+                return window.ApiClient.updatePluginConfiguration(pluginId, config)
+                    .then(function () { return { prepareResult: ctx.prepareResult, libraryItemId: ctx.libraryItemId }; });
+            });
+        })
+        .then(function (ctx2) {
+            // Step 5: Create home sections immediately
+            saveBtn.innerHTML = 'Creating home sections <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
+            var tok5 = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+            return fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/SyncHomeSections'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Emby-Token': tok5 },
+                body: JSON.stringify({ TagName: tagName })
+            })
+            .then(function (r) { return r.json(); })
+            .then(function (syncResult) {
+                if (!syncResult.Success) throw new Error(syncResult.Message || 'Failed to create home sections.');
+                return ctx2;
+            });
+        })
+        .then(function (ctx2) {
+            // Step 6: Scan the newly created library only
+            if (ctx2.libraryItemId) {
+                saveBtn.innerHTML = 'Scanning library <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
+                var tok6 = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+                return fetch(window.ApiClient.getUrl('Items/' + ctx2.libraryItemId + '/Refresh') + '?Recursive=true&MetadataRefreshMode=Default&ImageRefreshMode=Default', {
+                    method: 'POST',
+                    headers: { 'X-MediaBrowser-Token': tok6 }
+                }).catch(function () {}).then(function () { return ctx2.prepareResult; });
+            }
+            return ctx2.prepareResult;
+        })
+        .then(function (prepareResult) {
+            // Step 7: Sync all top-list home sections so exclusion lists are up to date
+            var tok7 = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+            return fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/SyncAllSections'), {
+                method: 'POST',
+                headers: { 'X-MediaBrowser-Token': tok7 }
+            }).catch(function () {}).then(function () { return prepareResult; });
+        })
+        .then(function (prepareResult) {
+            _topListTagNames.add(tagName.toLowerCase());
+            refreshTopListBadges();
+            var innerBox = modal.querySelector('div');
+            innerBox.innerHTML =
+                '<div style="text-align:center;padding:10px 0 20px;">' +
+                '<i class="md-icon" style="font-size:2.5em;color:#52B54B;display:block;margin-bottom:12px;">check_circle</i>' +
+                '<p style="margin:0 0 6px;font-size:1.05em;font-weight:500;">Top-list created!</p>' +
+                '<p style="margin:0;opacity:0.65;font-size:0.9em;">' + prepareResult.FilesCreated + ' movie' + (prepareResult.FilesCreated !== 1 ? 's' : '') + ' included.</p>' +
+                '</div>' +
+                '<div style="display:flex;justify-content:center;padding-top:16px;border-top:1px solid var(--line-color);margin-top:20px;">' +
+                '<button type="button" class="btnTlmDone" style="cursor:pointer;border:none;background:#52B54B;color:#fff;border-radius:3px;padding:8px 22px;font-size:0.9em;font-weight:500;">Close</button>' +
+                '</div>';
+            modal.querySelector('.btnTlmDone').addEventListener('click', function () { modal.remove(); if (typeof onSuccess === 'function') onSuccess(); });
+        })
+        .catch(function (err) {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '<i class="md-icon" style="font-size:1em;vertical-align:middle;margin-right:6px;">check</i>Save and apply';
+            errEl.textContent = err.message || String(err);
+        });
+    }
+
     function showTopListModal(tagName, displayName, onSuccess) {
         function escAttr(s) { return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;'); }
         function escHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
@@ -4103,155 +4264,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 .then(function (r) { return r.json(); })
                 .then(function (prepareResult) {
                     if (!prepareResult.Success) throw new Error(prepareResult.Message || 'Failed to create folder.');
-                    saveBtn.innerHTML = 'Creating library <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
-
-                    // Step 2: Create the virtual library
-                    return fetch(window.ApiClient.getUrl('Library/VirtualFolders'), {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'X-Emby-Token': tok },
-                        body: JSON.stringify({
-                            Name: customName,
-                            CollectionType: 'movies',
-                            RefreshLibrary: false,
-                            Paths: [prepareResult.FolderPath],
-                            LibraryOptions: {
-                                EnableInternetProviders: true,
-                                TypeOptions: [{
-                                    Type: 'Movie',
-                                    MetadataFetchers: ['Nfo', 'TheMovieDb', 'TheTVDB'],
-                                    MetadataFetcherOrder: ['Nfo', 'TheMovieDb', 'TheTVDB'],
-                                    ImageFetchers: ['TheMovieDb', 'TheTVDB'],
-                                    ImageFetcherOrder: ['TheMovieDb', 'TheTVDB']
-                                }]
-                            }
-                        })
-                    }).then(function () { return prepareResult; });
-                })
-                .then(function (prepareResult) {
-                    saveBtn.innerHTML = 'Saving settings <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
-
-                    // Step 3: Find the newly created library to get its ItemId
-                    return fetch(window.ApiClient.getUrl('Library/VirtualFolders'), {
-                        headers: { 'X-MediaBrowser-Token': tok }
-                    })
-                    .then(function (r) { return r.json(); })
-                    .then(function (folders) {
-                        var match = (folders || []).find(function (f) {
-                            return (f.Locations || []).some(function (loc) {
-                                return loc.toLowerCase() === prepareResult.FolderPath.toLowerCase();
-                            });
-                        });
-                        var newLibId = match ? match.ItemId : null;
-
-                        // Also fetch user views to capture special views (e.g. Live TV) not in VirtualFolders
-                        var userId = selectedUserIds[0];
-                        var viewsPromise = userId
-                            ? fetch(window.ApiClient.getUrl('Users/' + userId + '/Views'), { headers: { 'X-MediaBrowser-Token': tok } })
-                                .then(function (r) { return r.json(); })
-                                .catch(function () { return { Items: [] }; })
-                            : Promise.resolve({ Items: [] });
-
-                        return viewsPromise.then(function (viewsResult) {
-                            var allViewIds = new Set();
-                            (folders || []).forEach(function (f) { if (f.ItemId) allViewIds.add(f.ItemId); });
-                            ((viewsResult && viewsResult.Items) || []).forEach(function (v) { if (v.Id) allViewIds.add(v.Id); });
-                            var excludedViewIds = Array.from(allViewIds)
-                                .filter(function (id) { return !newLibId || id !== newLibId; })
-                                .join(',');
-                            return { prepareResult: prepareResult, libraryItemId: newLibId, excludedViewIds: excludedViewIds };
-                        });
-                    });
-                })
-                .then(function (ctx) {
-                    // Step 4: Save top-list home section config (separate from TAG & COLLECT tags)
-                    return window.ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-                        var topLists = config.TopLists || [];
-                        var existing = topLists.find(function (t) {
-                            return (t.TagName || '').toLowerCase() === tagName.toLowerCase();
-                        });
-                        var hseSettings = JSON.stringify({
-                            SectionType: 'items',
-                            DisplayMode: displayMode,
-                            CustomName: customName,
-                            MaxItems: String(maxItems),
-                            ViewType: '',
-                            ImageType: imageType,
-                            SortBy: 'SortName',
-                            SortOrder: 'Ascending',
-                            ScrollDirection: '',
-                            ItemTypes: JSON.stringify(['Movie']),
-                            _queryIsPlayed: '',
-                            _queryExcludeViewIds: ctx.excludedViewIds,
-                            ExcludedFolders: ctx.excludedViewIds
-                        });
-                        if (existing) {
-                            existing.HomeSectionUserIds = selectedUserIds;
-                            existing.HomeSectionLibraryId = ctx.libraryItemId || 'auto';
-                            existing.HomeSectionSettings = hseSettings;
-                            existing.HomeSectionTracked = existing.HomeSectionTracked || [];
-                        } else {
-                            topLists.push({
-                                TagName: tagName,
-                                HomeSectionUserIds: selectedUserIds,
-                                HomeSectionLibraryId: ctx.libraryItemId || 'auto',
-                                HomeSectionSettings: hseSettings,
-                                HomeSectionTracked: []
-                            });
-                        }
-                        config.TopLists = topLists;
-                        return window.ApiClient.updatePluginConfiguration(pluginId, config)
-                            .then(function () { return { prepareResult: ctx.prepareResult, libraryItemId: ctx.libraryItemId }; });
-                    });
-                })
-                .then(function (ctx2) {
-                    // Step 5: Create home sections immediately
-                    saveBtn.innerHTML = 'Creating home sections <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
-                    var tok5 = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
-                    return fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/SyncHomeSections'), {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'X-Emby-Token': tok5 },
-                        body: JSON.stringify({ TagName: tagName })
-                    })
-                    .then(function (r) { return r.json(); })
-                    .then(function (syncResult) {
-                        if (!syncResult.Success) throw new Error(syncResult.Message || 'Failed to create home sections.');
-                        return ctx2;
-                    });
-                })
-                .then(function (ctx2) {
-                    // Step 6: Scan the newly created library only
-                    if (ctx2.libraryItemId) {
-                        saveBtn.innerHTML = 'Scanning library <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
-                        var tok6 = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
-                        return fetch(window.ApiClient.getUrl('Items/' + ctx2.libraryItemId + '/Refresh') + '?Recursive=true&MetadataRefreshMode=Default&ImageRefreshMode=Default', {
-                            method: 'POST',
-                            headers: { 'X-MediaBrowser-Token': tok6 }
-                        }).catch(function () {}).then(function () { return ctx2.prepareResult; });
-                    }
-                    return ctx2.prepareResult;
-                })
-                .then(function (prepareResult) {
-                    // Step 7: Sync all top-list home sections so exclusion lists are up to date
-                    var tok7 = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
-                    return fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/SyncAllSections'), {
-                        method: 'POST',
-                        headers: { 'X-MediaBrowser-Token': tok7 }
-                    }).catch(function () {}).then(function () { return prepareResult; });
-                })
-                .then(function (prepareResult) {
-                    _topListTagNames.add(tagName.toLowerCase());
-                    refreshTopListBadges();
-                    var innerBox = modal.querySelector('div');
-                    innerBox.innerHTML =
-                        '<div style="text-align:center;padding:10px 0 20px;">' +
-                        '<i class="md-icon" style="font-size:2.5em;color:#52B54B;display:block;margin-bottom:12px;">check_circle</i>' +
-                        '<p style="margin:0 0 6px;font-size:1.05em;font-weight:500;">Top-list created!</p>' +
-                        '<p style="margin:0;opacity:0.65;font-size:0.9em;">' + prepareResult.FilesCreated + ' movie' + (prepareResult.FilesCreated !== 1 ? 's' : '') + ' included.</p>' +
-                        '</div>' +
-                        '<div style="display:flex;justify-content:center;padding-top:16px;border-top:1px solid var(--line-color);margin-top:20px;">' +
-                        '<button type="button" class="btnTlmDone" style="cursor:pointer;border:none;background:#52B54B;color:#fff;border-radius:3px;padding:8px 22px;font-size:0.9em;font-weight:500;">Close</button>' +
-                        '</div>';
-                    modal.querySelector('.btnTlmDone').addEventListener('click', function () { modal.remove(); if (typeof onSuccess === 'function') onSuccess(); });
+                    executeTopListCreationSteps(
+                        tagName, displayName, selectedUserIds, displayMode, customName, imageType, maxItems,
+                        prepareResult, { saveBtn: saveBtn, errEl: errEl, modal: modal }, onSuccess
+                    );
                 })
                 .catch(function (err) {
                     saveBtn.disabled = false;
@@ -4263,6 +4279,288 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             renderBox('<div style="color:#cc3333;padding:10px 0;">Failed to load: ' + (err.message || err) + '</div>' +
                 '<div style="margin-top:16px;text-align:right;"><button type="button" class="btnTlmClose" style="cursor:pointer;border:1px solid var(--line-color);background:transparent;color:inherit;border-radius:3px;padding:6px 14px;font-size:0.9em;">Close</button></div>');
             modal.querySelector('.btnTlmClose').addEventListener('click', function () { modal.remove(); });
+        });
+    }
+
+    // existingData = { listName, customName, displayMode, imageType, userIds: [], movies: [{ItemId,ImdbId,Name,Year}] }
+    function showManualTopListModal(onSuccess, existingData) {
+        function escAttr(s) { return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;'); }
+        function escHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+        var isEdit = !!existingData;
+        var inputStyle = 'background:rgba(128,128,128,0.08);border:1px solid var(--line-color);border-radius:4px;padding:6px 10px;font-size:0.9em;color:inherit;width:100%;box-sizing:border-box;';
+        var labelStyle = 'font-size:0.82em;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;opacity:0.65;display:block;margin-bottom:5px;';
+        var fieldStyle = 'margin-bottom:14px;';
+        var colHeaderStyle = 'font-size:0.75em;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#52B54B;padding-bottom:10px;margin-bottom:12px;border-bottom:1px solid rgba(82,181,75,0.3);';
+
+        var modal = document.createElement('div');
+        modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:center;justify-content:center;';
+        modal.innerHTML =
+            '<div style="background:var(--plugin-popup-bg,#2a2a2a);color:var(--plugin-popup-color,#e8e8e8);' +
+            'border:1px solid var(--plugin-popup-border,rgba(255,255,255,0.12));border-radius:8px;' +
+            'padding:28px;max-width:720px;width:95%;max-height:90vh;overflow-y:auto;">' +
+            '<div style="padding:10px 0;display:flex;align-items:center;gap:10px;">Loading <span class="tc-dot-loader"><span></span><span></span><span></span></span></div>' +
+            '</div>';
+        document.body.appendChild(modal);
+
+        function onEsc(e) { if (e.key === 'Escape') { modal.remove(); document.removeEventListener('keydown', onEsc); } }
+        document.addEventListener('keydown', onEsc);
+        modal.addEventListener('click', function (e) { if (e.target === modal) { modal.remove(); document.removeEventListener('keydown', onEsc); } });
+
+        var tok = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+
+        Promise.all([
+            fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/AllMovies'), {
+                headers: { 'X-MediaBrowser-Token': tok }
+            }).then(function (r) { return r.json(); }),
+            getHseUsers()
+        ])
+        .then(function (results) {
+            var allMovies = (results[0].Movies || []);
+            var users     = results[1];
+
+            var presetUserIds = (existingData && existingData.userIds) || [];
+
+            var usersHtml = users.length > 0
+                ? users.map(function (u) {
+                    var checked = presetUserIds.indexOf(u.Id) !== -1 ? ' checked' : '';
+                    return '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:4px 0;">' +
+                        '<input type="checkbox" class="chkMtlUser" value="' + escAttr(u.Id) + '"' + checked + '>' +
+                        '<span>' + escHtml(u.Name) + '</span></label>';
+                }).join('')
+                : '<em style="opacity:0.5">No users found</em>';
+
+            var movieOptionsHtml = allMovies.map(function (m) {
+                var label = m.Name + (m.Year ? ' (' + m.Year + ')' : '');
+                return '<option value="' + escAttr(m.ItemId) + '" ' +
+                    'data-imdbid="' + escAttr(m.ImdbId) + '" ' +
+                    'data-name="' + escAttr(m.Name) + '" ' +
+                    'data-year="' + escAttr(String(m.Year || '')) + '">' +
+                    escHtml(label) + '</option>';
+            }).join('');
+
+            var presetName       = (existingData && existingData.listName)    || '';
+            var presetCustomName = (existingData && existingData.customName)  || '';
+            var presetDisplay    = (existingData && existingData.displayMode) || '';
+            var presetImageType  = (existingData && existingData.imageType)   || '';
+
+            var displayOptions = [
+                { val: '',               label: 'Always' },
+                { val: 'tv',             label: 'When TV Display Mode is on' },
+                { val: 'mobile,desktop', label: 'When TV Display Mode is off' }
+            ].map(function (o) {
+                return '<option value="' + escAttr(o.val) + '"' + (o.val === presetDisplay ? ' selected' : '') + '>' + escHtml(o.label) + '</option>';
+            }).join('');
+
+            var imageOptions = [
+                { val: '',        label: 'Auto' },
+                { val: 'Primary', label: 'Primary' },
+                { val: 'Thumb',   label: 'Thumb' }
+            ].map(function (o) {
+                return '<option value="' + escAttr(o.val) + '"' + (o.val === presetImageType ? ' selected' : '') + '>' + escHtml(o.label) + '</option>';
+            }).join('');
+
+            var titleText    = isEdit ? 'Edit Manual Top-List' : 'Create Manual Top-List';
+            var createBtnLabel = isEdit ? 'Save changes' : 'Create top-list';
+
+            var innerBox = modal.querySelector('div');
+            innerBox.innerHTML =
+                // ── Header ──────────────────────────────────────────────────
+                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">' +
+                '<h3 style="margin:0;font-size:1.1em;color:#52B54B;">' + escHtml(titleText) + '</h3>' +
+                '<button type="button" class="btnMtlClose" style="background:transparent;border:none;color:inherit;cursor:pointer;padding:2px;opacity:0.6;line-height:1;"><i class="md-icon">close</i></button>' +
+                '</div>' +
+
+                // ── Two columns ──────────────────────────────────────────────
+                '<div style="display:flex;gap:0;align-items:stretch;">' +
+
+                // LEFT column: home section settings
+                '<div style="flex:1;min-width:0;padding-right:20px;border-right:1px solid var(--line-color);">' +
+                '<div style="' + colHeaderStyle + '"><i class="md-icon" style="font-size:0.9em;vertical-align:middle;margin-right:5px;">home</i>Home Section Settings</div>' +
+
+                '<div style="' + fieldStyle + '">' +
+                '<label style="' + labelStyle + '">List Name</label>' +
+                '<input type="text" class="mtlListName" style="' + inputStyle + '" placeholder="e.g. My Favorites"' + (isEdit ? ' readonly style="' + inputStyle + 'opacity:0.6;cursor:not-allowed;"' : '') + ' value="' + escAttr(presetName) + '" /></div>' +
+
+                '<div style="' + fieldStyle + '">' +
+                '<label style="' + labelStyle + '">Custom Title <span style="font-weight:400;text-transform:none;letter-spacing:0;opacity:0.7;">(shown on home screen)</span></label>' +
+                '<input type="text" class="mtlCustomName" style="' + inputStyle + '" placeholder="Defaults to list name" value="' + escAttr(presetCustomName) + '" /></div>' +
+
+                '<div style="' + fieldStyle + '"><span style="' + labelStyle + '">Target Users</span>' +
+                '<div>' + usersHtml + '</div></div>' +
+
+                '<div style="' + fieldStyle + '">' +
+                '<label style="' + labelStyle + '">Show this section</label>' +
+                '<select class="mtlDisplayMode" style="' + inputStyle + '">' + displayOptions + '</select></div>' +
+
+                '<div style="' + fieldStyle + '">' +
+                '<label style="' + labelStyle + '">Image Type</label>' +
+                '<select class="mtlImageType" style="' + inputStyle + '">' + imageOptions + '</select></div>' +
+                '</div>' +
+
+                // RIGHT column: movie list
+                '<div style="flex:1;min-width:0;padding-left:20px;">' +
+                '<div style="' + colHeaderStyle + '"><i class="md-icon" style="font-size:0.9em;vertical-align:middle;margin-right:5px;">format_list_numbered</i>Movie List</div>' +
+
+                '<div style="' + fieldStyle + '">' +
+                '<label style="' + labelStyle + '">Add Movie</label>' +
+                '<select class="mtlMovieSelect" style="' + inputStyle + 'height:36px;">' +
+                '<option value="">— Select a movie —</option>' +
+                movieOptionsHtml +
+                '</select></div>' +
+                '<button type="button" class="btnMtlAddMovie" style="cursor:pointer;border:none;background:#00a4dc;color:#fff;border-radius:3px;padding:6px 14px;font-size:0.88em;font-weight:500;display:flex;align-items:center;gap:4px;margin-bottom:14px;">' +
+                '<i class="md-icon" style="font-size:1em;">add</i>Add movie</button>' +
+
+                '<div class="mtlSelectedList" style="max-height:280px;overflow-y:auto;border:1px solid var(--line-color);border-radius:4px;padding:4px 8px;min-height:60px;"></div>' +
+                '</div>' +
+
+                '</div>' +
+
+                '<div class="mtl-error" style="color:#cc3333;font-size:0.85em;min-height:1.2em;margin-top:12px;margin-bottom:4px;"></div>' +
+                '<div style="border-top:1px solid var(--line-color);padding-top:16px;margin-top:8px;display:flex;gap:10px;align-items:center;justify-content:flex-end;">' +
+                '<button type="button" class="btnMtlCancel" style="cursor:pointer;border:1px solid var(--line-color);background:transparent;color:var(--theme-text-primary);border-radius:3px;padding:8px 18px;font-size:0.9em;">Cancel</button>' +
+                '<button type="button" class="btnMtlCreate" disabled style="cursor:pointer;border:none;background:#52B54B;color:#fff;border-radius:4px;padding:10px 26px;font-size:0.95em;font-weight:600;display:flex;align-items:center;gap:6px;">' +
+                '<i class="md-icon" style="font-size:1em;">playlist_add</i>' + escHtml(createBtnLabel) + '</button>' +
+                '</div>';
+
+            // In edit mode, set list name field readonly again (the value= attr trick above may not
+            // work if the readonly attr comes after a style attr — set it via JS to be safe)
+            if (isEdit) {
+                var nameInput = modal.querySelector('.mtlListName');
+                nameInput.readOnly = true;
+                nameInput.style.opacity = '0.6';
+                nameInput.style.cursor  = 'not-allowed';
+            }
+
+            var selectedMovies = (existingData && existingData.movies) ? existingData.movies.slice() : [];
+
+            function renderSelectedList() {
+                var listEl = modal.querySelector('.mtlSelectedList');
+                if (selectedMovies.length === 0) {
+                    listEl.innerHTML = '<div style="padding:8px 4px;opacity:0.5;font-size:0.9em;">No movies added yet.</div>';
+                    return;
+                }
+                listEl.innerHTML = selectedMovies.map(function (m, idx) {
+                    var label = escHtml(m.Name) + (m.Year ? ' (' + escHtml(String(m.Year)) + ')' : '');
+                    var upDis  = idx === 0 ? ' disabled' : '';
+                    var dnDis  = idx === selectedMovies.length - 1 ? ' disabled' : '';
+                    return '<div style="display:flex;align-items:center;gap:5px;padding:5px 2px;border-bottom:1px solid rgba(128,128,128,0.15);">' +
+                        '<span style="min-width:22px;font-size:0.8em;opacity:0.55;font-weight:600;text-align:right;">' + (idx + 1) + '.</span>' +
+                        '<span style="flex:1;font-size:0.88em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escAttr(m.Name) + '">' + label + '</span>' +
+                        '<button type="button" class="btnMtlUp" data-idx="' + idx + '"' + upDis + ' style="cursor:pointer;border:none;background:transparent;color:inherit;padding:2px 4px;opacity:0.7;font-size:0.9em;line-height:1;" title="Move up">▲</button>' +
+                        '<button type="button" class="btnMtlDown" data-idx="' + idx + '"' + dnDis + ' style="cursor:pointer;border:none;background:transparent;color:inherit;padding:2px 4px;opacity:0.7;font-size:0.9em;line-height:1;" title="Move down">▼</button>' +
+                        '<button type="button" class="btnMtlRemove" data-idx="' + idx + '" style="cursor:pointer;border:none;background:transparent;color:#cc3333;padding:2px 4px;font-size:0.9em;line-height:1;" title="Remove">✕</button>' +
+                        '</div>';
+                }).join('');
+            }
+
+            function updateCreateBtn() {
+                var nameVal  = (modal.querySelector('.mtlListName').value || '').trim();
+                var hasUsers = modal.querySelectorAll('.chkMtlUser:checked').length > 0;
+                modal.querySelector('.btnMtlCreate').disabled = (nameVal.length === 0 || selectedMovies.length === 0 || !hasUsers);
+            }
+
+            renderSelectedList();
+            updateCreateBtn();
+
+            modal.querySelector('.btnMtlClose').addEventListener('click', function () { modal.remove(); document.removeEventListener('keydown', onEsc); });
+            modal.querySelector('.btnMtlCancel').addEventListener('click', function () { modal.remove(); document.removeEventListener('keydown', onEsc); });
+
+            modal.querySelector('.mtlListName').addEventListener('input', updateCreateBtn);
+
+            modal.querySelectorAll('.chkMtlUser').forEach(function (cb) {
+                cb.addEventListener('change', updateCreateBtn);
+            });
+
+            modal.querySelector('.btnMtlAddMovie').addEventListener('click', function () {
+                var sel = modal.querySelector('.mtlMovieSelect');
+                var opt = sel.options[sel.selectedIndex];
+                if (!opt || !opt.value) return;
+                if (selectedMovies.some(function (m) { return m.ItemId === opt.value; })) return;
+                selectedMovies.push({
+                    ItemId: opt.value,
+                    ImdbId: opt.dataset.imdbid || '',
+                    Name:   opt.dataset.name   || '',
+                    Year:   opt.dataset.year   || ''
+                });
+                renderSelectedList();
+                updateCreateBtn();
+            });
+
+            modal.querySelector('.mtlSelectedList').addEventListener('click', function (e) {
+                var btn = e.target.closest('button');
+                if (!btn) return;
+                var idx = parseInt(btn.dataset.idx, 10);
+                if (isNaN(idx)) return;
+                var tmp;
+                if (btn.classList.contains('btnMtlUp') && idx > 0) {
+                    tmp = selectedMovies[idx - 1];
+                    selectedMovies[idx - 1] = selectedMovies[idx];
+                    selectedMovies[idx] = tmp;
+                } else if (btn.classList.contains('btnMtlDown') && idx < selectedMovies.length - 1) {
+                    tmp = selectedMovies[idx + 1];
+                    selectedMovies[idx + 1] = selectedMovies[idx];
+                    selectedMovies[idx] = tmp;
+                } else if (btn.classList.contains('btnMtlRemove')) {
+                    selectedMovies.splice(idx, 1);
+                }
+                renderSelectedList();
+                updateCreateBtn();
+            });
+
+            modal.querySelector('.btnMtlCreate').addEventListener('click', function () {
+                var createBtn  = this;
+                var errEl      = modal.querySelector('.mtl-error');
+                errEl.textContent = '';
+
+                var listName        = (modal.querySelector('.mtlListName').value || '').trim();
+                var customNameVal   = (modal.querySelector('.mtlCustomName').value || '').trim() || listName;
+                var displayMode     = modal.querySelector('.mtlDisplayMode').value;
+                var imageType       = modal.querySelector('.mtlImageType').value;
+                var selectedUserIds = Array.from(modal.querySelectorAll('.chkMtlUser:checked')).map(function (c) { return c.value; });
+
+                if (!listName)                    { errEl.textContent = 'Please enter a name for the list.'; return; }
+                if (selectedUserIds.length === 0) { errEl.textContent = 'Please select at least one target user.'; return; }
+                if (selectedMovies.length === 0)  { errEl.textContent = 'Please add at least one movie.'; return; }
+
+                createBtn.disabled = true;
+                createBtn.innerHTML = 'Preparing files <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
+
+                var tok2 = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+                fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/PrepareManualFolder'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Emby-Token': tok2 },
+                    body: JSON.stringify({
+                        ListName: listName,
+                        Items: selectedMovies.map(function (m) { return { ImdbId: m.ImdbId, ItemId: m.ItemId }; })
+                    })
+                })
+                .then(function (r) { return r.json(); })
+                .then(function (prepareResult) {
+                    if (!prepareResult.Success) throw new Error(prepareResult.Message || 'Failed to create folder.');
+                    executeTopListCreationSteps(
+                        listName, customNameVal, selectedUserIds, displayMode, customNameVal, imageType, 0,
+                        prepareResult, { saveBtn: createBtn, errEl: errEl, modal: modal }, function () {
+                            document.removeEventListener('keydown', onEsc);
+                            if (typeof onSuccess === 'function') onSuccess();
+                        }
+                    );
+                })
+                .catch(function (err) {
+                    createBtn.disabled = false;
+                    createBtn.innerHTML = '<i class="md-icon" style="font-size:1em;">playlist_add</i>' + escHtml(createBtnLabel);
+                    errEl.textContent = err.message || String(err);
+                });
+            });
+        })
+        .catch(function (err) {
+            var innerBox = modal.querySelector('div');
+            innerBox.innerHTML =
+                '<div style="color:#cc3333;padding:10px 0;">Failed to load: ' + (err.message || String(err)).replace(/</g, '&lt;') + '</div>' +
+                '<div style="margin-top:16px;text-align:right;">' +
+                '<button type="button" class="btnMtlClose" style="cursor:pointer;border:1px solid var(--line-color);background:transparent;color:inherit;border-radius:3px;padding:6px 14px;font-size:0.9em;">Close</button>' +
+                '</div>';
+            modal.querySelector('.btnMtlClose').addEventListener('click', function () { modal.remove(); document.removeEventListener('keydown', onEsc); });
         });
     }
 
@@ -4426,6 +4724,50 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                   '</div></div>'
                 : '';
 
+            // Identify manual top-lists: in config.TopLists but NOT a real Emby tag name
+            var realTagNamesLower = new Set((tagsData.Tags || []).map(function (t) { return (t.Name || '').toLowerCase(); }));
+            var manualTopLists = (pluginConfig.TopLists || []).filter(function (tl) {
+                if (!tl.TagName) return false;
+                var key = sanitizeTlName(tl.TagName).toLowerCase();
+                return existingTopLists.has(key) && !realTagNamesLower.has(tl.TagName.toLowerCase());
+            });
+
+            function renderManualSection(items) {
+                if (items.length === 0) return '';
+                var rows = items.map(function (tl) {
+                    var key        = sanitizeTlName(tl.TagName).toLowerCase();
+                    var customName = topListCustomNameMap[key] || tl.TagName;
+                    var libraryId  = topListLibraryIdMap[key] || '';
+                    var count      = (results[3].MovieCounts || {})[key] || 0;
+                    var nameCell   = libraryId
+                        ? '<a class="tl-lib-nav-link" href="javascript:void(0)" data-navid="' + escAttr(libraryId) + '" style="color:inherit;text-decoration:none;cursor:pointer;" onmouseover="this.style.textDecoration=\'underline\'" onmouseout="this.style.textDecoration=\'none\'">' + escHtml(tl.TagName) + '</a>'
+                        : escHtml(tl.TagName);
+                    return '<tr>' +
+                        '<td style="padding:9px 4px;border-bottom:1px solid var(--line-color);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + nameCell + '</td>' +
+                        '<td style="padding:9px 4px 9px 16px;border-bottom:1px solid var(--line-color);width:100%;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.88em;font-style:italic;color:var(--theme-text-secondary);">' + escHtml(customName !== tl.TagName ? customName : '') + '</td>' +
+                        '<td style="padding:9px 4px 9px 16px;border-bottom:1px solid var(--line-color);white-space:nowrap;color:var(--theme-text-secondary);font-size:0.88em;">' + count + ' movies</td>' +
+                        '<td style="padding:9px 4px 9px 8px;border-bottom:1px solid var(--line-color);white-space:nowrap;">' +
+                        '<button type="button" class="btnMtlEdit" style="' + btnStyle + 'background:#00a4dc;color:#fff;margin-right:4px;" data-name="' + escAttr(tl.TagName) + '">Edit</button>' +
+                        '<button type="button" class="btnTlDelete" style="' + btnStyle + 'background:#c45454;color:#fff;" data-name="' + escAttr(tl.TagName) + '" data-id="" data-count="' + count + '" data-type="tag">Delete</button>' +
+                        '</td>' +
+                        '</tr>';
+                }).join('');
+
+                return '<div style="margin-top:36px;">' +
+                    '<div style="display:flex;align-items:center;gap:30px;margin-bottom:12px;">' +
+                    '<h3 style="margin:0;font-size:1em;text-transform:uppercase;letter-spacing:1px;color:#52B54B;">Manual Top-Lists</h3>' +
+                    '</div>' +
+                    '<table style="width:100%;border-collapse:collapse;">' +
+                    '<thead><tr>' +
+                    '<th style="padding:4px 4px 8px;text-align:left;font-size:0.78em;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--theme-text-secondary);border-bottom:2px solid var(--line-color);width:30%;">Name</th>' +
+                    '<th style="padding:4px 4px 8px 16px;text-align:left;font-size:0.78em;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--theme-text-secondary);border-bottom:2px solid var(--line-color);width:40%;">Custom Title</th>' +
+                    '<th style="padding:4px 4px 8px 16px;text-align:left;font-size:0.78em;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--theme-text-secondary);border-bottom:2px solid var(--line-color);">Movies</th>' +
+                    '<th style="padding:4px 4px 8px 8px;border-bottom:2px solid var(--line-color);"></th>' +
+                    '</tr></thead>' +
+                    '<tbody>' + rows + '</tbody></table>' +
+                    '</div>';
+            }
+
             container.innerHTML =
                 '<div style="max-width:900px;">' +
                 '<div style="border-radius:6px;padding:12px 16px;margin-bottom:20px;font-size:1em;color:var(--theme-text-secondary);line-height:1.5;">' +
@@ -4440,13 +4782,26 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<option value="count-asc">Fewest items</option>' +
                 '<option value="managed">Managed first</option>' +
                 '</select>' +
+                '<button type="button" id="btnCreateManualTopList" style="cursor:pointer;border:none;background:#52B54B;color:#fff;padding:5px 14px;border-radius:3px;font-size:0.88em;font-weight:500;display:flex;align-items:center;gap:5px;margin-left:auto;">' +
+                '<i class="md-icon" style="font-size:1em;">playlist_add</i>Create manual Top-List</button>' +
                 '</div>' +
                 '<div id="tlSectionsWrap" style="display:flex;gap:40px;align-items:flex-start;">' +
                 renderSection('Tags', tagsData.Tags || [], true, typeFilterDropdownHtml, existingTopLists) +
                 '</div>' +
+                renderManualSection(manualTopLists) +
                 '</div>';
 
             container.dataset.loaded = '1';
+
+            var btnManual = container.querySelector('#btnCreateManualTopList');
+            if (btnManual) {
+                btnManual.addEventListener('click', function () {
+                    showManualTopListModal(function () {
+                        container.dataset.loaded = '';
+                        loadTopListsTab(view);
+                    });
+                });
+            }
 
             function getSelectedTypeGroups() {
                 return Array.from(container.querySelectorAll('.cbTlTypeFilter:checked')).map(function (cb) { return cb.dataset.group; });
@@ -4624,6 +4979,39 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 var btn = e.target.closest('button');
                 if (!btn) return;
+
+                if (btn.classList.contains('btnMtlEdit')) {
+                    var editName  = btn.dataset.name;
+                    var editToken = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+                    btn.disabled = true;
+                    btn.textContent = 'Loading…';
+                    fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/ManualItems') + '?ListName=' + encodeURIComponent(editName), {
+                        headers: { 'X-MediaBrowser-Token': editToken }
+                    })
+                    .then(function (r) { return r.json(); })
+                    .then(function (data) {
+                        btn.disabled = false;
+                        btn.textContent = 'Edit';
+                        if (!data.Success) { alert('Could not load top-list data: ' + (data.Message || 'Unknown error')); return; }
+                        showManualTopListModal(function () {
+                            container.dataset.loaded = '';
+                            loadTopListsTab(view);
+                        }, {
+                            listName:    editName,
+                            customName:  data.CustomName  || '',
+                            displayMode: data.DisplayMode || '',
+                            imageType:   data.ImageType   || '',
+                            userIds:     data.UserIds     || [],
+                            movies:      data.Movies      || []
+                        });
+                    })
+                    .catch(function (err) {
+                        btn.disabled = false;
+                        btn.textContent = 'Edit';
+                        alert('Failed to load: ' + (err.message || err));
+                    });
+                    return;
+                }
 
                 if (btn.classList.contains('btnTlCreate')) {
                     var createName = btn.dataset.name;
