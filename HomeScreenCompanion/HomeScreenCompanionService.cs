@@ -1164,6 +1164,37 @@ public class HomeScreenCompanionService : IService
                 }
                 catch { }
 
+                // Update ForcedSortName directly in the library database so the new order applies
+                // immediately. MetadataRefreshMode=Default (used in the UI scan) won't override
+                // locked SortName fields, so we must push the change through UpdateItem.
+                try
+                {
+                    var sortPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    for (int si = 0; si < selected.Count; si++)
+                        sortPaths[Path.Combine(folderPath, selected[si].BaseName + ".strm")]
+                            = (si + 1).ToString().PadLeft(digits, '0');
+
+                    var libItems = _libraryManager.GetItemList(new InternalItemsQuery
+                    {
+                        Recursive = true,
+                        IncludeItemTypes = new[] { "Movie" },
+                        IsVirtualItem = false
+                    }).Where(i => !string.IsNullOrEmpty(i.Path)
+                               && i.Path.StartsWith(folderPath + Path.DirectorySeparatorChar,
+                                                    StringComparison.OrdinalIgnoreCase))
+                      .ToList();
+
+                    foreach (var li in libItems)
+                    {
+                        if (!sortPaths.TryGetValue(li.Path, out var newSort)) continue;
+                        var prop = li.GetType().GetProperty("SortName");
+                        if (prop?.CanWrite == true) prop.SetValue(li, newSort);
+                        try { _libraryManager.UpdateItem(li, li.Parent, ItemUpdateType.MetadataEdit, null); }
+                        catch { }
+                    }
+                }
+                catch { }
+
                 return new PrepareTopListFolderResponse { Success = true, FolderPath = folderPath, FilesCreated = count };
             }
             catch (Exception ex)

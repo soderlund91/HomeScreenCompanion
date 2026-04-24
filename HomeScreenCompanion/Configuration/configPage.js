@@ -31,6 +31,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             root.style.setProperty('--plugin-popup-badge',  'rgba(255,255,255,0.1)');
             root.style.setProperty('--plugin-input-border', 'rgba(255,255,255,0.2)');
             root.style.setProperty('--plugin-input-bg',     'rgba(255,255,255,0.08)');
+            root.dataset.pluginTheme = 'dark';
         } else {
             root.style.setProperty('--plugin-popup-bg',     '#f2f2f2');
             root.style.setProperty('--plugin-popup-bg2',    '#e0e0e0');
@@ -41,6 +42,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             root.style.setProperty('--plugin-popup-badge',  'rgba(0,0,0,0.1)');
             root.style.setProperty('--plugin-input-border', 'rgba(0,0,0,0.28)');
             root.style.setProperty('--plugin-input-bg',     'rgba(0,0,0,0.04)');
+            root.dataset.pluginTheme = 'light';
         }
     }
 
@@ -366,18 +368,30 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             align-items: center;
             gap: 5px;
             padding: 5px 10px;
-            background: rgba(128,128,128,0.08);
-            border: 1px solid var(--line-color);
+            background: var(--plugin-input-bg, rgba(128,128,128,0.08));
+            border: 1px solid var(--plugin-input-border, var(--line-color));
             border-radius: 4px;
             font-size: 0.9em;
             cursor: pointer;
-            color: inherit;
+            color: var(--plugin-popup-color, inherit);
             white-space: nowrap;
             user-select: none;
         }
 
         .filter-dropdown-btn:hover {
-            background: rgba(128,128,128,0.15);
+            background: var(--plugin-popup-hover, rgba(128,128,128,0.15));
+        }
+
+        html[data-plugin-theme="dark"] select,
+        html[data-plugin-theme="dark"] input[type="text"],
+        html[data-plugin-theme="dark"] input[type="number"] {
+            color-scheme: dark;
+        }
+
+        html[data-plugin-theme="light"] select,
+        html[data-plugin-theme="light"] input[type="text"],
+        html[data-plugin-theme="light"] input[type="number"] {
+            color-scheme: light;
         }
 
         .filter-dropdown-btn.active {
@@ -4000,59 +4014,82 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
         saveBtn.innerHTML = 'Creating library <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
 
-        // Step 2: Create the virtual library
+        // Steps 2+3: Check if the virtual library already exists before creating it.
+        // POSTing to Library/VirtualFolders — even for an already-existing library — causes
+        // Emby to update all users' policies and fire "User Policy Updated" notifications.
+        // By skipping the POST when the library is already present we avoid spurious notifications.
         fetch(window.ApiClient.getUrl('Library/VirtualFolders'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Emby-Token': tok },
-            body: JSON.stringify({
-                Name: customName,
-                CollectionType: 'movies',
-                RefreshLibrary: false,
-                Paths: [prepareResult.FolderPath],
-                LibraryOptions: {
-                    EnableInternetProviders: true,
-                    TypeOptions: [{
-                        Type: 'Movie',
-                        MetadataFetchers: ['Nfo', 'TheMovieDb', 'TheTVDB'],
-                        MetadataFetcherOrder: ['Nfo', 'TheMovieDb', 'TheTVDB'],
-                        ImageFetchers: ['TheMovieDb', 'TheTVDB'],
-                        ImageFetcherOrder: ['TheMovieDb', 'TheTVDB']
-                    }]
-                }
-            })
-        }).then(function () { return prepareResult; })
-        .then(function (prepareResult) {
+            headers: { 'X-MediaBrowser-Token': tok }
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (existingFolders) {
+            // Normalize path separators and strip trailing slashes before comparing,
+            // since the C# backend uses backslashes on Windows while Emby's API may
+            // return forward slashes (or vice versa).
+            function normLibPath(p) { return (p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase(); }
+            var targetPath = normLibPath(prepareResult.FolderPath);
+            var alreadyExists = (existingFolders || []).some(function (f) {
+                return (f.Locations || []).some(function (loc) {
+                    return normLibPath(loc) === targetPath;
+                });
+            });
+            if (alreadyExists) {
+                return Promise.resolve(existingFolders);
+            }
+            // Library doesn't exist yet — create it, then re-fetch the updated list.
+            return fetch(window.ApiClient.getUrl('Library/VirtualFolders'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Emby-Token': tok },
+                body: JSON.stringify({
+                    Name: customName,
+                    CollectionType: 'movies',
+                    RefreshLibrary: false,
+                    Paths: [prepareResult.FolderPath],
+                    LibraryOptions: {
+                        EnableInternetProviders: true,
+                        TypeOptions: [{
+                            Type: 'Movie',
+                            MetadataFetchers: ['Nfo', 'TheMovieDb', 'TheTVDB'],
+                            MetadataFetcherOrder: ['Nfo', 'TheMovieDb', 'TheTVDB'],
+                            ImageFetchers: ['TheMovieDb', 'TheTVDB'],
+                            ImageFetcherOrder: ['TheMovieDb', 'TheTVDB']
+                        }]
+                    }
+                })
+            }).catch(function () {})
+            .then(function () {
+                return fetch(window.ApiClient.getUrl('Library/VirtualFolders'), {
+                    headers: { 'X-MediaBrowser-Token': tok }
+                }).then(function (r) { return r.json(); });
+            });
+        })
+        .then(function (folders) {
             saveBtn.innerHTML = 'Saving settings <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
 
-            // Step 3: Find the newly created library to get its ItemId
-            return fetch(window.ApiClient.getUrl('Library/VirtualFolders'), {
-                headers: { 'X-MediaBrowser-Token': tok }
-            })
-            .then(function (r) { return r.json(); })
-            .then(function (folders) {
-                var match = (folders || []).find(function (f) {
-                    return (f.Locations || []).some(function (loc) {
-                        return loc.toLowerCase() === prepareResult.FolderPath.toLowerCase();
-                    });
+            // Find the library by its folder path to get its ItemId
+            function normLibPath2(p) { return (p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase(); }
+            var match = (folders || []).find(function (f) {
+                return (f.Locations || []).some(function (loc) {
+                    return normLibPath2(loc) === normLibPath2(prepareResult.FolderPath);
                 });
-                var newLibId = match ? match.ItemId : null;
+            });
+            var newLibId = match ? match.ItemId : null;
 
-                var userId = selectedUserIds[0];
-                var viewsPromise = userId
-                    ? fetch(window.ApiClient.getUrl('Users/' + userId + '/Views'), { headers: { 'X-MediaBrowser-Token': tok } })
-                        .then(function (r) { return r.json(); })
-                        .catch(function () { return { Items: [] }; })
-                    : Promise.resolve({ Items: [] });
+            var userId = selectedUserIds[0];
+            var viewsPromise = userId
+                ? fetch(window.ApiClient.getUrl('Users/' + userId + '/Views'), { headers: { 'X-MediaBrowser-Token': tok } })
+                    .then(function (r) { return r.json(); })
+                    .catch(function () { return { Items: [] }; })
+                : Promise.resolve({ Items: [] });
 
-                return viewsPromise.then(function (viewsResult) {
-                    var allViewIds = new Set();
-                    (folders || []).forEach(function (f) { if (f.ItemId) allViewIds.add(f.ItemId); });
-                    ((viewsResult && viewsResult.Items) || []).forEach(function (v) { if (v.Id) allViewIds.add(v.Id); });
-                    var excludedViewIds = Array.from(allViewIds)
-                        .filter(function (id) { return !newLibId || id !== newLibId; })
-                        .join(',');
-                    return { prepareResult: prepareResult, libraryItemId: newLibId, excludedViewIds: excludedViewIds };
-                });
+            return viewsPromise.then(function (viewsResult) {
+                var allViewIds = new Set();
+                (folders || []).forEach(function (f) { if (f.ItemId) allViewIds.add(f.ItemId); });
+                ((viewsResult && viewsResult.Items) || []).forEach(function (v) { if (v.Id) allViewIds.add(v.Id); });
+                var excludedViewIds = Array.from(allViewIds)
+                    .filter(function (id) { return !newLibId || id !== newLibId; })
+                    .join(',');
+                return { prepareResult: prepareResult, libraryItemId: newLibId, excludedViewIds: excludedViewIds };
             });
         })
         .then(function (ctx) {
@@ -4157,7 +4194,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         function escAttr(s) { return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;'); }
         function escHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
-        var inputStyle = 'background:rgba(128,128,128,0.08);border:1px solid var(--line-color);border-radius:4px;padding:6px 10px;font-size:0.9em;color:inherit;width:100%;box-sizing:border-box;';
+        var inputStyle = 'background:var(--plugin-input-bg);border:1px solid var(--plugin-input-border);border-radius:4px;padding:6px 10px;font-size:0.9em;color:var(--plugin-popup-color);width:100%;box-sizing:border-box;';
         var labelStyle = 'font-size:0.82em;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;opacity:0.65;display:block;margin-bottom:5px;';
         var fieldStyle = 'margin-bottom:16px;';
 
@@ -4288,7 +4325,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         function escHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
         var isEdit = !!existingData;
-        var inputStyle = 'background:rgba(128,128,128,0.08);border:1px solid var(--line-color);border-radius:4px;padding:6px 10px;font-size:0.9em;color:inherit;width:100%;box-sizing:border-box;';
+        var inputStyle = 'background:var(--plugin-input-bg);border:1px solid var(--plugin-input-border);border-radius:4px;padding:6px 10px;font-size:0.9em;color:var(--plugin-popup-color);width:100%;box-sizing:border-box;';
         var labelStyle = 'font-size:0.82em;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;opacity:0.65;display:block;margin-bottom:5px;';
         var fieldStyle = 'margin-bottom:14px;';
         var colHeaderStyle = 'font-size:0.75em;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#52B54B;padding-bottom:10px;margin-bottom:12px;border-bottom:1px solid rgba(82,181,75,0.3);';
@@ -4680,7 +4717,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     '</div>';
             }
 
-            var searchInputStyle = 'background:rgba(128,128,128,0.08);border:1px solid var(--line-color);border-radius:4px;padding:5px 10px;font-size:0.9em;color:inherit;width:400px;max-width:100%;';
+            var searchInputStyle = 'background:var(--plugin-input-bg);border:1px solid var(--plugin-input-border);border-radius:4px;padding:5px 10px;font-size:0.9em;color:var(--plugin-popup-color);width:400px;max-width:100%;';
 
             var tlTypeGroups = [
                 { label: 'Movies',       types: ['movie'] },
@@ -4733,7 +4770,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             });
 
             function renderManualSection(items) {
-                if (items.length === 0) return '';
                 var rows = items.map(function (tl) {
                     var key        = sanitizeTlName(tl.TagName).toLowerCase();
                     var customName = topListCustomNameMap[key] || tl.TagName;
@@ -4753,18 +4789,22 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         '</tr>';
                 }).join('');
 
-                return '<div style="margin-top:36px;">' +
+                var tableOrEmpty = items.length === 0
+                    ? '<p style="margin:8px 0 0;font-size:0.88em;color:var(--theme-text-secondary);font-style:italic;">No manual top-lists created yet.</p>'
+                    : '<table style="width:100%;border-collapse:collapse;">' +
+                      '<thead><tr>' +
+                      '<th style="padding:4px 4px 8px;text-align:left;font-size:0.78em;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--theme-text-secondary);border-bottom:2px solid var(--line-color);width:30%;">Name</th>' +
+                      '<th style="padding:4px 4px 8px 16px;text-align:left;font-size:0.78em;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--theme-text-secondary);border-bottom:2px solid var(--line-color);width:40%;">Custom Title</th>' +
+                      '<th style="padding:4px 4px 8px 16px;text-align:left;font-size:0.78em;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--theme-text-secondary);border-bottom:2px solid var(--line-color);">Movies</th>' +
+                      '<th style="padding:4px 4px 8px 8px;border-bottom:2px solid var(--line-color);"></th>' +
+                      '</tr></thead>' +
+                      '<tbody>' + rows + '</tbody></table>';
+
+                return '<div style="flex:1 1 300px;min-width:0;">' +
                     '<div style="display:flex;align-items:center;gap:30px;margin-bottom:12px;">' +
                     '<h3 style="margin:0;font-size:1em;text-transform:uppercase;letter-spacing:1px;color:#52B54B;">Manual Top-Lists</h3>' +
                     '</div>' +
-                    '<table style="width:100%;border-collapse:collapse;">' +
-                    '<thead><tr>' +
-                    '<th style="padding:4px 4px 8px;text-align:left;font-size:0.78em;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--theme-text-secondary);border-bottom:2px solid var(--line-color);width:30%;">Name</th>' +
-                    '<th style="padding:4px 4px 8px 16px;text-align:left;font-size:0.78em;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--theme-text-secondary);border-bottom:2px solid var(--line-color);width:40%;">Custom Title</th>' +
-                    '<th style="padding:4px 4px 8px 16px;text-align:left;font-size:0.78em;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--theme-text-secondary);border-bottom:2px solid var(--line-color);">Movies</th>' +
-                    '<th style="padding:4px 4px 8px 8px;border-bottom:2px solid var(--line-color);"></th>' +
-                    '</tr></thead>' +
-                    '<tbody>' + rows + '</tbody></table>' +
+                    tableOrEmpty +
                     '</div>';
             }
 
@@ -4775,7 +4815,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '</div>' +
                 '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">' +
                 '<input type="text" id="tlSearch" placeholder="Search…" style="' + searchInputStyle + '" />' +
-                '<select is="emby-select" id="tlSort" style="color:inherit;background:rgba(128,128,128,0.08);border:1px solid var(--line-color);padding:5px;border-radius:4px;font-size:0.9em;cursor:pointer;">' +
+                '<select is="emby-select" id="tlSort" style="color:var(--plugin-popup-color);background:var(--plugin-input-bg);border:1px solid var(--plugin-input-border);padding:5px;border-radius:4px;font-size:0.9em;cursor:pointer;">' +
                 '<option value="name-asc">Name A–Z</option>' +
                 '<option value="name-desc">Name Z–A</option>' +
                 '<option value="count-desc">Most items</option>' +
@@ -4787,8 +4827,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '</div>' +
                 '<div id="tlSectionsWrap" style="display:flex;gap:40px;align-items:flex-start;">' +
                 renderSection('Tags', tagsData.Tags || [], true, typeFilterDropdownHtml, existingTopLists) +
-                '</div>' +
                 renderManualSection(manualTopLists) +
+                '</div>' +
                 '</div>';
 
             container.dataset.loaded = '1';
@@ -5043,9 +5083,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             })
                             .then(function (r) { return r.json(); })
                             .then(function (folders) {
+                                function normDlp(p) { return (p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase(); }
                                 var match = (folders || []).find(function (f) {
                                     return (f.Locations || []).some(function (loc) {
-                                        return loc.toLowerCase() === folderPath.toLowerCase();
+                                        return normDlp(loc) === normDlp(folderPath);
                                     });
                                 });
                                 if (match && match.ItemId) {
