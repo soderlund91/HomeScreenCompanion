@@ -1168,6 +1168,7 @@
                         <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-5').scrollIntoView({behavior:'smooth'});return false;">Scheduling</a></li>
                         <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-6').scrollIntoView({behavior:'smooth'});return false;">MediaInfo Filters</a></li>
                         <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-7').scrollIntoView({behavior:'smooth'});return false;">Home Screen</a></li>
+                        <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-7b').scrollIntoView({behavior:'smooth'});return false;">Top-List</a></li>
                         <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-8').scrollIntoView({behavior:'smooth'});return false;">Settings &amp; Utilities</a></li>
                     </ol>
                 </nav>
@@ -1380,6 +1381,29 @@
                 <div class="help-feature-row" style="margin-bottom:0;">
                     <i class="md-icon help-feat-icon">sync</i>
                     <div><strong>Automatic &amp; Manual</strong> — Both Manage and Copy &amp; Sync operations can run automatically as part of the scheduled task, or be triggered manually using the <strong>Run</strong> button → <em>Sync home screen only</em>.</div>
+                </div>
+
+                <!-- 7b. TOP-LIST -->
+                <div id="help-sec-7b" class="help-section" style="margin-top:20px;">
+                    <i class="md-icon help-section-icon">format_list_numbered</i>
+                    <span>Top-List</span>
+                </div>
+                <div class="step-text" style="margin-bottom:10px; font-size:0.92em;">Top-lists create a dedicated home screen section for a specific tag-managed movie library, showing only those movies in ranked order. Found in the <strong>Top-Lists</strong> tab.</div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">create_new_folder</i>
+                    <div><strong>Create top-list</strong> — Pick a tag managed by the plugin (movies only) and click <em>Create top-list</em>. The plugin creates a virtual library and a home section scoped to that library for the selected users.</div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">edit_note</i>
+                    <div><strong>Manual top-list</strong> — Use <em>Create manual top-list</em> to build a ranked list by searching your library and ordering items yourself, without needing an existing tag.</div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">block</i>
+                    <div><strong>Automatic exclusions</strong> — Top-list libraries are automatically excluded from all regular tag home sections so that their items never appear in both places simultaneously.</div>
+                </div>
+                <div class="help-feature-row" style="margin-bottom:0;">
+                    <i class="md-icon help-feat-icon">build</i>
+                    <div><strong>Top-list section sync</strong> — If a home section goes out of sync after adding a new library, run the <em>Top-list section sync</em> scheduled task (or trigger it via the <strong>Run</strong> button) to rebuild all exclusion lists.</div>
                 </div>
 
                 <!-- 8. SETTINGS & UTILITIES (new) -->

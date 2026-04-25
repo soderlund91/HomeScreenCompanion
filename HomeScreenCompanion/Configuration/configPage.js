@@ -2393,10 +2393,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var myId = ++statusRequestId;
         Promise.all([
             window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/Status")),
-            window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/Hsc/Status")).catch(function () { return null; })
+            window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/Hsc/Status")).catch(function () { return null; }),
+            window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/TopList/Status")).catch(function () { return null; })
         ]).then(function (results) {
             if (myId !== statusRequestId) return;
-            var result = results[0], hscResult = results[1];
+            var result = results[0], hscResult = results[1], tlResult = results[2];
             var label = view.querySelector('#lastRunStatusLabel'), dot = view.querySelector('#dotStatus'), content = view.querySelector('#logContent');
             var btnSave = view.querySelector('.btn-save'), btnRun = view.querySelector('#btnRunSync');
 
@@ -2430,6 +2431,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 });
                 (hscResult && hscResult.Logs || []).forEach(function (l) {
                     allLogs.push({ t: getLogTime(l), text: l.replace(/^(\[\d{2}:\d{2}:\d{2}\]) /, '$1 [Home Screen] ') });
+                });
+                (tlResult && tlResult.Logs || []).forEach(function (l) {
+                    allLogs.push({ t: getLogTime(l), text: l.replace(/^(\[\d{2}:\d{2}:\d{2}\]) /, '$1 [Top-List] ') });
                 });
                 allLogs.sort(function (a, b) { return a.t.localeCompare(b.t); });
                 content.textContent = allLogs.map(function (x) { return x.text; }).join('\n') || '(no logs yet)';

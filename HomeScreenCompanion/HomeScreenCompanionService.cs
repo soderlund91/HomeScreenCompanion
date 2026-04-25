@@ -115,6 +115,15 @@ namespace HomeScreenCompanion
     public class DeleteManagedCollectionRequest : IReturn<DeleteManagedCollectionResponse> { public string CollectionId { get; set; } = ""; }
     public class DeleteManagedCollectionResponse { public bool Success { get; set; } public string Message { get; set; } = ""; }
 
+    [Route("/HomeScreenCompanion/TopList/Status", "GET")]
+    public class GetTopListStatusRequest : IReturn<TopListStatusResponse> { }
+    public class TopListStatusResponse
+    {
+        public bool IsRunning { get; set; }
+        public string LastRunStatus { get; set; } = "";
+        public List<string> Logs { get; set; } = new List<string>();
+    }
+
     [Route("/HomeScreenCompanion/TopList/PrepareFolder", "POST")]
     public class PrepareTopListFolderRequest : IReturn<PrepareTopListFolderResponse>
     {
@@ -540,6 +549,18 @@ public class HomeScreenCompanionService : IService
                 IsRunning = HomeSectionSyncTask.IsRunning,
                 LastSyncResult = HomeSectionSyncTask.LastSyncResult,
                 SectionsCopied = HomeSectionSyncTask.LastSectionsCopied,
+                Logs = logs
+            };
+        }
+
+        public object Get(GetTopListStatusRequest request)
+        {
+            List<string> logs;
+            lock (TopListSyncTask.ExecutionLog) { logs = TopListSyncTask.ExecutionLog.ToList(); }
+            return new TopListStatusResponse
+            {
+                IsRunning = TopListSyncTask.IsRunning,
+                LastRunStatus = TopListSyncTask.LastRunStatus,
                 Logs = logs
             };
         }

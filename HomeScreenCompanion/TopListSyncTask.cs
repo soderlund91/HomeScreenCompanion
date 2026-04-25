@@ -21,6 +21,10 @@ namespace HomeScreenCompanion
         private readonly IUserManager _userManager;
         private readonly IJsonSerializer _jsonSerializer;
 
+        public static List<string> ExecutionLog { get; } = new List<string>();
+        public static bool IsRunning { get; private set; } = false;
+        public static string LastRunStatus { get; private set; } = "Never";
+
         public TopListSyncTask(ILibraryManager libraryManager, IUserViewManager userViewManager, IUserManager userManager, IJsonSerializer jsonSerializer)
         {
             _libraryManager = libraryManager;
@@ -38,8 +42,29 @@ namespace HomeScreenCompanion
 
         public Task Execute(CancellationToken cancellationToken, IProgress<double> progress)
         {
-            SyncAll(_libraryManager, _userViewManager, _userManager, _jsonSerializer, cancellationToken);
+            IsRunning = true;
+            lock (ExecutionLog) { ExecutionLog.Clear(); }
+            try
+            {
+                var (_, msg) = SyncAll(_libraryManager, _userViewManager, _userManager, _jsonSerializer, cancellationToken);
+                LastRunStatus = msg;
+            }
+            catch (Exception ex)
+            {
+                LastRunStatus = $"Error: {ex.Message}";
+                Log($"Unexpected error: {ex.Message}");
+            }
+            finally
+            {
+                IsRunning = false;
+            }
             return Task.CompletedTask;
+        }
+
+        internal static void Log(string message)
+        {
+            var msg = $"[{DateTime.Now:HH:mm:ss}] {message}";
+            lock (ExecutionLog) { ExecutionLog.Add(msg); }
         }
 
         internal static (int updated, string message) SyncAll(
@@ -50,16 +75,18 @@ namespace HomeScreenCompanion
             CancellationToken cancellationToken)
         {
             var config = Plugin.Instance?.Configuration;
-            if (config == null) return (0, "No config.");
+            if (config == null) { Log("No config."); return (0, "No config."); }
 
             var topLists = config.TopLists ?? new List<TopListHomeSection>();
-            if (topLists.Count == 0) return (0, "No top-lists configured.");
+            if (topLists.Count == 0) { Log("No top-lists configured."); return (0, "No top-lists configured."); }
 
+            Log($"Starting top-list sync  ·  {topLists.Count} top-list(s)");
             int totalUpdated = 0;
 
             foreach (var tl in topLists)
             {
-                if (string.IsNullOrEmpty(tl.HomeSectionLibraryId) || tl.HomeSectionLibraryId == "auto") continue;
+                Log($"  Processing: {tl.TagName ?? "(unnamed)"}");
+                if (string.IsNullOrEmpty(tl.HomeSectionLibraryId) || tl.HomeSectionLibraryId == "auto") { Log($"    Skipped — no library id"); continue; }
 
                 var ownId = tl.HomeSectionLibraryId.Trim().ToLowerInvariant();
                 var safeTag = new string((tl.TagName ?? "").Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
@@ -156,9 +183,10 @@ namespace HomeScreenCompanion
                             jsonSerializer, settingsDict, tl.HomeSectionLibraryId, owned);
                         typeof(ContentSection).GetProperty("Id")?.SetValue(updated, owned.Id);
                         userManager.UpdateHomeSection(uid, updated, cancellationToken);
+                        Log($"    Updated section for user {tracking.UserId}");
                         totalUpdated++;
                     }
-                    catch { }
+                    catch (Exception ex) { Log($"    Error for user {tracking.UserId}: {ex.Message}"); }
                 }
             }
 
@@ -314,7 +342,9 @@ namespace HomeScreenCompanion
             }
 
             Plugin.Instance?.SaveConfiguration();
-            return (totalUpdated, $"Updated {totalUpdated} section(s) across {topLists.Count} top-list(s).");
+            var summary = $"Updated {totalUpdated} section(s) across {topLists.Count} top-list(s).";
+            Log(summary);
+            return (totalUpdated, summary);
         }
 
         private static object MakeUserIdArg(IUserManager userManager, Type paramType, BaseItem user)
