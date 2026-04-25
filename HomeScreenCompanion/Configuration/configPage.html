@@ -1167,7 +1167,7 @@
                         <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-4').scrollIntoView({behavior:'smooth'});return false;">Tags &amp; Collections</a></li>
                         <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-5').scrollIntoView({behavior:'smooth'});return false;">Scheduling</a></li>
                         <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-6').scrollIntoView({behavior:'smooth'});return false;">MediaInfo Filters</a></li>
-                        <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-7').scrollIntoView({behavior:'smooth'});return false;">Home Screen Companion</a></li>
+                        <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-7').scrollIntoView({behavior:'smooth'});return false;">Home Screen</a></li>
                         <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-8').scrollIntoView({behavior:'smooth'});return false;">Settings &amp; Utilities</a></li>
                     </ol>
                 </nav>
@@ -1296,20 +1296,17 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">tv</i>
-                    <div><strong>Home Section per source</strong> — Each source can add its matched items as a dedicated home screen section for specific users. Configure this in the <em>Home Screen</em> tab inside each source card. Independent from the Home Screen Companion copy feature.</div>
+                    <div><strong>Home Section per source</strong> — Each source can add its matched items as a dedicated home screen section for specific users. Configure this in the <em>Home Screen</em> tab inside each source card. Independent from the Home Screen copy feature.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">collections</i>
-                    <div><strong>Home Section — Collections mode</strong> — Use source type <em>Local</em> pointing to an existing Emby collection, set the tag name, and in the <em>Home Screen</em> tab choose <em>Media Type: Collections</em>. The plugin will apply the tag to the <strong>collection itself</strong> (not to the films/series inside it), so it appears as a collection row in the home screen. Items inside the collection are never tagged in this mode.</div>
+                    <div><strong>Home Section — Collections mode</strong> — Use source type <em>Local collection</em> pointing to an existing Emby collection, set the tag name, and in the <em>Home Screen</em> tab choose <em>Media Type: Collections</em>. The plugin will apply the tag to the <strong>collection itself</strong> (not to the films/series inside it), so it appears as a collection row in the home screen. Items inside the collection are never tagged in this mode.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">block</i>
                     <div><strong>Blacklist</strong> — IMDB IDs listed in the <em>Blacklist</em> tab are permanently excluded from this source.</div>
                 </div>
-                <div class="help-feature-row" style="margin-bottom:0;">
-                    <i class="md-icon help-feat-icon">workspace_premium</i>
-                    <div><strong>Priority Override</strong> — When this entry is in-schedule, all other entries sharing the same tag or collection are suppressed. Ideal for seasonal overrides (e.g. "Spotlight Halloween" takes over "Spotlight").</div>
-                </div>
+                
 
                 <!-- 5. SCHEDULING -->
                 <div id="help-sec-5" class="help-section">
@@ -1327,6 +1324,10 @@
                 <div class="help-feature-row" style="margin-bottom:0;">
                     <i class="md-icon help-feat-icon">repeat</i>
                     <div><strong>Recurring</strong> — Activate on specific days every week, month, or year. Multiple intervals can be stacked on a single entry.</div>
+                </div>
+                <div class="help-feature-row" style="margin-bottom:0;">
+                    <i class="md-icon help-feat-icon">workspace_premium</i>
+                    <div><strong>Priority Override</strong> — When this entry is in-schedule, all other entries sharing the same tag or collection are suppressed. Ideal for seasonal overrides (e.g. "Spotlight Halloween" takes over "Spotlight").</div>
                 </div>
 
                 <!-- 6. MEDIAINFO FILTERS -->
@@ -1362,10 +1363,10 @@
                     </div>
                 </div>
 
-                <!-- 7. HOME SCREEN COMPANION -->
+                <!-- 7. HOME SCREEN -->
                 <div id="help-sec-7" class="help-section">
                     <i class="md-icon help-section-icon">home</i>
-                    <span>Home Screen Companion</span>
+                    <span>Home Screen</span>
                 </div>
                 <div class="step-text" style="margin-bottom:10px; font-size:0.92em;">The <strong>Home Screen</strong> tab has two sub-sections: <strong>Manage</strong> and <strong>Copy &amp; Sync</strong>.</div>
                 <div class="help-feature-row">

@@ -2,11 +2,13 @@ using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Serialization;
+using MediaBrowser.Model.Querying;
 using MediaBrowser.Model.Tasks;
 using MediaBrowser.Model.Users;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -245,8 +247,97 @@ namespace HomeScreenCompanion
             totalUpdated += HomeScreenCompanionTask.UpdateUntrackedSections(
                 jsonSerializer, userManager, config, allTopListLibIds, cancellationToken);
 
+            // Ensure all users have access to all top-list libraries.
+            // This re-grants access even if Emby's async library setup overwrote it
+            // during the initial creation flow.
+            if (allTopListLibIds.Count > 0)
+            {
+                try
+                {
+                    var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
+                    var mgrType = userManager.GetType();
+
+                    var getPolicyMethod = mgrType.GetMethods(bf)
+                        .Where(m => m.Name == "GetUserPolicy")
+                        .OrderBy(m => m.GetParameters().Length)
+                        .FirstOrDefault()
+                        ?? typeof(IUserManager).GetMethods().FirstOrDefault(m => m.Name == "GetUserPolicy");
+
+                    var updateMethod = mgrType.GetMethods(bf)
+                        .Where(m => m.Name == "UpdateUserPolicy")
+                        .OrderBy(m => m.GetParameters().Length)
+                        .FirstOrDefault()
+                        ?? typeof(IUserManager).GetMethods().FirstOrDefault(m => m.Name == "UpdateUserPolicy");
+
+                    if (updateMethod != null)
+                    {
+                        var users = userManager.GetUserList(new UserQuery { IsDisabled = false });
+                        foreach (var user in users)
+                        {
+                            try
+                            {
+                                object policy = null;
+                                if (getPolicyMethod != null)
+                                {
+                                    try
+                                    {
+                                        var gp = getPolicyMethod.GetParameters();
+                                        policy = getPolicyMethod.Invoke(userManager, MakeArgArray(gp, MakeUserIdArg(userManager, gp[0].ParameterType, user), null));
+                                    }
+                                    catch { }
+                                }
+                                if (policy == null)
+                                    policy = user.GetType().GetProperty("Policy")?.GetValue(user);
+                                if (policy == null) continue;
+
+                                var enableAllProp = policy.GetType().GetProperty("EnableAllFolders");
+                                if (enableAllProp?.GetValue(policy) is true) continue;
+
+                                var foldersProp = policy.GetType().GetProperty("EnabledFolders");
+                                var folders = foldersProp?.GetValue(policy) as string[] ?? Array.Empty<string>();
+
+                                var missing = allTopListLibIds
+                                    .Where(id => !folders.Any(f => string.Equals(f, id, StringComparison.OrdinalIgnoreCase)))
+                                    .ToList();
+                                if (missing.Count == 0) continue;
+
+                                foldersProp?.SetValue(policy, folders.Concat(missing).ToArray());
+
+                                var up = updateMethod.GetParameters();
+                                updateMethod.Invoke(userManager, MakeArgArray(up, MakeUserIdArg(userManager, up[0].ParameterType, user), policy));
+                            }
+                            catch { }
+                        }
+                    }
+                }
+                catch { }
+            }
+
             Plugin.Instance?.SaveConfiguration();
             return (totalUpdated, $"Updated {totalUpdated} section(s) across {topLists.Count} top-list(s).");
+        }
+
+        private static object MakeUserIdArg(IUserManager userManager, Type paramType, BaseItem user)
+        {
+            if (paramType == typeof(long) || paramType == typeof(Int64))
+                return userManager.GetInternalId(user.Id.ToString());
+            if (paramType == typeof(Guid)) return user.Id;
+            if (paramType == typeof(string)) return user.Id.ToString();
+            return user;
+        }
+
+        private static object[] MakeArgArray(ParameterInfo[] parms, object arg0, object arg1)
+        {
+            var args = new object[parms.Length];
+            args[0] = arg0;
+            for (int i = 1; i < parms.Length; i++)
+            {
+                if (i == 1 && arg1 != null) args[i] = arg1;
+                else if (parms[i].ParameterType == typeof(CancellationToken)) args[i] = CancellationToken.None;
+                else if (parms[i].HasDefaultValue) args[i] = parms[i].DefaultValue;
+                else args[i] = null;
+            }
+            return args;
         }
     }
 }

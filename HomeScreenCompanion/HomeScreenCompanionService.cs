@@ -202,6 +202,60 @@ namespace HomeScreenCompanion
         public List<MovieItem> Movies { get; set; } = new List<MovieItem>();
     }
 
+    [Route("/HomeScreenCompanion/TopList/GrantLibraryAccess", "POST")]
+    public class GrantTopListLibraryAccessRequest : IReturn<GrantTopListLibraryAccessResponse>
+    {
+        public string LibraryId { get; set; } = "";
+    }
+    public class GrantTopListLibraryAccessResponse
+    {
+        public bool Success { get; set; }
+        public int UsersUpdated { get; set; }
+        public string Message { get; set; } = "";
+    }
+
+    [Route("/HomeScreenCompanion/TopList/SnapshotPolicies", "POST")]
+    public class SnapshotPoliciesRequest : IReturn<SnapshotPoliciesResponse> { }
+    public class SnapshotPoliciesResponse
+    {
+        public bool Success { get; set; }
+        public string SnapshotId { get; set; } = "";
+        public int UserCount { get; set; }
+        public string Message { get; set; } = "";
+    }
+
+    [Route("/HomeScreenCompanion/TopList/RestoreAndGrantAccess", "POST")]
+    public class RestoreAndGrantAccessRequest : IReturn<RestoreAndGrantAccessResponse>
+    {
+        public string SnapshotId { get; set; } = "";
+        public string LibraryId { get; set; } = "";
+    }
+    public class RestoreAndGrantAccessResponse
+    {
+        public bool Success { get; set; }
+        public int UsersUpdated { get; set; }
+        public string Message { get; set; } = "";
+    }
+
+    [Route("/HomeScreenCompanion/Debug/UserPolicies", "GET")]
+    public class DebugUserPoliciesRequest : IReturn<DebugUserPoliciesResponse> { }
+    public class DebugUserPoliciesResponse
+    {
+        public List<DebugUserPolicyEntry> Users { get; set; } = new List<DebugUserPolicyEntry>();
+    }
+    public class DebugUserPolicyEntry
+    {
+        public string UserId { get; set; } = "";
+        public string UserName { get; set; } = "";
+        public string ItemIdGuid { get; set; } = "";
+        public string InternalId { get; set; } = "";
+        public bool PolicyFound { get; set; }
+        public bool EnableAllFolders { get; set; }
+        public string[] EnabledFolders { get; set; } = Array.Empty<string>();
+        public string PolicySource { get; set; } = "";
+        public string Error { get; set; } = "";
+    }
+
     [Route("/HomeScreenCompanion/TopList/PrepareManualFolder", "POST")]
     public class PrepareManualTopListFolderRequest : IReturn<PrepareTopListFolderResponse>
     {
@@ -216,6 +270,16 @@ namespace HomeScreenCompanion
 
 public class HomeScreenCompanionService : IService
     {
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, List<PolicySnapshot>> _policySnapshots
+            = new System.Collections.Concurrent.ConcurrentDictionary<string, List<PolicySnapshot>>();
+
+        private class PolicySnapshot
+        {
+            public string UserId { get; set; } = "";
+            public bool EnableAllFolders { get; set; }
+            public string[] EnabledFolders { get; set; } = Array.Empty<string>();
+        }
+
         private readonly IHttpClient _httpClient;
         private readonly IJsonSerializer _jsonSerializer;
         private readonly IUserManager _userManager;
@@ -1090,9 +1154,15 @@ public class HomeScreenCompanionService : IService
                     IsVirtualItem = false
                 });
                 var toplistsFolder = Path.Combine(Plugin.Instance.DataFolderPath, "toplists");
+
+                // Deduplicate: movies with multiple versions (1080p + 4K) appear as separate
+                // library items but share the same IMDB ID — keep only one per unique title.
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var movies = items
                     .Where(i => !string.IsNullOrEmpty(i.Path)
                              && !i.Path.StartsWith(toplistsFolder, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(i => i.ProductionYear)
                     .Select(i => new MovieItem
                     {
                         Name   = i.Name ?? "",
@@ -1100,12 +1170,319 @@ public class HomeScreenCompanionService : IService
                         ImdbId = i.GetProviderId("Imdb") ?? "",
                         ItemId = i.Id.ToString("N")
                     })
-                    .OrderBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
-                    .ThenBy(m => m.Year)
+                    .Where(m =>
+                    {
+                        var key = !string.IsNullOrEmpty(m.ImdbId)
+                            ? m.ImdbId
+                            : $"{m.Name}|{m.Year}";
+                        return seen.Add(key);
+                    })
                     .ToList();
+
                 return new GetAllMoviesResponse { Movies = movies };
             }
             catch { return new GetAllMoviesResponse { Movies = new List<MovieItem>() }; }
+        }
+
+        public object Post(GrantTopListLibraryAccessRequest request)
+        {
+            var libraryId = (request.LibraryId ?? "").Trim();
+            if (string.IsNullOrEmpty(libraryId))
+                return new GrantTopListLibraryAccessResponse { Success = false, Message = "LibraryId required." };
+
+            var bf = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+                   | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.FlattenHierarchy;
+            var mgrType = _userManager.GetType();
+
+            // Locate UpdateUserPolicy and GetUserPolicy on the concrete manager type (catches
+            // both interface and implementation methods, and handles any number of overloads).
+            var updateMethod = mgrType.GetMethods(bf)
+                .Where(m => m.Name == "UpdateUserPolicy")
+                .OrderBy(m => m.GetParameters().Length)
+                .FirstOrDefault()
+                ?? typeof(IUserManager).GetMethods().FirstOrDefault(m => m.Name == "UpdateUserPolicy");
+
+            var getPolicyMethod = mgrType.GetMethods(bf)
+                .Where(m => m.Name == "GetUserPolicy")
+                .OrderBy(m => m.GetParameters().Length)
+                .FirstOrDefault()
+                ?? typeof(IUserManager).GetMethods().FirstOrDefault(m => m.Name == "GetUserPolicy");
+
+            int updated = 0;
+            var errors = new List<string>();
+
+            try
+            {
+                var users = _userManager.GetUserList(new UserQuery { IsDisabled = false });
+
+                foreach (var user in users)
+                {
+                    try
+                    {
+                        // Prefer GetUserPolicy (fresh from store) over the cached User.Policy property.
+                        object policy = null;
+                        if (getPolicyMethod != null)
+                        {
+                            try
+                            {
+                                var gpParams = getPolicyMethod.GetParameters();
+                                var gpArg0   = BuildUserArg(gpParams[0].ParameterType, user);
+                                var gpArgs   = BuildArgList(gpParams, gpArg0, null);
+                                policy = getPolicyMethod.Invoke(_userManager, gpArgs);
+                            }
+                            catch { }
+                        }
+                        if (policy == null)
+                            policy = user.GetType().GetProperty("Policy")?.GetValue(user);
+                        if (policy == null) { errors.Add($"no policy for {user.Name}"); continue; }
+
+                        var enableAllProp = policy.GetType().GetProperty("EnableAllFolders");
+                        if (enableAllProp?.GetValue(policy) is true) continue;
+
+                        var foldersProp = policy.GetType().GetProperty("EnabledFolders");
+                        var folders = foldersProp?.GetValue(policy) as string[] ?? Array.Empty<string>();
+                        if (folders.Any(f => string.Equals(f, libraryId, StringComparison.OrdinalIgnoreCase)))
+                            continue;
+
+                        foldersProp?.SetValue(policy, folders.Concat(new[] { libraryId }).ToArray());
+
+                        if (updateMethod == null) { errors.Add("UpdateUserPolicy not found"); break; }
+
+                        var upParams = updateMethod.GetParameters();
+                        var upArg0   = BuildUserArg(upParams[0].ParameterType, user);
+                        var upArgs   = BuildArgList(upParams, upArg0, policy);
+                        updateMethod.Invoke(_userManager, upArgs);
+                        updated++;
+                    }
+                    catch (Exception ex) { errors.Add($"{user.Name}: {ex.GetBaseException().Message}"); }
+                }
+            }
+            catch (Exception ex)
+            {
+                return new GrantTopListLibraryAccessResponse { Success = false, Message = ex.Message };
+            }
+
+            var msg = $"Updated {updated} user(s)";
+            if (errors.Count > 0) msg += $" — errors: {string.Join("; ", errors.Take(5))}";
+            return new GrantTopListLibraryAccessResponse { Success = true, UsersUpdated = updated, Message = msg };
+        }
+
+        public object Post(SnapshotPoliciesRequest request)
+        {
+            var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
+            var mgrType = _userManager.GetType();
+            var getPolicyMethod = mgrType.GetMethods(bf)
+                .Where(m => m.Name == "GetUserPolicy").OrderBy(m => m.GetParameters().Length).FirstOrDefault()
+                ?? typeof(IUserManager).GetMethods().FirstOrDefault(m => m.Name == "GetUserPolicy");
+
+            var snapshots = new List<PolicySnapshot>();
+            try
+            {
+                var users = _userManager.GetUserList(new UserQuery { IsDisabled = false });
+                foreach (var user in users)
+                {
+                    try
+                    {
+                        object policy = null;
+                        if (getPolicyMethod != null)
+                        {
+                            try
+                            {
+                                var gp = getPolicyMethod.GetParameters();
+                                policy = getPolicyMethod.Invoke(_userManager, BuildArgList(gp, BuildUserArg(gp[0].ParameterType, user), null));
+                            }
+                            catch { }
+                        }
+                        if (policy == null) policy = user.GetType().GetProperty("Policy")?.GetValue(user);
+                        if (policy == null) continue;
+
+                        var enableAllProp = policy.GetType().GetProperty("EnableAllFolders");
+                        var foldersProp = policy.GetType().GetProperty("EnabledFolders");
+                        snapshots.Add(new PolicySnapshot
+                        {
+                            UserId = user.Id.ToString(),
+                            EnableAllFolders = enableAllProp?.GetValue(policy) is true,
+                            EnabledFolders = foldersProp?.GetValue(policy) as string[] ?? Array.Empty<string>()
+                        });
+                    }
+                    catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                return new SnapshotPoliciesResponse { Success = false, Message = ex.Message };
+            }
+
+            var snapshotId = Guid.NewGuid().ToString("N");
+            _policySnapshots[snapshotId] = snapshots;
+
+            // Prune old snapshots to avoid unbounded growth (keep max 20)
+            if (_policySnapshots.Count > 20)
+            {
+                foreach (var key in _policySnapshots.Keys.OrderBy(k => k).Take(_policySnapshots.Count - 20).ToList())
+                    _policySnapshots.TryRemove(key, out _);
+            }
+
+            return new SnapshotPoliciesResponse { Success = true, SnapshotId = snapshotId, UserCount = snapshots.Count };
+        }
+
+        public object Post(RestoreAndGrantAccessRequest request)
+        {
+            if (string.IsNullOrEmpty(request.SnapshotId) || string.IsNullOrEmpty(request.LibraryId))
+                return new RestoreAndGrantAccessResponse { Success = false, Message = "SnapshotId and LibraryId required." };
+
+            if (!_policySnapshots.TryRemove(request.SnapshotId, out var snapshots) || snapshots == null)
+                return new RestoreAndGrantAccessResponse { Success = false, Message = "Snapshot not found or already used." };
+
+            var libraryId = request.LibraryId.Trim();
+            var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
+            var mgrType = _userManager.GetType();
+            var getPolicyMethod = mgrType.GetMethods(bf)
+                .Where(m => m.Name == "GetUserPolicy").OrderBy(m => m.GetParameters().Length).FirstOrDefault()
+                ?? typeof(IUserManager).GetMethods().FirstOrDefault(m => m.Name == "GetUserPolicy");
+            var updateMethod = mgrType.GetMethods(bf)
+                .Where(m => m.Name == "UpdateUserPolicy").OrderBy(m => m.GetParameters().Length).FirstOrDefault()
+                ?? typeof(IUserManager).GetMethods().FirstOrDefault(m => m.Name == "UpdateUserPolicy");
+
+            if (updateMethod == null)
+                return new RestoreAndGrantAccessResponse { Success = false, Message = "UpdateUserPolicy not found." };
+
+            var users = _userManager.GetUserList(new UserQuery { IsDisabled = false });
+            var userDict = users.ToDictionary(u => u.Id.ToString(), u => u, StringComparer.OrdinalIgnoreCase);
+            int updated = 0;
+            var errors = new List<string>();
+
+            foreach (var snap in snapshots)
+            {
+                // Users who already had EnableAllFolders=true before creation have access to everything — skip.
+                if (snap.EnableAllFolders) continue;
+
+                if (!userDict.TryGetValue(snap.UserId, out var user)) continue;
+                try
+                {
+                    object policy = null;
+                    if (getPolicyMethod != null)
+                    {
+                        try
+                        {
+                            var gp = getPolicyMethod.GetParameters();
+                            policy = getPolicyMethod.Invoke(_userManager, BuildArgList(gp, BuildUserArg(gp[0].ParameterType, user), null));
+                        }
+                        catch { }
+                    }
+                    if (policy == null) policy = user.GetType().GetProperty("Policy")?.GetValue(user);
+                    if (policy == null) continue;
+
+                    // Restore to exact pre-creation state: EnableAllFolders=false + original folders + new library.
+                    var enableAllProp = policy.GetType().GetProperty("EnableAllFolders");
+                    enableAllProp?.SetValue(policy, false);
+
+                    var foldersProp = policy.GetType().GetProperty("EnabledFolders");
+                    var folders = snap.EnabledFolders.ToList();
+                    if (!folders.Any(f => string.Equals(f, libraryId, StringComparison.OrdinalIgnoreCase)))
+                        folders.Add(libraryId);
+                    foldersProp?.SetValue(policy, folders.ToArray());
+
+                    var up = updateMethod.GetParameters();
+                    updateMethod.Invoke(_userManager, BuildArgList(up, BuildUserArg(up[0].ParameterType, user), policy));
+                    updated++;
+                }
+                catch (Exception ex) { errors.Add($"{user.Name}: {ex.GetBaseException().Message}"); }
+            }
+
+            var msg = $"Restored access for {updated} user(s)";
+            if (errors.Count > 0) msg += $" — errors: {string.Join("; ", errors.Take(5))}";
+            return new RestoreAndGrantAccessResponse { Success = true, UsersUpdated = updated, Message = msg };
+        }
+
+        private object BuildUserArg(Type paramType, BaseItem user)
+        {
+            if (paramType == typeof(long) || paramType == typeof(Int64))
+                return _userManager.GetInternalId(user.Id.ToString());
+            if (paramType == typeof(Guid))   return user.Id;
+            if (paramType == typeof(string)) return user.Id.ToString();
+            return user;
+        }
+
+        private static object[] BuildArgList(System.Reflection.ParameterInfo[] parms, object arg0, object arg1)
+        {
+            var args = new object[parms.Length];
+            args[0] = arg0;
+            for (int i = 1; i < parms.Length; i++)
+            {
+                if (i == 1 && arg1 != null)                             args[i] = arg1;
+                else if (parms[i].ParameterType == typeof(CancellationToken)) args[i] = CancellationToken.None;
+                else if (parms[i].HasDefaultValue)                      args[i] = parms[i].DefaultValue;
+                else                                                    args[i] = null;
+            }
+            return args;
+        }
+
+        public object Get(DebugUserPoliciesRequest request)
+        {
+            var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
+            var mgrType = _userManager.GetType();
+            var getPolicyMethod = mgrType.GetMethods(bf)
+                .Where(m => m.Name == "GetUserPolicy").OrderBy(m => m.GetParameters().Length).FirstOrDefault()
+                ?? typeof(IUserManager).GetMethods().FirstOrDefault(m => m.Name == "GetUserPolicy");
+
+            var entries = new List<DebugUserPolicyEntry>();
+            try
+            {
+                var users = _userManager.GetUserList(new UserQuery { IsDisabled = false });
+                foreach (var user in users)
+                {
+                    var entry = new DebugUserPolicyEntry
+                    {
+                        UserId     = user.Id.ToString(),
+                        UserName   = user.Name,
+                        ItemIdGuid = user.Id.ToString(),
+                        InternalId = _userManager.GetInternalId(user.Id.ToString()).ToString()
+                    };
+                    try
+                    {
+                        object policy = null;
+                        if (getPolicyMethod != null)
+                        {
+                            try
+                            {
+                                var gp = getPolicyMethod.GetParameters();
+                                policy = getPolicyMethod.Invoke(_userManager, BuildArgList(gp, BuildUserArg(gp[0].ParameterType, user), null));
+                                if (policy != null) entry.PolicySource = "GetUserPolicy";
+                            }
+                            catch { }
+                        }
+                        if (policy == null)
+                        {
+                            policy = user.GetType().GetProperty("Policy")?.GetValue(user);
+                            if (policy != null) entry.PolicySource = "user.Policy";
+                        }
+
+                        if (policy == null)
+                        {
+                            entry.PolicyFound = false;
+                            entry.Error = "Policy is null";
+                        }
+                        else
+                        {
+                            entry.PolicyFound = true;
+                            entry.EnableAllFolders = policy.GetType().GetProperty("EnableAllFolders")?.GetValue(policy) is true;
+                            entry.EnabledFolders   = policy.GetType().GetProperty("EnabledFolders")?.GetValue(policy) as string[]
+                                                     ?? Array.Empty<string>();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        entry.Error = ex.GetBaseException().Message;
+                    }
+                    entries.Add(entry);
+                }
+            }
+            catch (Exception ex)
+            {
+                entries.Add(new DebugUserPolicyEntry { Error = "GetUserList failed: " + ex.Message });
+            }
+            return new DebugUserPoliciesResponse { Users = entries };
         }
 
         public object Post(PrepareManualTopListFolderRequest request)

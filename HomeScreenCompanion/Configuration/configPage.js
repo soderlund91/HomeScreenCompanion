@@ -4011,14 +4011,33 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var errEl   = ui.errEl;
         var modal   = ui.modal;
         var tok = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+        var snapshotId = null;
+        var pendingLibraryId = null;
 
         saveBtn.innerHTML = 'Creating library <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
+
+        // Step 0: Snapshot all user policies server-side BEFORE library creation.
+        // POST Library/VirtualFolders causes Emby to set EnableAllFolders=true for all users.
+        // The server stores the exact per-user state and restores it in step 4b.
+        fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/SnapshotPolicies'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Emby-Token': tok },
+            body: JSON.stringify({})
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(result) {
+            if (result && result.SnapshotId) {
+                snapshotId = result.SnapshotId;
+                console.log('[HSC] Policy snapshot taken:', result.UserCount, 'users, id:', snapshotId);
+            }
+        }).catch(function() {})
+        .then(function() {
 
         // Steps 2+3: Check if the virtual library already exists before creating it.
         // POSTing to Library/VirtualFolders — even for an already-existing library — causes
         // Emby to update all users' policies and fire "User Policy Updated" notifications.
         // By skipping the POST when the library is already present we avoid spurious notifications.
-        fetch(window.ApiClient.getUrl('Library/VirtualFolders'), {
+        return fetch(window.ApiClient.getUrl('Library/VirtualFolders'), {
             headers: { 'X-MediaBrowser-Token': tok }
         })
         .then(function (r) { return r.json(); })
@@ -4028,13 +4047,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             // return forward slashes (or vice versa).
             function normLibPath(p) { return (p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase(); }
             var targetPath = normLibPath(prepareResult.FolderPath);
+            // Record all library IDs before creation so we can find the new one by diff
+            // if path matching fails (Emby may not register the library synchronously).
+            var preCreationIds = new Set((existingFolders || []).map(function (f) { return f.ItemId; }).filter(Boolean));
             var alreadyExists = (existingFolders || []).some(function (f) {
                 return (f.Locations || []).some(function (loc) {
                     return normLibPath(loc) === targetPath;
                 });
             });
             if (alreadyExists) {
-                return Promise.resolve(existingFolders);
+                return { folders: existingFolders, preCreationIds: new Set() };
             }
             // Library doesn't exist yet — create it, then re-fetch the updated list.
             return fetch(window.ApiClient.getUrl('Library/VirtualFolders'), {
@@ -4061,10 +4083,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 return fetch(window.ApiClient.getUrl('Library/VirtualFolders'), {
                     headers: { 'X-MediaBrowser-Token': tok }
                 }).then(function (r) { return r.json(); });
+            })
+            .then(function (newFolders) {
+                return { folders: newFolders, preCreationIds: preCreationIds };
             });
         })
-        .then(function (folders) {
+        .then(function (result) {
             saveBtn.innerHTML = 'Saving settings <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
+
+            var folders = result.folders;
+            var preCreationIds = result.preCreationIds;
 
             // Find the library by its folder path to get its ItemId
             function normLibPath2(p) { return (p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase(); }
@@ -4074,6 +4102,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 });
             });
             var newLibId = match ? match.ItemId : null;
+
+            // Fallback: if path matching failed (timing issue), find the new library by
+            // comparing current IDs against the pre-creation snapshot.
+            if (!newLibId && preCreationIds.size > 0) {
+                var diffMatch = (folders || []).find(function (f) {
+                    return f.ItemId && !preCreationIds.has(f.ItemId);
+                });
+                if (diffMatch) newLibId = diffMatch.ItemId;
+            }
 
             var userId = selectedUserIds[0];
             var viewsPromise = userId
@@ -4134,6 +4171,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             });
         })
         .then(function (ctx2) {
+            // Step 4b: Store the library ID for the final access-restore step.
+            // RestoreAndGrantAccess runs AFTER the library scan (last step) to ensure Emby
+            // has fully registered the new library before we write it to EnabledFolders.
+            if (ctx2.libraryItemId) pendingLibraryId = ctx2.libraryItemId;
+            return ctx2;
+        })
+        .then(function (ctx2) {
             // Step 5: Create home sections immediately
             saveBtn.innerHTML = 'Creating home sections <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
             var tok5 = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
@@ -4169,6 +4213,52 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }).catch(function () {}).then(function () { return prepareResult; });
         })
         .then(function (prepareResult) {
+            // Step 8: Grant library access to all restricted users via Emby's standard
+            // user-policy API (GET /Users + POST /Users/{Id}/Policy).
+            // This avoids server-side reflection entirely and works with any Emby version.
+            // Users with EnableAllFolders=true already have access — skip them.
+            // Users with EnableAllFolders=false get the new library added to EnabledFolders
+            // without touching any of their other existing settings.
+            if (!pendingLibraryId) return prepareResult;
+            var tok8 = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+            var libIdLower = pendingLibraryId.toLowerCase();
+            return fetch(window.ApiClient.getUrl('Users'), {
+                headers: { 'X-MediaBrowser-Token': tok8 }
+            })
+            .then(function (r) { return r.json(); })
+            .then(function (users) {
+                // GET /Users may return Policy=null for users other than the caller in
+                // some Emby versions. Fetch each user individually to guarantee full Policy data.
+                return Promise.all((users || []).map(function (u) {
+                    if (u && u.Policy) return Promise.resolve(u);
+                    return fetch(window.ApiClient.getUrl('Users/' + u.Id), {
+                        headers: { 'X-MediaBrowser-Token': tok8 }
+                    }).then(function (r) { return r.json(); }).catch(function () { return u; });
+                }));
+            })
+            .then(function (users) {
+                var updates = (users || [])
+                    .filter(function (u) {
+                        return u && u.Policy && !u.Policy.EnableAllFolders &&
+                            !(u.Policy.EnabledFolders || []).some(function (f) {
+                                return (f || '').toLowerCase() === libIdLower;
+                            });
+                    })
+                    .map(function (u) {
+                        var pol = JSON.parse(JSON.stringify(u.Policy));
+                        pol.EnabledFolders = (u.Policy.EnabledFolders || []).concat([pendingLibraryId]);
+                        return fetch(window.ApiClient.getUrl('Users/' + u.Id + '/Policy'), {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'X-MediaBrowser-Token': tok8 },
+                            body: JSON.stringify(pol)
+                        }).catch(function () {});
+                    });
+                return Promise.all(updates);
+            })
+            .catch(function () {})
+            .then(function () { return prepareResult; });
+        })
+        .then(function (prepareResult) {
             _topListTagNames.add(tagName.toLowerCase());
             refreshTopListBadges();
             var innerBox = modal.querySelector('div');
@@ -4188,6 +4278,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             saveBtn.innerHTML = '<i class="md-icon" style="font-size:1em;vertical-align:middle;margin-right:6px;">check</i>Save and apply';
             errEl.textContent = err.message || String(err);
         });
+        }); // end step 0 wrapper
     }
 
     function showTopListModal(tagName, displayName, onSuccess) {
@@ -4367,14 +4458,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 }).join('')
                 : '<em style="opacity:0.5">No users found</em>';
 
-            var movieOptionsHtml = allMovies.map(function (m) {
-                var label = m.Name + (m.Year ? ' (' + m.Year + ')' : '');
-                return '<option value="' + escAttr(m.ItemId) + '" ' +
-                    'data-imdbid="' + escAttr(m.ImdbId) + '" ' +
-                    'data-name="' + escAttr(m.Name) + '" ' +
-                    'data-year="' + escAttr(String(m.Year || '')) + '">' +
-                    escHtml(label) + '</option>';
-            }).join('');
 
             var presetName       = (existingData && existingData.listName)    || '';
             var presetCustomName = (existingData && existingData.customName)  || '';
@@ -4441,12 +4524,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 '<div style="' + fieldStyle + '">' +
                 '<label style="' + labelStyle + '">Add Movie</label>' +
-                '<select class="mtlMovieSelect" style="' + inputStyle + 'height:36px;">' +
-                '<option value="">— Select a movie —</option>' +
-                movieOptionsHtml +
-                '</select></div>' +
-                '<button type="button" class="btnMtlAddMovie" style="cursor:pointer;border:none;background:#00a4dc;color:#fff;border-radius:3px;padding:6px 14px;font-size:0.88em;font-weight:500;display:flex;align-items:center;gap:4px;margin-bottom:14px;">' +
-                '<i class="md-icon" style="font-size:1em;">add</i>Add movie</button>' +
+                '<div style="position:relative;">' +
+                '<input type="text" class="mtlMovieSearch" autocomplete="off" style="' + inputStyle + '" placeholder="Type to search…" />' +
+                '<div class="mtlSearchResults" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:200;background:var(--plugin-popup-bg,#2a2a2a);border:1px solid var(--line-color);border-radius:4px;max-height:200px;overflow-y:auto;margin-top:2px;box-shadow:0 4px 12px rgba(0,0,0,0.45);"></div>' +
+                '</div></div>' +
 
                 '<div class="mtlSelectedList" style="max-height:280px;overflow-y:auto;border:1px solid var(--line-color);border-radius:4px;padding:4px 8px;min-height:60px;"></div>' +
                 '</div>' +
@@ -4509,19 +4590,55 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 cb.addEventListener('change', updateCreateBtn);
             });
 
-            modal.querySelector('.btnMtlAddMovie').addEventListener('click', function () {
-                var sel = modal.querySelector('.mtlMovieSelect');
-                var opt = sel.options[sel.selectedIndex];
-                if (!opt || !opt.value) return;
-                if (selectedMovies.some(function (m) { return m.ItemId === opt.value; })) return;
+            var searchInput  = modal.querySelector('.mtlMovieSearch');
+            var resultsBox   = modal.querySelector('.mtlSearchResults');
+
+            function showSearchResults(q) {
+                q = (q || '').trim().toLowerCase();
+                if (q.length < 1) { resultsBox.style.display = 'none'; resultsBox.innerHTML = ''; return; }
+                var hits = allMovies.filter(function (m) {
+                    return m.Name.toLowerCase().indexOf(q) !== -1 ||
+                           (m.Year && String(m.Year).indexOf(q) !== -1);
+                }).slice(0, 20);
+                if (hits.length === 0) { resultsBox.style.display = 'none'; return; }
+                var alreadyIds = new Set(selectedMovies.map(function (m) { return m.ItemId; }));
+                resultsBox.innerHTML = hits.map(function (m) {
+                    var added = alreadyIds.has(m.ItemId);
+                    var label = escHtml(m.Name) + (m.Year ? ' (' + m.Year + ')' : '');
+                    return '<div class="mtlSearchResult" data-itemid="' + escAttr(m.ItemId) + '"' +
+                        ' data-imdbid="' + escAttr(m.ImdbId) + '"' +
+                        ' data-name="' + escAttr(m.Name) + '"' +
+                        ' data-year="' + escAttr(String(m.Year || '')) + '"' +
+                        ' style="padding:7px 12px;cursor:pointer;font-size:0.9em;border-bottom:1px solid rgba(128,128,128,0.12);' +
+                        (added ? 'opacity:0.42;pointer-events:none;' : '') + '">' +
+                        label + (added ? ' <span style="font-size:0.8em;">(already added)</span>' : '') + '</div>';
+                }).join('');
+                resultsBox.style.display = 'block';
+            }
+
+            searchInput.addEventListener('input', function () { showSearchResults(this.value); });
+            searchInput.addEventListener('focus',  function () { showSearchResults(this.value); });
+
+            resultsBox.addEventListener('mousedown', function (e) {
+                // mousedown fires before blur so we can intercept before the field loses focus
+                var row = e.target.closest('.mtlSearchResult');
+                if (!row || !row.dataset.itemid) return;
+                e.preventDefault(); // keep focus on searchInput
+                if (selectedMovies.some(function (m) { return m.ItemId === row.dataset.itemid; })) return;
                 selectedMovies.push({
-                    ItemId: opt.value,
-                    ImdbId: opt.dataset.imdbid || '',
-                    Name:   opt.dataset.name   || '',
-                    Year:   opt.dataset.year   || ''
+                    ItemId: row.dataset.itemid,
+                    ImdbId: row.dataset.imdbid || '',
+                    Name:   row.dataset.name   || '',
+                    Year:   row.dataset.year   ? parseInt(row.dataset.year, 10) : null
                 });
+                searchInput.value = '';
+                resultsBox.style.display = 'none';
                 renderSelectedList();
                 updateCreateBtn();
+            });
+
+            searchInput.addEventListener('blur', function () {
+                setTimeout(function () { resultsBox.style.display = 'none'; }, 150);
             });
 
             modal.querySelector('.mtlSelectedList').addEventListener('click', function (e) {
