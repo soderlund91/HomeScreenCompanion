@@ -120,6 +120,7 @@ namespace HomeScreenCompanion
     {
         public string TagName { get; set; } = "";
         public int MaxItems { get; set; } = 0;
+        public string BadgeStyle { get; set; } = "neutral";
     }
     public class PrepareTopListFolderResponse
     {
@@ -149,6 +150,7 @@ namespace HomeScreenCompanion
         public string CustomName { get; set; } = "";
         public string DisplayMode { get; set; } = "";
         public string ImageType { get; set; } = "";
+        public string BadgeStyle { get; set; } = "neutral";
         public List<string> UserIds { get; set; } = new List<string>();
         public string Message { get; set; } = "";
     }
@@ -237,30 +239,12 @@ namespace HomeScreenCompanion
         public string Message { get; set; } = "";
     }
 
-    [Route("/HomeScreenCompanion/Debug/UserPolicies", "GET")]
-    public class DebugUserPoliciesRequest : IReturn<DebugUserPoliciesResponse> { }
-    public class DebugUserPoliciesResponse
-    {
-        public List<DebugUserPolicyEntry> Users { get; set; } = new List<DebugUserPolicyEntry>();
-    }
-    public class DebugUserPolicyEntry
-    {
-        public string UserId { get; set; } = "";
-        public string UserName { get; set; } = "";
-        public string ItemIdGuid { get; set; } = "";
-        public string InternalId { get; set; } = "";
-        public bool PolicyFound { get; set; }
-        public bool EnableAllFolders { get; set; }
-        public string[] EnabledFolders { get; set; } = Array.Empty<string>();
-        public string PolicySource { get; set; } = "";
-        public string Error { get; set; } = "";
-    }
-
     [Route("/HomeScreenCompanion/TopList/PrepareManualFolder", "POST")]
     public class PrepareManualTopListFolderRequest : IReturn<PrepareTopListFolderResponse>
     {
         public string ListName { get; set; } = "";
         public List<ManualTopListItem> Items { get; set; } = new List<ManualTopListItem>();
+        public string BadgeStyle { get; set; } = "neutral";
     }
     public class ManualTopListItem
     {
@@ -1132,7 +1116,8 @@ public class HomeScreenCompanionService : IService
                     var nfo = $"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<movie>\n  <sorttitle>{sortPrefix}</sorttitle>\n  <lockedfields>SortName|Images</lockedfields>\n</movie>";
                     File.WriteAllText(Path.Combine(folderPath, fileName + ".nfo"), nfo);
                     if (!string.IsNullOrEmpty(entry.PosterPath) && File.Exists(entry.PosterPath))
-                        CreateRankedPoster(entry.PosterPath, count, Path.Combine(folderPath, fileName + ".jpg"));
+                        try { CreateRankedPoster(entry.PosterPath, count, Path.Combine(folderPath, fileName + ".jpg"), request.BadgeStyle); }
+                        catch { }
                 }
 
                 return new PrepareTopListFolderResponse { Success = true, FolderPath = folderPath, FilesCreated = count };
@@ -1418,73 +1403,6 @@ public class HomeScreenCompanionService : IService
             return args;
         }
 
-        public object Get(DebugUserPoliciesRequest request)
-        {
-            var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
-            var mgrType = _userManager.GetType();
-            var getPolicyMethod = mgrType.GetMethods(bf)
-                .Where(m => m.Name == "GetUserPolicy").OrderBy(m => m.GetParameters().Length).FirstOrDefault()
-                ?? typeof(IUserManager).GetMethods().FirstOrDefault(m => m.Name == "GetUserPolicy");
-
-            var entries = new List<DebugUserPolicyEntry>();
-            try
-            {
-                var users = _userManager.GetUserList(new UserQuery { IsDisabled = false });
-                foreach (var user in users)
-                {
-                    var entry = new DebugUserPolicyEntry
-                    {
-                        UserId     = user.Id.ToString(),
-                        UserName   = user.Name,
-                        ItemIdGuid = user.Id.ToString(),
-                        InternalId = _userManager.GetInternalId(user.Id.ToString()).ToString()
-                    };
-                    try
-                    {
-                        object policy = null;
-                        if (getPolicyMethod != null)
-                        {
-                            try
-                            {
-                                var gp = getPolicyMethod.GetParameters();
-                                policy = getPolicyMethod.Invoke(_userManager, BuildArgList(gp, BuildUserArg(gp[0].ParameterType, user), null));
-                                if (policy != null) entry.PolicySource = "GetUserPolicy";
-                            }
-                            catch { }
-                        }
-                        if (policy == null)
-                        {
-                            policy = user.GetType().GetProperty("Policy")?.GetValue(user);
-                            if (policy != null) entry.PolicySource = "user.Policy";
-                        }
-
-                        if (policy == null)
-                        {
-                            entry.PolicyFound = false;
-                            entry.Error = "Policy is null";
-                        }
-                        else
-                        {
-                            entry.PolicyFound = true;
-                            entry.EnableAllFolders = policy.GetType().GetProperty("EnableAllFolders")?.GetValue(policy) is true;
-                            entry.EnabledFolders   = policy.GetType().GetProperty("EnabledFolders")?.GetValue(policy) as string[]
-                                                     ?? Array.Empty<string>();
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        entry.Error = ex.GetBaseException().Message;
-                    }
-                    entries.Add(entry);
-                }
-            }
-            catch (Exception ex)
-            {
-                entries.Add(new DebugUserPolicyEntry { Error = "GetUserList failed: " + ex.Message });
-            }
-            return new DebugUserPoliciesResponse { Users = entries };
-        }
-
         public object Post(PrepareManualTopListFolderRequest request)
         {
             try
@@ -1528,7 +1446,8 @@ public class HomeScreenCompanionService : IService
                     var nfo = $"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<movie>\n  <sorttitle>{sortPrefix}</sorttitle>\n  <lockedfields>SortName|Images</lockedfields>\n</movie>";
                     File.WriteAllText(Path.Combine(folderPath, entry.BaseName + ".nfo"), nfo);
                     if (!string.IsNullOrEmpty(entry.PosterPath) && File.Exists(entry.PosterPath))
-                        CreateRankedPoster(entry.PosterPath, count, Path.Combine(folderPath, entry.BaseName + ".jpg"));
+                        try { CreateRankedPoster(entry.PosterPath, count, Path.Combine(folderPath, entry.BaseName + ".jpg"), request.BadgeStyle); }
+                        catch { }
                 }
 
                 try
@@ -1580,7 +1499,7 @@ public class HomeScreenCompanionService : IService
             }
         }
 
-        private void CreateRankedPoster(string sourcePath, int rank, string outputPath)
+        private void CreateRankedPoster(string sourcePath, int rank, string outputPath, string badgeStyle = "neutral")
         {
             using var original = SKBitmap.Decode(sourcePath);
             if (original == null) return;
@@ -1594,22 +1513,52 @@ public class HomeScreenCompanionService : IService
             float cx = margin + radius;
             float cy = margin + radius;
 
-            using var bgPaint = new SKPaint { Color = new SKColor(0, 0, 0, 210), IsAntialias = true };
+            SKColor bgColor;
+            SKColor textColor;
+            switch (badgeStyle?.ToLowerInvariant())
+            {
+                case "emby-green":
+                    bgColor   = new SKColor(0x52, 0xB5, 0x4B, 200);
+                    textColor = SKColors.White;
+                    break;
+                case "ocean-blue":
+                    bgColor   = new SKColor(0x2E, 0x86, 0xC1, 210);
+                    textColor = SKColors.White;
+                    break;
+                case "soft-red":
+                    bgColor   = new SKColor(0xC9, 0x45, 0x45, 210);
+                    textColor = SKColors.White;
+                    break;
+                case "violet":
+                    bgColor   = new SKColor(0x7B, 0x52, 0xB5, 210);
+                    textColor = SKColors.White;
+                    break;
+                default:
+                    bgColor   = new SKColor(0, 0, 0, 210);
+                    textColor = SKColors.White;
+                    break;
+            }
+
+            using var bgPaint = new SKPaint { Color = bgColor, IsAntialias = true };
             canvas.DrawCircle(cx, cy, radius, bgPaint);
 
             var text = rank.ToString();
-            float fontSize = rank < 10 ? radius * 1.1f : radius * 0.75f;
+            float fontSize = radius * 1.1f;
 
             using var fontStream = System.Reflection.Assembly.GetExecutingAssembly()
                 .GetManifestResourceStream("HomeScreenCompanion.LemonMilk.otf");
             using var typeface = fontStream != null ? SKTypeface.FromStream(fontStream) : SKTypeface.Default;
             using var textPaint = new SKPaint
             {
-                Color = SKColors.White,
+                Color = textColor,
                 TextSize = fontSize,
                 IsAntialias = true,
                 Typeface = typeface
             };
+
+            float maxTextWidth = radius * 1.6f;
+            while (textPaint.MeasureText(text) > maxTextWidth && textPaint.TextSize > 1f)
+                textPaint.TextSize -= 1f;
 
             float textWidth = textPaint.MeasureText(text);
             var metrics = textPaint.FontMetrics;
@@ -1619,7 +1568,7 @@ public class HomeScreenCompanionService : IService
 
             using var image = surface.Snapshot();
             using var data = image.Encode(SKEncodedImageFormat.Jpeg, 92);
-            using var stream = File.OpenWrite(outputPath);
+            using var stream = File.Create(outputPath);
             data.SaveTo(stream);
         }
 
@@ -1664,6 +1613,7 @@ public class HomeScreenCompanionService : IService
                 var customName  = "";
                 var displayMode = "";
                 var imageType   = "";
+                var badgeStyle  = "neutral";
                 var userIds     = new List<string>();
                 if (tlConfig != null)
                 {
@@ -1673,6 +1623,7 @@ public class HomeScreenCompanionService : IService
                         customName  = settings.TryGetValue("CustomName",  out var cn) ? cn  : "";
                         displayMode = settings.TryGetValue("DisplayMode", out var dm) ? dm  : "";
                         imageType   = settings.TryGetValue("ImageType",   out var it) ? it  : "";
+                        badgeStyle  = settings.TryGetValue("BadgeStyle",  out var bs) ? bs  : "neutral";
                     }
                     catch { }
                     userIds = tlConfig.HomeSectionUserIds ?? new List<string>();
@@ -1733,6 +1684,7 @@ public class HomeScreenCompanionService : IService
                     CustomName  = customName,
                     DisplayMode = displayMode,
                     ImageType   = imageType,
+                    BadgeStyle  = badgeStyle,
                     UserIds     = userIds
                 };
             }
