@@ -114,6 +114,14 @@ namespace HomeScreenCompanion
 
             if (item.IsVirtualItem) return;
 
+            // Never tag .strm files that belong to a top-list virtual library
+            if (Plugin.Instance != null && !string.IsNullOrEmpty(item.Path))
+            {
+                var topListsFolder = Path.Combine(Plugin.Instance.DataFolderPath, "toplists") + Path.DirectorySeparatorChar;
+                if (item.Path.StartsWith(topListsFolder, StringComparison.OrdinalIgnoreCase))
+                    return;
+            }
+
             var ids = item.ProviderIds;
             if (ids == null || ids.Count == 0) return;
 

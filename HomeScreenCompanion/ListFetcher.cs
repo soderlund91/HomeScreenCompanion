@@ -37,6 +37,12 @@ namespace HomeScreenCompanion
 
         public async Task<List<ExternalItemDto>> FetchItems(string url, int limit, string traktClientId, string mdbApiKey, string tmdbApiKey, CancellationToken cancellationToken)
         {
+            // Set a global maximum of 1000 items to prevent massive fetches, unless a specific smaller limit is requested
+            if (limit <= 0 || limit > 1000)
+            {
+                limit = 1000;
+            }
+
             if (string.IsNullOrWhiteSpace(url)) return new List<ExternalItemDto>();
 
             if (url.Contains("mdblist.com"))
@@ -166,6 +172,7 @@ namespace HomeScreenCompanion
             public string ListId { get; set; }
             public string Endpoint { get; set; }
             public string MediaType { get; set; }
+            public string FullUrl { get; set; }
         }
 
         private TmdbApiTarget ExtractTmdbApiTarget(string url)
@@ -173,6 +180,15 @@ namespace HomeScreenCompanion
             try
             {
                 var uri = new Uri(url);
+
+                if (uri.Host.Equals("api.themoviedb.org", StringComparison.OrdinalIgnoreCase))
+                {
+                    string mediaType = null;
+                    if (uri.AbsolutePath.Contains("/movie/")) mediaType = "movie";
+                    else if (uri.AbsolutePath.Contains("/tv/")) mediaType = "tv";
+                    return new TmdbApiTarget { FullUrl = url, MediaType = mediaType };
+                }
+
                 var segments = uri.Segments.Select(s => s.TrimEnd('/')).Where(s => !string.IsNullOrEmpty(s)).ToList();
 
                 if (segments.Count >= 2 && segments[0] == "list")
@@ -239,9 +255,18 @@ namespace HomeScreenCompanion
 
                 if (useV3 && result == null)
                 {
-                    var apiUrl = string.IsNullOrEmpty(target.Endpoint) 
-                        ? $"https://api.themoviedb.org/3/list/{target.ListId}?page={page}"
-                        : $"https://api.themoviedb.org/3/{target.Endpoint}?page={page}";
+                    string apiUrl;
+                    if (!string.IsNullOrEmpty(target.FullUrl))
+                    {
+                        apiUrl = target.FullUrl;
+                        apiUrl += apiUrl.Contains("?") ? $"&page={page}" : $"?page={page}";
+                    }
+                    else
+                    {
+                        apiUrl = string.IsNullOrEmpty(target.Endpoint) 
+                            ? $"https://api.themoviedb.org/3/list/{target.ListId}?page={page}"
+                            : $"https://api.themoviedb.org/3/{target.Endpoint}?page={page}";
+                    }
                         
                     if (!isToken) apiUrl += $"&api_key={apiKey}";
 

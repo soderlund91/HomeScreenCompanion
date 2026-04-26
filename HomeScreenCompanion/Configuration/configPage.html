@@ -164,7 +164,7 @@
             }
         }
 
-        .btn-log-trigger, .btn-help-trigger {
+        .btn-log-trigger, .btn-bug-trigger, .btn-help-trigger {
             background: var(--theme-background-level2) !important;
             color: var(--theme-text-primary) !important;
             padding: 0 12px !important;
@@ -183,7 +183,24 @@
                 border-color: #00a4dc !important;
             }
 
+            .btn-bug-trigger:hover {
+                border-color: #e57373 !important;
+            }
+
+        .btn-help-trigger {
+            background: rgba(82, 181, 75, 0.15) !important;
+            border-color: rgba(82, 181, 75, 0.55) !important;
+            color: var(--theme-text-primary) !important;
+            padding: 0 18px !important;
+            height: 40px !important;
+            border-radius: 20px !important;
+            font-size: 0.95em !important;
+            font-weight: 500 !important;
+            gap: 7px !important;
+        }
+
             .btn-help-trigger:hover {
+                background: rgba(82, 181, 75, 0.28) !important;
                 border-color: #52B54B !important;
             }
 
@@ -906,6 +923,11 @@
                     <span>Help</span>
                 </button>
 
+                <button type="button" is="emby-button" class="btn-bug-trigger" id="btnOpenBugReport" title="Report a Bug">
+                    <i class="md-icon">bug_report</i>
+                    <span>Report bug</span>
+                </button>
+
                 <button type="button" is="emby-button" class="btn-log-trigger" id="btnOpenLogs" title="View Logs">
                     <i class="md-icon">terminal</i>
                     <span>Logs</span>
@@ -968,7 +990,7 @@
                         </div>
 
                         <div class="inputContainer" style="margin-top: 15px;">
-                            <input is="emby-input" type="password" id="txtTmdbApiKey" label="TMDb API Key" />
+                            <input is="emby-input" type="password" id="txtTmdbApiKey" label="TMDb API Read Access Token" />
                             <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
                                 <input type="checkbox" class="chkShowApiKey" data-target="txtTmdbApiKey" style="margin:0;" /> Show
                             </label>
@@ -1129,6 +1151,59 @@
         </div>
     </div>
 
+    <div id="bugReportModalOverlay" class="modal-backdrop">
+        <div class="modal-content" style="max-width:560px;">
+            <div class="modal-header-bar" style="background:linear-gradient(135deg,#b71c1c 0%,#c62828 100%);">
+                <i class="md-icon modal-header-icon">bug_report</i>
+                <div>
+                    <h2 class="modal-header-title">Report a Bug</h2>
+                    <span style="opacity:0.9;font-size:0.9em;">Help us improve Home Screen Companion</span>
+                </div>
+            </div>
+            <div class="modal-body-scroll" style="padding:24px;">
+
+                <p style="margin:0 0 14px;font-size:0.95em;line-height:1.6;">
+                    A <strong>bug</strong> is when the plugin behaves in an unexpected or incorrect way — for example items not being tagged, a home screen section not updating, or an error appearing in the logs.
+                </p>
+
+                <div style="background:rgba(82,181,75,0.08);border:1px solid rgba(82,181,75,0.35);border-radius:6px;padding:14px 16px;margin-bottom:16px;">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                        <svg viewBox="0 0 16 16" width="1.3em" height="1.3em" style="vertical-align:middle;color:#52B54B;" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+                        <strong style="font-size:1em;">Preferred: GitHub Issues</strong>
+                    </div>
+                    <p style="margin:0 0 10px;font-size:0.9em;line-height:1.6;">If you have a GitHub account, please report there. It gives the best visibility and lets you track progress on your report.</p>
+                    <a href="https://github.com/soderlund91/HomeScreenCompanion/issues" target="_blank"
+                       style="display:inline-flex;align-items:center;gap:7px;background:#52B54B;color:#fff;padding:7px 16px;border-radius:4px;text-decoration:none;font-size:0.88em;font-weight:500;">
+                        <i class="md-icon" style="font-size:1em;">open_in_new</i>Open GitHub Issues
+                    </a>
+                </div>
+
+                <div style="background:rgba(0,164,220,0.07);border:1px solid rgba(0,164,220,0.3);border-radius:6px;padding:14px 16px;margin-bottom:20px;">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                        <i class="md-icon" style="color:#00a4dc;font-size:1.3em;">forum</i>
+                        <strong style="font-size:1em;">Alternative: Emby Community Forum</strong>
+                    </div>
+                    <p style="margin:0 0 10px;font-size:0.9em;line-height:1.6;">No GitHub account? You can also post in the plugin's dedicated thread on the Emby forum.</p>
+                    <a href="https://emby.media/community/topic/146080-plugin-home-screen-companion/" target="_blank"
+                       style="display:inline-flex;align-items:center;gap:7px;background:#00a4dc;color:#fff;padding:7px 16px;border-radius:4px;text-decoration:none;font-size:0.88em;font-weight:500;">
+                        <i class="md-icon" style="font-size:1em;">open_in_new</i>Open Emby Forum Thread
+                    </a>
+                </div>
+
+                <div style="background:rgba(128,128,128,0.06);border:1px solid var(--line-color);border-radius:6px;padding:12px 14px;font-size:0.85em;line-height:1.7;color:var(--theme-text-secondary);">
+                    <strong style="color:var(--theme-text);">Tips for a useful bug report:</strong><br>
+                    • What did you expect to happen, and what happened instead?<br>
+                    • Which source type and settings were you using?<br>
+                    • Copy the relevant lines from the <strong>Logs</strong> (enable <em>Detailed Logs</em> in Settings first if needed).
+                </div>
+
+                <div style="text-align:right;margin-top:20px;">
+                    <button is="emby-button" type="button" id="btnCloseBugReport" class="raised" style="background:#444;color:#fff;padding:0 20px;">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="logModalOverlay" class="modal-backdrop">
         <div class="modal-content" style="max-width: 850px; width: 95%;">
             <div class="modal-header-bar" style="background: #222;">
@@ -1157,10 +1232,16 @@
             </div>
             <div class="modal-body-scroll">
 
+                <!-- PLUGIN INTRO -->
+                <div style="background:rgba(82,181,75,0.08);border:1px solid rgba(82,181,75,0.3);border-radius:6px;padding:12px 16px;margin-bottom:20px;font-size:0.92em;line-height:1.6;">
+                    <strong style="color:#52B54B;">What does this plugin do?</strong><br>
+                    Home Screen Companion keeps your Emby home screen up to date automatically. You connect it to movie lists (from sites like Trakt or MDBList, or your own filters), and the plugin marks those movies with a <em>tag</em> in your Emby library. Those tags can then power custom home screen rows — like "Trending Now" or "Top 10 Action Movies" — that update themselves on a schedule.
+                </div>
+
                 <!-- NAV MENU -->
                 <nav style="background:rgba(128,128,128,0.06);border:1px solid var(--line-color);border-radius:6px;padding:10px 16px;margin-bottom:20px;">
                     <div style="font-size:0.75em;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--theme-text-secondary);margin-bottom:8px;">Contents</div>
-                    <ol style="margin:0;padding:0 0 0 18px;display:grid;grid-template-columns:1fr 1fr;gap:3px 24px;">
+                    <ol style="margin:0;padding:0 0 0 18px;column-count:2;column-gap:28px;">
                         <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-1').scrollIntoView({behavior:'smooth'});return false;">Quick Start</a></li>
                         <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-2').scrollIntoView({behavior:'smooth'});return false;">Source Types</a></li>
                         <li><a href="javascript:void(0)" class="help-nav-link" onclick="document.getElementById('help-sec-3').scrollIntoView({behavior:'smooth'});return false;">Source Settings</a></li>
@@ -1181,33 +1262,48 @@
                 <div class="help-step">
                     <div class="step-num">1</div>
                     <div class="step-text">
-                        <strong>Enter API Keys</strong> — go to the <strong>Settings</strong> tab. Only add keys for the services you intend to use.
-                        <div class="info-box" style="margin-top:6px;">
-                            <div style="margin-bottom:8px;">
-                                <strong>Trakt:</strong> <a href="https://trakt.tv/oauth/applications" target="_blank" class="help-link">trakt.tv/oauth/applications</a>
-                                → New App → set Redirect URI to <code>http://localhost</code>. Copy the <em>Client ID</em>.
+                        <strong>Enter API Keys</strong> — go to the <strong>Settings</strong> tab. An API key is a code that lets the plugin access a service on your behalf — think of it as a password for the plugin, not for you personally. Only add keys for the services you plan to use.
+                        <div class="info-box" style="margin-top:8px;">
+                            <div style="margin-bottom:10px;">
+                                <strong>Trakt:</strong> Go to <a href="https://trakt.tv/oauth/applications" target="_blank" class="help-link">trakt.tv/oauth/applications</a> and sign in.
+                                Click <em>New Application</em>, give it any name, and in the <em>Redirect URI</em> field type exactly: <code>http://localhost</code>
+                                (this is just a required placeholder — don't visit that address).
+                                Click Save, then copy the <em>Client ID</em> and paste it here.
                             </div>
-                            <div style="border-top:1px dashed #444; padding-top:8px; margin-bottom:8px;">
-                                <strong>MDBList:</strong> <a href="https://mdblist.com/preferences/" target="_blank" class="help-link">mdblist.com/preferences</a>
-                                → scroll to "API Access".
+                            <div style="border-top:1px dashed #444; padding-top:10px; margin-bottom:10px;">
+                                <strong>MDBList:</strong> Go to <a href="https://mdblist.com/preferences/" target="_blank" class="help-link">mdblist.com/preferences</a>,
+                                scroll down to the <em>API Access</em> section, and copy your API key.
                             </div>
-                            <div style="border-top:1px dashed #444; padding-top:8px;">
-                                <strong>OpenAI / Gemini:</strong> only needed for <em>AI created lists</em> sources. Keys are stored hidden — use the <em>Show</em> toggle to reveal them.
+                            <div style="border-top:1px dashed #444; padding-top:10px; margin-bottom:10px;">
+                                <strong>TMDb:</strong> Go to <a href="https://www.themoviedb.org/settings/api" target="_blank" class="help-link">themoviedb.org/settings/api</a>,
+                                scroll to <em>API Read Access Token</em>, and copy the long token — not the short API Key above it. Public TMDb lists work without a token.
+                            </div>
+                            <div style="border-top:1px dashed #444; padding-top:10px;">
+                                <strong>OpenAI / Gemini:</strong> Only needed if you want to use the <em>AI created lists</em> source type.
+                                API key fields are hidden by default — tick the <em>Show</em> checkbox next to each field to see what you've entered.
                             </div>
                         </div>
                     </div>
                 </div>
                 <div class="help-step">
                     <div class="step-num">2</div>
-                    <div class="step-text"><strong>Add a Source</strong> — open the <strong>Tag &amp; Collection</strong> tab, click <strong>+ Add New Source</strong>.</div>
+                    <div class="step-text"><strong>Add a Source</strong> — open the <strong>Tag &amp; Collection</strong> tab and click <strong>+ Add New Source</strong>. A source is simply the place the plugin fetches its movie list from.</div>
                 </div>
                 <div class="help-step">
                     <div class="step-num">3</div>
-                    <div class="step-text"><strong>Configure</strong> — use the tabs inside each source: <em>Source</em> (pick type &amp; URLs), <em>Tag</em> (tag name), <em>Collection</em> (optional collection), <em>Schedule</em> (optional date rules).</div>
+                    <div class="step-text">
+                        <strong>Configure the source</strong> — each source has several tabs:
+                        <ul style="margin:6px 0 0 0;padding-left:18px;line-height:1.8;">
+                            <li><em>Source</em> — choose where to get the list (Trakt URL, MDBList URL, local collection, etc.)</li>
+                            <li><em>Tag</em> — set the tag name that will be applied to matching movies in Emby</li>
+                            <li><em>Collection</em> — optionally also group the movies into an Emby collection</li>
+                            <li><em>Schedule</em> — optionally limit when this source is active (e.g. only in December)</li>
+                        </ul>
+                    </div>
                 </div>
                 <div class="help-step" style="margin-bottom:0;">
                     <div class="step-num">4</div>
-                    <div class="step-text"><strong>Save &amp; Sync</strong> — click <strong>Save Settings</strong>, then use the <strong>Run</strong> button → <em>Full sync</em>. Done!</div>
+                    <div class="step-text"><strong>Save &amp; Run</strong> — click <strong>Save Settings</strong> at the bottom of the page, then click the <strong>Run</strong> button at the bottom and choose <em>Full sync</em>. The plugin will now fetch the lists, match movies in your library, and apply the tags. Done!</div>
                 </div>
 
                 <!-- 2. SOURCE TYPES -->
@@ -1215,62 +1311,70 @@
                     <i class="md-icon help-section-icon">input</i>
                     <span>Source Types</span>
                 </div>
+                <div class="step-text" style="margin-bottom:12px;font-size:0.92em;">A <strong>source</strong> is where the plugin gets its list of movies or shows. Each source is linked to a <strong>tag</strong> — once the plugin has fetched the list, it marks matching titles in your Emby library with that tag. Choose the source type that suits how you want to build your list:</div>
                 <div class="src-cards">
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:#52B54B;">public</i> External</div>
-                        Paste a list URL from <strong>Trakt</strong> or <strong>MDBList</strong>. The plugin fetches the items and tags matching titles in your library. Multiple URLs per source are supported.
+                        Paste a list URL from <strong>Trakt</strong>, <strong>MDBList</strong>, or <strong>TMDb</strong>. The plugin downloads the list and tags every matching title it finds in your library. You can add multiple URLs to the same source — they are combined into one list.
+                        <div style="margin-top:8px;padding-top:8px;border-top:1px dashed rgba(128,128,128,0.3);font-size:0.92em;">
+                            <strong>TMDb</strong> can be used in two ways:
+                            <ul style="margin:4px 0 0;padding-left:16px;line-height:1.8;">
+                                <li><em>Your own lists</em> — paste the URL to any public or private list you have created on themoviedb.org.</li>
+                                <li><em>API endpoints</em> — paste a direct TMDb API URL (e.g. popular movies, top-rated, now-playing, or a specific collection). Requires a <strong>TMDb API Read Access Token</strong> in the Settings tab.</li>
+                            </ul>
+                        </div>
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:#52B54B;">video_library</i> Local</div>
-                        Pick an existing <strong>playlist</strong> or <strong>collection</strong> in Emby. Every item in that list gets the configured tag or collection. When the Home Screen tab uses <em>Media Type: Collections</em>, the tag is applied to the <strong>collection itself</strong> instead — making it appear as a section in the home screen.
+                        Use an existing <strong>playlist</strong> or <strong>collection</strong> already in Emby as the source. Every item in that list gets the configured tag. You can also use this to show a collection as a home screen row — see <em>Home Section — Collections mode</em> below.
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:#52B54B;">tune</i> MediaInfo</div>
-                        Filter your library by technical properties — codec, resolution, HDR, audio format, genre, actors, ratings, and user activity (watched status, last played, play count).
+                        Build a list based on the properties of your own files — for example "all 4K HDR movies" or "Action films I haven't watched yet". Filter by video quality, audio format, genre, actors, ratings, and more.
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:#52B54B;">auto_awesome</i> AI created lists</div>
-                        Write a plain-language prompt (e.g. <em>"Best sci-fi films from the 90s"</em>) and let <strong>OpenAI</strong> or <strong>Google Gemini</strong> generate the list. Optionally prepend a user's recent watch history so the AI can personalise recommendations. Requires an OpenAI or Gemini API key in Settings.
+                        Describe what you want in plain language — for example <em>"Best sci-fi films from the 90s"</em> — and let <strong>OpenAI</strong> or <strong>Google Gemini</strong> generate the list. You can also have the AI take into account what a specific user has watched recently, to personalise the suggestions. Requires an API key in Settings.
                     </div>
                 </div>
 
-                <!-- 3. SOURCE SETTINGS (new) -->
+                <!-- 3. SOURCE SETTINGS -->
                 <div id="help-sec-3" class="help-section">
                     <i class="md-icon help-section-icon">tab</i>
                     <span>Source Settings</span>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">toggle_on</i>
-                    <div><strong>Active toggle</strong> — The checkbox in the source header enables or disables the source entirely without deleting it. Disabled sources are skipped during sync, and also removes the corresponding tag and/or collection.</div>
+                    <div><strong>Active toggle</strong> — The checkbox at the top of each source card turns it on or off without deleting it. When turned off, the source is skipped during sync and its tag and collection are automatically removed from all items. Handy for temporarily pausing a source (e.g. a seasonal list).</div>
                 </div>
                 <div class="help-feature-row" style="margin-bottom:12px;">
                     <i class="md-icon help-feat-icon">badge</i>
-                    <div><strong>Display Name</strong> — A friendly label shown in the source header for your own reference. Separate from the Tag Name used in Emby.</div>
+                    <div><strong>Display Name</strong> — A label for your own reference, shown in the source header. This is separate from the tag name — you can call it anything you like.</div>
                 </div>
                 <div class="src-cards" style="grid-template-columns: repeat(3, 1fr);">
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:#52B54B;">input</i> Source tab</div>
-                        Choose the source type and add URLs or local sources. Each entry has its own <strong>Max items</strong> limit (0 = unlimited).
+                        Choose the source type and add URLs or local sources. Set the <strong>Max items</strong> limit to cap how many items are fetched (0 = no limit).
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:#52B54B;">label</i> Tag tab</div>
-                        Toggle tagging on or off. Set the <strong>Tag Name</strong> that will be applied to matched items in Emby.
+                        Enable or disable tagging and set the <strong>Tag Name</strong> — the invisible label applied to each matched item in Emby.
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:#52B54B;">collections_bookmark</i> Collection tab</div>
-                        Optionally create an Emby collection. Set a name, description, and poster. Enable <em>Only Collection</em> to skip tagging entirely.
+                        Optionally group the matched items into an Emby collection with a custom name, description, and poster image. Enable <em>Only Collection</em> to skip tagging and only maintain the collection.
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:#52B54B;">calendar_month</i> Schedule tab</div>
-                        Define when this source is active — specific date ranges or recurring rules. Add a <em>Priority Override</em> to suppress other sources sharing the same tag when this one is active.
+                        Limit when this source is active — for example only between certain dates or on specific recurring days. Add a <em>Priority Override</em> to make this source take over from other sources that share the same tag when it is active.
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:#52B54B;">block</i> Blacklist tab</div>
-                        IMDB IDs listed here are permanently excluded from this source, regardless of what the list says.
+                        Enter IMDB IDs (one per line) that should always be excluded from this source, no matter what the list says.
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:#52B54B;">tv</i> Home Screen tab</div>
-                        Automatically add this source's items as a home screen section for specific users each time sync runs. Set <em>Media Type: Collections</em> to show a collection row — the tag is then applied to the collection itself, not its items.
+                        Make this source automatically show up as a row on the home screen for specific users, updated every time sync runs. Choose <em>Media Type: Collections</em> to show a collection row instead of individual items.
                     </div>
                 </div>
 
@@ -1279,56 +1383,59 @@
                     <i class="md-icon help-section-icon">local_offer</i>
                     <span>Tags &amp; Collections</span>
                 </div>
+                <div style="background:rgba(128,128,128,0.06);border:1px solid var(--line-color);border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:0.9em;line-height:1.6;">
+                    <strong>What is a tag?</strong> — A tag is an invisible label that Emby can attach to a movie or show. You won't see it while browsing normally, but the plugin uses it to know which items belong to which list. Tags are what makes home screen rows work — a row simply shows all items that carry a certain tag.
+                </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">label</i>
-                    <div><strong>Tag</strong> — An Emby tag applied to every matched item. Automatically added when an item appears in the list and removed when it leaves.</div>
+                    <div><strong>Tag</strong> — The plugin applies a tag to every item on the list. When an item drops off the list (e.g. the Trakt list is updated), the tag is removed automatically on the next sync.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">collections_bookmark</i>
-                    <div><strong>Collection</strong> — Creates and maintains an Emby collection. Items are added and removed automatically on every sync.</div>
+                    <div><strong>Collection</strong> — In addition to (or instead of) tagging, the plugin can maintain an Emby collection. Items are added and removed automatically on every sync, just like tags.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">check_box_outline_blank</i>
-                    <div><strong>Only Collection</strong> — Skip tagging entirely and only maintain the collection. Useful when you want a clean collection without adding tags to individual items.</div>
+                    <div><strong>Only Collection</strong> — Enable this to skip tagging entirely and only maintain the collection. Useful when you just want a tidy collection without adding any labels to individual movies.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">image</i>
-                    <div><strong>Collection Poster</strong> — Upload a local image file or paste a URL to set a custom poster for the collection. Stored on the server and refreshed on every sync.</div>
+                    <div><strong>Collection Poster</strong> — Upload a local image or paste an image URL to set a custom poster for the collection. The poster is stored on the server and re-applied on every sync so it is never overwritten by Emby.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">tv</i>
-                    <div><strong>Home Section per source</strong> — Each source can add its matched items as a dedicated home screen section for specific users. Configure this in the <em>Home Screen</em> tab inside each source card. Independent from the Home Screen copy feature.</div>
+                    <div><strong>Home Section per source</strong> — Each source can have its own home screen row for selected users. Set this up in the <em>Home Screen</em> tab inside each source card. This works independently from the Home Screen copy feature.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">collections</i>
-                    <div><strong>Home Section — Collections mode</strong> — Use source type <em>Local collection</em> pointing to an existing Emby collection, set the tag name, and in the <em>Home Screen</em> tab choose <em>Media Type: Collections</em>. The plugin will apply the tag to the <strong>collection itself</strong> (not to the films/series inside it), so it appears as a collection row in the home screen. Items inside the collection are never tagged in this mode.</div>
+                    <div><strong>Home Section — Collections mode</strong> — Want to show a whole collection as a row (rather than individual movies)? Use a <em>Local collection</em> source, set a tag name, and in the <em>Home Screen</em> tab choose <em>Media Type: Collections</em>. The plugin will tag the <strong>collection itself</strong> — not the movies inside it — so Emby shows it as a collection row. The individual movies inside the collection are never tagged in this mode.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">block</i>
-                    <div><strong>Blacklist</strong> — IMDB IDs listed in the <em>Blacklist</em> tab are permanently excluded from this source.</div>
+                    <div><strong>Blacklist</strong> — IMDB IDs in the <em>Blacklist</em> tab are permanently excluded from this source, even if they appear in the fetched list.</div>
                 </div>
-                
 
                 <!-- 5. SCHEDULING -->
                 <div id="help-sec-5" class="help-section">
                     <i class="md-icon help-section-icon">calendar_month</i>
                     <span>Scheduling</span>
                 </div>
+                <div class="step-text" style="margin-bottom:10px;font-size:0.92em;">By default a source is always active. Use the Schedule tab to limit when a source runs — for example to show a Halloween horror list only in October, or a Christmas movie row only in December.</div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">all_inclusive</i>
-                    <div><strong>No schedule</strong> — Entry is always active.</div>
+                    <div><strong>No schedule</strong> — The source is always active (default).</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">date_range</i>
-                    <div><strong>Specific dates</strong> — Active between a start date and an end date.</div>
+                    <div><strong>Specific dates</strong> — The source is only active between a chosen start date and end date. Outside those dates the tag and collection are removed automatically.</div>
                 </div>
-                <div class="help-feature-row" style="margin-bottom:0;">
+                <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">repeat</i>
-                    <div><strong>Recurring</strong> — Activate on specific days every week, month, or year. Multiple intervals can be stacked on a single entry.</div>
+                    <div><strong>Recurring</strong> — Active on specific days every week, month, or year. You can stack multiple intervals on the same source — for example "every Friday" and "every Saturday".</div>
                 </div>
                 <div class="help-feature-row" style="margin-bottom:0;">
                     <i class="md-icon help-feat-icon">workspace_premium</i>
-                    <div><strong>Priority Override</strong> — When this entry is in-schedule, all other entries sharing the same tag or collection are suppressed. Ideal for seasonal overrides (e.g. "Spotlight Halloween" takes over "Spotlight").</div>
+                    <div><strong>Priority Override</strong> — When this source is in-schedule, it takes over from any other sources that share the same tag. The other sources are temporarily suppressed. Example: a "Spotlight" source runs all year, but a "Spotlight Halloween" source with Priority Override takes over during October — the Halloween list replaces the regular one automatically.</div>
                 </div>
 
                 <!-- 6. MEDIAINFO FILTERS -->
@@ -1336,31 +1443,45 @@
                     <i class="md-icon help-section-icon">analytics</i>
                     <span>MediaInfo Filters</span>
                 </div>
-                <div class="step-text" style="margin-bottom:12px; font-size:0.92em;">Build filter rules from six property categories: <strong>Video</strong>, <strong>Audio</strong>, <strong>Content</strong>, <strong>Music</strong>, <strong>Metrics</strong>, and <strong>Activity</strong>. Rules within a group use AND/OR logic; the <strong>NOT</strong> toggle inverts any rule. Numeric properties support <code>=&nbsp; &gt;&nbsp; &ge;&nbsp; &lt;&nbsp; &le;</code>. Activity properties can be scoped to <em>any user</em>, <em>all users</em>, or a specific user. Text properties accept <strong>one value per line</strong> — if any line matches the item, the rule matches (OR logic). Text properties also offer a <strong>Contains / Exact</strong> mode selector. Use <strong>MediaType</strong> to target specific item types (Movie, Series, Episode, Audio, MusicVideo, MusicAlbum, MusicArtist).</div>
+                <div class="step-text" style="margin-bottom:8px;font-size:0.92em;">
+                    MediaInfo lets you build a list based on the properties of your own files — think of it as building a smart search. For example: <em>"all 4K Dolby Vision movies in the Action genre that I haven't watched yet."</em>
+                </div>
+                <div class="step-text" style="margin-bottom:12px;font-size:0.92em;">
+                    <strong>How rules work:</strong>
+                    <ul style="margin:6px 0 0;padding-left:18px;line-height:1.9;">
+                        <li>Each <strong>rule</strong> checks one property against a value (e.g. Genre = Action).</li>
+                        <li>Rules in the same <strong>group</strong> can be combined with <strong>AND</strong> (must match all) or <strong>OR</strong> (match any one).</li>
+                        <li>Multiple <strong>groups</strong> can also be combined with AND / OR using the connector between them.</li>
+                        <li>The <strong>NOT</strong> button on a rule inverts it — e.g. <em>NOT Genre: Comedy</em> matches everything except comedies.</li>
+                        <li>For text fields (Genre, Actor, Title…), enter <strong>one value per line</strong>. Any matching line triggers the rule.</li>
+                        <li>Text fields offer <strong>Contains</strong> (partial match) or <strong>Exact</strong> (full match) mode.</li>
+                        <li>Number fields (Year, Rating, Runtime…) support <code>=</code> <code>&gt;</code> <code>&ge;</code> <code>&lt;</code> <code>&le;</code>.</li>
+                    </ul>
+                </div>
                 <div class="mi-help-grid" style="grid-template-columns: repeat(3, 1fr);">
                     <div class="mi-help-col">
                         <div class="mi-help-category">Video</div>
-                        Resolution (4K, 8K, HD, SD), Video Codec (HEVC, H264, AV1…), HDR type (HDR10, Dolby Vision, HLG)
+                        Resolution (4K, 1080p, 720p, SD, 8K), Video codec (HEVC/H.265, AV1, H.264), HDR type (HDR10, Dolby Vision, HLG)
                     </div>
                     <div class="mi-help-col">
                         <div class="mi-help-category">Audio</div>
-                        Format (Atmos, DTS-HD MA, TrueHD, AC3…), Channels (stereo, surround, mono), Audio Language — one value per line (e.g. eng, swe)
+                        Format (Atmos, DTS-HD MA, TrueHD, DTS, AC3, AAC), Channels (7.1, 5.1, Stereo, Mono), Audio language — one language code per line (e.g. <em>swe</em>, <em>eng</em>)
                     </div>
                     <div class="mi-help-col">
                         <div class="mi-help-category">Content</div>
-                        Genre, Actor/Cast, Director, Writer, Studio, Title, Episode Title, Overview, Tag, Content Rating, IMDB ID, Collection, Playlist — one value per line, any match = rule matches (OR). Text properties have a <strong>Contains / Exact</strong> selector. <strong>MediaType</strong>: Movie, Series, Episode, Audio, MusicVideo, MusicAlbum, MusicArtist
+                        Genre, Actor/Cast, Director, Writer, Studio, Title, Episode Title, Plot overview, Tag (existing Emby tag), Content rating (PG-13, R…), IMDB ID, Collection, Playlist — one value per line; any match = rule matches
                     </div>
                     <div class="mi-help-col">
                         <div class="mi-help-category">Music</div>
-                        Artist, Album — use <em>MediaType:Audio</em> to target songs, <em>MediaType:MusicVideo</em> for music videos. BitRate (kbps), SampleRate (Hz), BitsPerSample, TrackNumber, DiscNumber support numeric operators (e.g. <em>BitsPerSample:&gt;=:24</em>)
+                        Artist, Album. Use <em>MediaType: Audio</em> to target songs or <em>MediaType: MusicVideo</em> for music videos. Also supports Bit Rate, Sample Rate, Bits Per Sample, Track Number, Disc Number with numeric operators.
                     </div>
                     <div class="mi-help-col">
                         <div class="mi-help-category">Metrics</div>
-                        Community Rating, Year, Runtime (minutes), Date Added (days ago), Date Modified (days ago), File Size (MB)
+                        Community Rating, Release Year, Runtime (minutes), Date Added (days ago), Date Modified (days ago), File Size (MB) — all support numeric operators
                     </div>
                     <div class="mi-help-col">
                         <div class="mi-help-category">Activity</div>
-                        Watched/Unwatched, Last Played (days ago), Play Count — scoped per user: <em>any</em>, <em>all</em>, or a specific user. <strong>WatchedByCount</strong>: number of distinct users who have finished the item, supports numeric operators (e.g. &ge;&nbsp;2)
+                        Watched / Unwatched, Last Played (days ago), Play Count, Watched By Count (how many users have finished it) — can be scoped to <em>any user</em>, <em>all users</em>, or a specific user
                     </div>
                 </div>
 
@@ -1369,18 +1490,18 @@
                     <i class="md-icon help-section-icon">home</i>
                     <span>Home Screen</span>
                 </div>
-                <div class="step-text" style="margin-bottom:10px; font-size:0.92em;">The <strong>Home Screen</strong> tab has two sub-sections: <strong>Manage</strong> and <strong>Copy &amp; Sync</strong>.</div>
+                <div class="step-text" style="margin-bottom:10px; font-size:0.92em;">The <strong>Home Screen</strong> tab has two independent sub-sections: <strong>Manage</strong> (source-based rows) and <strong>Copy &amp; Sync</strong> (copy one user's layout to others).</div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">view_list</i>
-                    <div><strong>Manage</strong> — Create and maintain custom home screen sections. Each section is linked to a source and automatically kept up to date for the selected users when sync runs. Configure per-source home sections from the <em>Home Screen</em> tab inside each source card.</div>
+                    <div><strong>Manage</strong> — Creates and keeps custom home screen rows up to date. Each row is tied to one of your sources and is automatically refreshed for the selected users every time sync runs. To set up a row for a source, open that source card and go to its <em>Home Screen</em> tab.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">copy_all</i>
-                    <div><strong>Copy &amp; Sync</strong> — Copy the entire home screen layout from a source user to one or more target users. Useful for keeping multiple profiles identical. Runs independently from the tag and collection sync.</div>
+                    <div><strong>Copy &amp; Sync</strong> — Copies the complete home screen layout from one user to one or more other users. Handy when you want all profiles to look the same. This runs separately from the tag and collection sync.</div>
                 </div>
                 <div class="help-feature-row" style="margin-bottom:0;">
                     <i class="md-icon help-feat-icon">sync</i>
-                    <div><strong>Automatic &amp; Manual</strong> — Both Manage and Copy &amp; Sync operations can run automatically as part of the scheduled task, or be triggered manually using the <strong>Run</strong> button → <em>Sync home screen only</em>.</div>
+                    <div><strong>Automatic &amp; Manual</strong> — Both features run as part of the scheduled task, or you can trigger them at any time using the <strong>Run</strong> button → <em>Sync home screen only</em>.</div>
                 </div>
 
                 <!-- 7b. TOP-LIST -->
@@ -1388,68 +1509,74 @@
                     <i class="md-icon help-section-icon">format_list_numbered</i>
                     <span>Top-List</span>
                 </div>
-                <div class="step-text" style="margin-bottom:10px; font-size:0.92em;">Top-lists create a dedicated home screen section for a specific tag-managed movie library, showing only those movies in ranked order. Found in the <strong>Top-Lists</strong> tab.</div>
+                <div class="step-text" style="margin-bottom:10px; font-size:0.92em;">
+                    A <strong>top-list</strong> is a ranked movie row on the home screen — like "My Top 10 Movies" — where each poster shows a numbered badge (1, 2, 3…) indicating its position. The plugin creates a separate Emby library containing shortcuts to the ranked movies (the actual files are not copied or moved), and shows that library as a dedicated home screen section. Found in the <strong>Top-Lists</strong> tab.
+                </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">create_new_folder</i>
-                    <div><strong>Create top-list</strong> — Pick a tag managed by the plugin (movies only) and click <em>Create top-list</em>. The plugin creates a virtual library and a home section scoped to that library for the selected users.</div>
+                    <div><strong>Create top-list from a tag</strong> — Pick a tag managed by the plugin (movies only) and click <em>Create top-list</em>. The plugin builds the ranked library and sets up a home screen section for the users you choose. The order follows the original list order from the source (e.g. the order on a Trakt list). The list updates automatically whenever the plugin syncs that tag.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">edit_note</i>
-                    <div><strong>Manual top-list</strong> — Use <em>Create manual top-list</em> to build a ranked list by searching your library and ordering items yourself, without needing an existing tag.</div>
+                    <div><strong>Manual top-list</strong> — Click <em>Create manual top-list</em> to hand-pick and order movies yourself, without needing an existing tag. Search your library, drag items into the order you want, and save.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">block</i>
-                    <div><strong>Automatic exclusions</strong> — Top-list libraries are automatically excluded from all regular tag home sections so that their items never appear in both places simultaneously.</div>
+                    <div><strong>Automatic exclusions</strong> — Movies in a top-list are automatically hidden from all other tag-based home screen rows, so the same movie (with a number badge) never shows up in another row.</div>
                 </div>
                 <div class="help-feature-row" style="margin-bottom:0;">
                     <i class="md-icon help-feat-icon">build</i>
-                    <div><strong>Top-list section sync</strong> — If a home section goes out of sync after adding a new library, run the <em>Top-list section sync</em> scheduled task (or trigger it via the <strong>Run</strong> button) to rebuild all exclusion lists.</div>
+                    <div><strong>Top-list section sync</strong> — If a home screen row goes out of sync after adding a new Emby library, run the <em>Top-list section sync</em> task (via the <strong>Run</strong> button or Emby's scheduled tasks page) to rebuild all the exclusion settings.</div>
                 </div>
 
-                <!-- 8. SETTINGS & UTILITIES (new) -->
+                <!-- 8. SETTINGS & UTILITIES -->
                 <div id="help-sec-8" class="help-section">
                     <i class="md-icon help-section-icon">settings</i>
                     <span>Settings &amp; Utilities</span>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">key</i>
-                    <div><strong>Trakt Client ID</strong> — Required for External sources pointing to Trakt lists. Create a new app at <a href="https://trakt.tv/oauth/applications" target="_blank" class="help-link">trakt.tv/oauth/applications</a>, set Redirect URI to <code>http://localhost</code>, and copy the Client ID. Found under <em>External list settings</em> in the Settings tab.</div>
+                    <div><strong>Trakt Client ID</strong> — Required for External sources using Trakt lists. Create a new app at <a href="https://trakt.tv/oauth/applications" target="_blank" class="help-link">trakt.tv/oauth/applications</a> (Redirect URI = <code>http://localhost</code>), then copy the <em>Client ID</em>. Found under <em>External list settings</em> in the Settings tab.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">vpn_key</i>
-                    <div><strong>MDBList API Key</strong> — Required for MDBList sources. Obtain it from <a href="https://mdblist.com/preferences/" target="_blank" class="help-link">mdblist.com/preferences</a> under "API Access". Found under <em>External list settings</em> in the Settings tab.</div>
+                    <div><strong>MDBList API Key</strong> — Required for MDBList sources. Get it from <a href="https://mdblist.com/preferences/" target="_blank" class="help-link">mdblist.com/preferences</a> under <em>API Access</em>. Found under <em>External list settings</em> in the Settings tab.</div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">movie</i>
+                    <div><strong>TMDb API Read Access Token</strong> — Required when using TMDb API endpoints as a source (e.g. popular movies, top-rated, now-playing). Also works for private TMDb lists. Get your token at <a href="https://www.themoviedb.org/settings/api" target="_blank" class="help-link">themoviedb.org/settings/api</a> — scroll to <em>API Read Access Token</em> and copy the long token (not the short API Key). Found under <em>External list settings</em> in the Settings tab. Note: for public TMDb lists you can paste the URL directly without a token.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">auto_awesome</i>
-                    <div><strong>OpenAI API Key</strong> — Required for AI created lists using ChatGPT (gpt-4o-mini). Get a key at <a href="https://platform.openai.com/api-keys" target="_blank" class="help-link">platform.openai.com</a>. Found under <em>AI Settings</em> in the Settings tab.</div>
+                    <div><strong>OpenAI API Key</strong> — Required for AI lists using ChatGPT. Get a key at <a href="https://platform.openai.com/api-keys" target="_blank" class="help-link">platform.openai.com/api-keys</a>. Found under <em>AI Settings</em> in the Settings tab.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">auto_awesome</i>
-                    <div><strong>Google Gemini API Key</strong> — Required for AI created lists using Gemini (gemini-3-flash-preview). Get a key at <a href="https://aistudio.google.com/app/apikey" target="_blank" class="help-link">Google AI Studio</a>. Found under <em>AI Settings</em> in the Settings tab.</div>
+                    <div><strong>Google Gemini API Key</strong> — Required for AI lists using Gemini. Get a key at <a href="https://aistudio.google.com/app/apikey" target="_blank" class="help-link">Google AI Studio</a>. Found under <em>AI Settings</em> in the Settings tab.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">visibility_off</i>
-                    <div><strong>API key visibility</strong> — All API key fields are hidden by default. Use the <em>Show</em> checkbox next to each field to reveal the value. The checkbox resets to hidden every time the page is loaded.</div>
+                    <div><strong>API key visibility</strong> — All API key fields are hidden by default for security. Tick the <em>Show</em> checkbox next to a field to reveal the value. The checkbox resets to hidden every time you open the settings page.</div>
                 </div>
                 <div class="help-feature-row">
-                    <i class="md-icon help-feat-icon">bug_report</i>
-                    <div><strong>Extended Log Output</strong> — Enables verbose logging for all sync operations. View logs using the <strong>Logs</strong> button in the top bar. Useful for diagnosing sync issues.</div>
+                    <i class="md-icon help-feat-icon">play_circle</i>
+                    <div><strong>Run button</strong> — Manually trigger a sync at any time. Three options: <em>Full sync</em> (everything), <em>Sync home screen only</em> (just the home screen rows, no tag changes), and <em>Sync tags and collections only</em> (tags and collections, skips home screen).</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">science</i>
-                    <div><strong>Dry Run Mode</strong> — Simulates a full sync without making any changes to the Emby database. Use it to preview which items would be tagged, removed, or collected before committing.</div>
+                    <div><strong>Preview Mode (Dry Run)</strong> — Runs a full sync simulation without making any real changes. The log will show exactly what would be tagged, removed, or collected — useful for checking your settings before committing. Enable in the Settings tab.</div>
                 </div>
                 <div class="help-feature-row">
-                    <i class="md-icon help-feat-icon">save</i>
-                    <div><strong>Backup &amp; Restore</strong> — Export your entire plugin configuration to a JSON file, or restore from a previous backup. Found in the <strong>Settings</strong> tab under <em>Backup &amp; Restore</em>.</div>
+                    <i class="md-icon help-feat-icon">bug_report</i>
+                    <div><strong>Detailed Logs (Extended Log Output)</strong> — Turns on extra detail in the log for every sync step. View logs with the <strong>Logs</strong> button at the top of the page. Useful if something isn't working as expected and you want to see exactly what the plugin is doing.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">shield</i>
-                    <div><strong>Preserve Tags on Empty Result</strong> — If an External or AI source returns zero items (e.g. network error or empty list), existing tags and collection members are kept as-is instead of being removed. Prevents accidental wipe-outs. Found in the <strong>Settings</strong> tab.</div>
+                    <div><strong>Preserve Tags on Empty Result</strong> — If a source returns zero items — for example because the website was temporarily unreachable — the plugin will keep the existing tags and collection members as they are instead of removing everything. This prevents an accidental wipe-out caused by a network hiccup. Enable in the Settings tab.</div>
                 </div>
                 <div class="help-feature-row" style="margin-bottom:0;">
-                    <i class="md-icon help-feat-icon">play_circle</i>
-                    <div><strong>Run button options</strong> — The <strong>Run</strong> button offers three choices: <em>Full sync</em> (tags, collections, and home screen), <em>Sync home screen only</em>, and <em>Sync tags and collections only</em>.</div>
+                    <i class="md-icon help-feat-icon">save</i>
+                    <div><strong>Backup &amp; Restore</strong> — Export your entire plugin configuration to a file, or restore it from a previous backup. Found at the bottom of the <strong>Settings</strong> tab. Recommended before making large changes.</div>
                 </div>
 
                 <div style="text-align:right; margin-top:24px; padding-top:16px; border-top:1px solid #333;">

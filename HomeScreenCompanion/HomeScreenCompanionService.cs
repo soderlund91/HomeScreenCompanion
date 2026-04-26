@@ -1520,7 +1520,7 @@ public class HomeScreenCompanionService : IService
             }
         }
 
-        private void CreateRankedPoster(string sourcePath, int rank, string outputPath, string badgeStyle = "neutral")
+        internal static void CreateRankedPoster(string sourcePath, int rank, string outputPath, string badgeStyle = "neutral")
         {
             using var original = SKBitmap.Decode(sourcePath);
             if (original == null) return;
@@ -1538,6 +1538,10 @@ public class HomeScreenCompanionService : IService
             SKColor textColor;
             switch (badgeStyle?.ToLowerInvariant())
             {
+                case "slate-grey":
+                    bgColor   = new SKColor(0x41, 0x41, 0x4B, 224);
+                    textColor = SKColors.White;
+                    break;
                 case "emby-green":
                     bgColor   = new SKColor(0x52, 0xB5, 0x4B, 200);
                     textColor = SKColors.White;

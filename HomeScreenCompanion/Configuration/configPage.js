@@ -1389,7 +1389,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     <div class="source-external-container" style="display: ${sourceType === 'External' ? 'block' : 'none'};">
                         <div style="display:flex; align-items:baseline; gap:10px; margin:10px 0 10px 0;">
                             <p style="margin:0; font-size:0.9em; font-weight:bold; opacity:0.7;">Source URLs</p>
-                            <span style="font-size:0.75em; opacity:0.5;">— Find lists: <a href="https://trakt.tv/discover" target="_blank" style="color:inherit; text-decoration:underline;">Trakt</a> &middot; <a href="https://mdblist.com/toplists/" target="_blank" style="color:inherit; text-decoration:underline;">MDBList</a> &middot; <a href="https://www.themoviedb.org/" target="_blank" style="color:inherit; text-decoration:underline;">TMDb</a></span>
+                            <span style="font-size:0.75em; opacity:0.5;">— Find lists: <a href="https://trakt.tv/discover" target="_blank" style="color:inherit; text-decoration:underline;">Trakt</a> &middot; <a href="https://mdblist.com/toplists/" target="_blank" style="color:inherit; text-decoration:underline;">MDBList</a> &middot; <a href="https://www.themoviedb.org/" target="_blank" style="color:inherit; text-decoration:underline;">TMDb</a> &middot; <a href="https://developer.themoviedb.org/reference/getting-started" target="_blank" style="color:inherit; text-decoration:underline;">TMDb API</a></span>
                         </div>
                         <div class="url-list-container">${urls.map(u => getUrlRowHtml(u.url, u.limit)).join('')}</div>
                         <div style="margin-top:10px;"><button is="emby-button" type="button" class="raised btnAddUrl" style="width:100%; background:transparent; border:2px dashed rgba(128,128,128,0.4); color:var(--theme-text-secondary);"><i class="md-icon" style="margin-right:5px;">add</i>Add another URL</button></div>
@@ -2153,8 +2153,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var url = uRow.querySelector('.txtTagUrl').value;
                 if (!url) return;
 
+                var limitVal = parseInt(uRow.querySelector('.txtUrlLimit').value, 10) || 0;
+
                 btnTest.disabled = true;
-                window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/TestUrl", { Url: url, Limit: 1000 })).then(result => {
+                window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/TestUrl", { Url: url, Limit: limitVal })).then(result => {
                     window.Dashboard.alert(result.Message);
                 }).finally(() => btnTest.disabled = false);
             }
@@ -4289,6 +4291,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
     var _badgeStyles = [
         { val: 'neutral',    label: 'Neutral',    bg: 'rgba(0,0,0,0.82)',        textColor: '#fff' },
+        { val: 'slate-grey', label: 'Slate grey', bg: 'rgba(65,65,75,0.88)',     textColor: '#fff' },
         { val: 'emby-green', label: 'Emby green', bg: 'rgba(82,181,75,0.78)',    textColor: '#fff' },
         { val: 'ocean-blue', label: 'Ocean blue', bg: 'rgba(46,134,193,0.82)',   textColor: '#fff' },
         { val: 'soft-red',   label: 'Soft red',   bg: 'rgba(201,69,69,0.82)',    textColor: '#fff' },
@@ -4870,6 +4873,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         var tlKey = sanitizeTlName(name).toLowerCase();
                         var customName = hasTopList ? (topListCustomNameMap[tlKey] || '') : '';
                         var libraryId = hasTopList ? (topListLibraryIdMap[tlKey] || '') : '';
+                        var isActive = managed && managed.some(function (m) { return m.groupActive; });
                         var tagEditBtn = '';
                         if (hasTopList && isTagSection) {
                             var tlEntry = (pluginConfig.TopLists || []).find(function (t) {
@@ -4890,7 +4894,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         var actionBtn = hasTopList
                             ? tagEditBtn + '<button type="button" class="btnTlDelete" style="' + btnStyle + 'background:#c45454;color:#fff;" data-id="' + escAttr(id) + '" data-name="' + escAttr(name) + '" data-count="' + count + '" data-type="' + (isTagSection ? 'tag' : 'coll') + '">Delete top-list</button>'
                             : '<button type="button" class="btnTlCreate" style="' + btnStyle + 'background:#5cb85c;color:#fff;display:block;width:100%;box-sizing:border-box;text-align:center;" data-id="' + escAttr(id) + '" data-name="' + escAttr(name) + '" data-count="' + count + '" data-type="' + (isTagSection ? 'tag' : 'coll') + '">Create top-list</button>';
-                        return '<tr class="tl-manage-row" data-rowname="' + escAttr(name.toLowerCase()) + '" data-managed="' + (managed && managed.length > 0 ? '1' : '0') + '" data-count="' + count + '" data-types="' + escAttr(typesVal) + '">' +
+                        return '<tr class="tl-manage-row" data-rowname="' + escAttr(name.toLowerCase()) + '" data-managed="' + (managed && managed.length > 0 ? '1' : '0') + '" data-active="' + (isActive ? '1' : '0') + '" data-hastoplist="' + (hasTopList ? '1' : '0') + '" data-count="' + count + '" data-types="' + escAttr(typesVal) + '">' +
                             '<td style="padding:9px 4px;border-bottom:1px solid var(--line-color);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
                             (id
                                 ? '<a class="tl-item-name tl-nav-link" href="javascript:void(0)" data-navid="' + escAttr(id) + '" style="color:inherit;text-decoration:none;cursor:pointer;" onmouseover="this.style.textDecoration=\'underline\'" onmouseout="this.style.textDecoration=\'none\'">' + escHtml(name) + '</a>'
@@ -5002,12 +5006,22 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '</div>' +
                 '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">' +
                 '<input type="text" id="tlSearch" placeholder="Search…" style="' + searchInputStyle + '" />' +
+                '<select is="emby-select" id="tlFilter" style="color:var(--plugin-popup-color);background:var(--plugin-input-bg);border:1px solid var(--plugin-input-border);padding:5px;border-radius:4px;font-size:0.9em;cursor:pointer;">' +
+                '<option value="all">All tags</option>' +
+                '<option value="active">Active only</option>' +
+                '<option value="inactive">Inactive only</option>' +
+                '<option value="toplist">Has top-list</option>' +
+                '<option value="no-toplist">No top-list</option>' +
+                '</select>' +
                 '<select is="emby-select" id="tlSort" style="color:var(--plugin-popup-color);background:var(--plugin-input-bg);border:1px solid var(--plugin-input-border);padding:5px;border-radius:4px;font-size:0.9em;cursor:pointer;">' +
                 '<option value="name-asc">Name A–Z</option>' +
                 '<option value="name-desc">Name Z–A</option>' +
                 '<option value="count-desc">Most items</option>' +
                 '<option value="count-asc">Fewest items</option>' +
                 '<option value="managed">Managed first</option>' +
+                '<option value="active-first">Active first</option>' +
+                '<option value="inactive-first">Inactive first</option>' +
+                '<option value="toplist-first">Top-list first</option>' +
                 '</select>' +
                 '</div>' +
                 '<div id="tlSectionsWrap" style="display:flex;gap:40px;align-items:flex-start;">' +
@@ -5028,8 +5042,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
 
             function applySearchSort() {
-                var query = (container.querySelector('#tlSearch').value || '').toLowerCase();
-                var sort = container.querySelector('#tlSort').value;
+                var query  = (container.querySelector('#tlSearch').value || '').toLowerCase();
+                var filter = container.querySelector('#tlFilter').value;
+                var sort   = container.querySelector('#tlSort').value;
 
                 ['tlTagSection', 'tlCollSection'].forEach(function (sectionId) {
                     var section = container.querySelector('#' + sectionId);
@@ -5037,25 +5052,42 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var rows = Array.from(section.querySelectorAll('.tl-manage-row'));
 
                     rows.forEach(function (row) {
-                        var rowName = row.dataset.rowname || '';
-                        row.style.display = (!query || rowName.indexOf(query) !== -1) ? '' : 'none';
+                        var rowName    = row.dataset.rowname || '';
+                        var isActive   = row.dataset.active === '1';
+                        var hasTopList = row.dataset.hastoplist === '1';
+
+                        var matchSearch = !query || rowName.indexOf(query) !== -1;
+                        var matchFilter = true;
+                        if (filter === 'active')    matchFilter = isActive;
+                        if (filter === 'inactive')  matchFilter = !isActive;
+                        if (filter === 'toplist')   matchFilter = hasTopList;
+                        if (filter === 'no-toplist') matchFilter = !hasTopList;
+
+                        row.style.display = (matchSearch && matchFilter) ? '' : 'none';
                     });
 
                     var list = section.querySelector('.tl-manage-list');
                     if (!list) return;
                     var visibleRows = rows.filter(function (r) { return r.style.display !== 'none'; });
                     visibleRows.sort(function (a, b) {
-                        var nameA = a.dataset.rowname || '';
-                        var nameB = b.dataset.rowname || '';
-                        var countA = parseInt(a.dataset.count || '0', 10);
-                        var countB = parseInt(b.dataset.count || '0', 10);
-                        var managedA = a.dataset.managed === '1';
-                        var managedB = b.dataset.managed === '1';
-                        if (sort === 'name-asc') return nameA.localeCompare(nameB);
-                        if (sort === 'name-desc') return nameB.localeCompare(nameA);
-                        if (sort === 'count-desc') return countB - countA;
-                        if (sort === 'count-asc') return countA - countB;
-                        if (sort === 'managed') return (managedB ? 1 : 0) - (managedA ? 1 : 0) || nameA.localeCompare(nameB);
+                        var nameA      = a.dataset.rowname || '';
+                        var nameB      = b.dataset.rowname || '';
+                        var countA     = parseInt(a.dataset.count || '0', 10);
+                        var countB     = parseInt(b.dataset.count || '0', 10);
+                        var managedA   = a.dataset.managed === '1';
+                        var managedB   = b.dataset.managed === '1';
+                        var activeA    = a.dataset.active === '1';
+                        var activeB    = b.dataset.active === '1';
+                        var toplistA   = a.dataset.hastoplist === '1';
+                        var toplistB   = b.dataset.hastoplist === '1';
+                        if (sort === 'name-asc')      return nameA.localeCompare(nameB);
+                        if (sort === 'name-desc')     return nameB.localeCompare(nameA);
+                        if (sort === 'count-desc')    return countB - countA;
+                        if (sort === 'count-asc')     return countA - countB;
+                        if (sort === 'managed')       return (managedB ? 1 : 0) - (managedA ? 1 : 0) || nameA.localeCompare(nameB);
+                        if (sort === 'active-first')  return (activeB ? 1 : 0) - (activeA ? 1 : 0) || nameA.localeCompare(nameB);
+                        if (sort === 'inactive-first') return (activeA ? 1 : 0) - (activeB ? 1 : 0) || nameA.localeCompare(nameB);
+                        if (sort === 'toplist-first') return (toplistB ? 1 : 0) - (toplistA ? 1 : 0) || nameA.localeCompare(nameB);
                         return 0;
                     });
                     visibleRows.forEach(function (r) { list.appendChild(r); });
@@ -5063,6 +5095,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
 
             container.querySelector('#tlSearch').addEventListener('input', applySearchSort);
+            container.querySelector('#tlFilter').addEventListener('change', applySearchSort);
             container.querySelector('#tlSort').addEventListener('change', applySearchSort);
 
             applySearchSort();
@@ -5620,6 +5653,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 var logOverlay = view.querySelector('#logModalOverlay');
                 var helpOverlay = view.querySelector('#helpModalOverlay');
+                var bugOverlay = view.querySelector('#bugReportModalOverlay');
 
                 view.querySelector('#btnOpenLogs').addEventListener('click', e => { e.preventDefault(); logOverlay.classList.add('modal-visible'); });
                 view.querySelector('#btnCloseLogs').addEventListener('click', () => logOverlay.classList.remove('modal-visible'));
@@ -5628,6 +5662,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 view.querySelector('#btnOpenHelp').addEventListener('click', () => helpOverlay.classList.add('modal-visible'));
                 view.querySelector('#btnCloseHelp').addEventListener('click', () => helpOverlay.classList.remove('modal-visible'));
                 helpOverlay.addEventListener('click', e => { if (e.target === helpOverlay) helpOverlay.classList.remove('modal-visible'); });
+
+                view.querySelector('#btnOpenBugReport').addEventListener('click', () => bugOverlay.classList.add('modal-visible'));
+                view.querySelector('#btnCloseBugReport').addEventListener('click', () => bugOverlay.classList.remove('modal-visible'));
+                bugOverlay.addEventListener('click', e => { if (e.target === bugOverlay) bugOverlay.classList.remove('modal-visible'); });
 
                 var miHelpOverlay = view.querySelector('#miHelpModalOverlay');
                 view.querySelector('#btnCloseMiHelp').addEventListener('click', () => miHelpOverlay.classList.remove('modal-visible'));

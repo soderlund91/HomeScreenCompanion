@@ -27,6 +27,7 @@ namespace HomeScreenCompanion
         private readonly IHttpClient _httpClient;
         private readonly IJsonSerializer _jsonSerializer;
         private readonly ILogger _logger;
+        private readonly ILibraryMonitor _libraryMonitor;
 
         public static HomeScreenCompanionTask? Instance { get; private set; }
         public static string LastRunStatus { get; private set; } = "Unknown (resets at server restart)";
@@ -87,7 +88,7 @@ namespace HomeScreenCompanion
             public int GroupTotal;
         }
 
-        public HomeScreenCompanionTask(ILibraryManager libraryManager, ICollectionManager collectionManager, IUserManager userManager, IUserDataManager userDataManager, IHttpClient httpClient, IJsonSerializer jsonSerializer, ILogManager logManager)
+        public HomeScreenCompanionTask(ILibraryManager libraryManager, ICollectionManager collectionManager, IUserManager userManager, IUserDataManager userDataManager, IHttpClient httpClient, IJsonSerializer jsonSerializer, ILogManager logManager, ILibraryMonitor libraryMonitor)
         {
             _libraryManager = libraryManager;
             _collectionManager = collectionManager;
@@ -96,6 +97,7 @@ namespace HomeScreenCompanion
             _httpClient = httpClient;
             _jsonSerializer = jsonSerializer;
             _logger = logManager.GetLogger("HomeScreenCompanion");
+            _libraryMonitor = libraryMonitor;
             Instance = this;
         }
 
@@ -1377,10 +1379,14 @@ namespace HomeScreenCompanion
             LogSummary($"  Library: {_movieCount} movies, {_seriesCount} series");
             LogSummary("══════════════════════════════════════════════════");
 
+            var _topListsFolder = Path.Combine(Plugin.Instance.DataFolderPath, "toplists") + Path.DirectorySeparatorChar;
             var imdbLookup = new Dictionary<string, List<BaseItem>>(StringComparer.OrdinalIgnoreCase);
             foreach (var item in allItems)
             {
                 if (item.LocationType != LocationType.FileSystem) continue;
+                if (!string.IsNullOrEmpty(item.Path) &&
+                    item.Path.StartsWith(_topListsFolder, StringComparison.OrdinalIgnoreCase))
+                    continue;
                 var imdb = item.GetProviderId("Imdb");
                 if (!string.IsNullOrEmpty(imdb))
                 {
@@ -1818,6 +1824,26 @@ namespace HomeScreenCompanion
                 collectionOutputItems = BuildNonMiOutput(cEp, cSea, cSer, cEp || cSea || cSer);
             }
 
+            // Save rank file so top-list .strm files can be numbered in list order
+            if (!dryRun)
+            {
+                try
+                {
+                    var rankDir = Path.Combine(Plugin.Instance.DataFolderPath, "tag_ranks");
+                    Directory.CreateDirectory(rankDir);
+                    var invalidChars = Path.GetInvalidFileNameChars();
+                    var rankSafe = new string((tagName ?? "unknown").Select(c => Array.IndexOf(invalidChars, c) >= 0 ? '_' : c).ToArray()).Trim('.');
+                    if (string.IsNullOrWhiteSpace(rankSafe)) rankSafe = "unknown";
+                    var rankFile = Path.Combine(rankDir, rankSafe + ".json");
+                    var rankIds = matchedLocalItems
+                        .Select(i => i.GetProviderId("Imdb") ?? "")
+                        .Where(id => !string.IsNullOrEmpty(id))
+                        .ToList();
+                    _jsonSerializer.SerializeToFile(rankIds, rankFile);
+                }
+                catch { }
+            }
+
             // Apply tags (scoped to this entry's tag only)
             int tagsAdded = 0, tagsRemoved = 0;
             var _dbgTagAdded = debug ? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase) : null;
@@ -2066,6 +2092,8 @@ namespace HomeScreenCompanion
             };
             if (!dryRun && tagConfig.EnableHomeSection)
                 ManageHomeSections(config, cancellationToken, debug, new List<GroupRunStats> { _singleGs }, tagName);
+            
+            SyncTopListFolders(config, dryRun);
 
             var elapsed = DateTime.Now - startTime;
             string elapsedStr = elapsed.TotalMinutes >= 1
@@ -3779,10 +3807,22 @@ namespace HomeScreenCompanion
 
             if (dryRun) return;
 
-            // Recreate .strm/.nfo files for each configured top-list
+            // Build set of tag names that are managed by the plugin's source groups.
+            // Manual top-lists have names that don't match any source tag, so they are
+            // excluded here — their .strm files are maintained by the UI (PrepareManualFolder)
+            // and must not be wiped by the automatic sync.
+            var managedTagNames = new HashSet<string>(
+                (config.Tags ?? new List<TagConfig>())
+                    .Where(t => !string.IsNullOrWhiteSpace(t.Tag))
+                    .Select(t => t.Tag.Trim()),
+                StringComparer.OrdinalIgnoreCase
+            );
+
+            // Recreate .strm/.nfo files for each tag-based top-list
             foreach (var tl in config.TopLists ?? new List<TopListHomeSection>())
             {
                 if (string.IsNullOrWhiteSpace(tl.TagName)) continue;
+                if (!managedTagNames.Contains(tl.TagName)) continue;
 
                 var sanitized = SanitizeTopListFolderName(tl.TagName);
                 var folderPath = Path.Combine(topListsPath, sanitized);
@@ -3790,6 +3830,19 @@ namespace HomeScreenCompanion
 
                 foreach (var f in Directory.GetFiles(folderPath, "*.strm")) File.Delete(f);
                 foreach (var f in Directory.GetFiles(folderPath, "*.nfo")) File.Delete(f);
+                foreach (var f in Directory.GetFiles(folderPath, "*.jpg")) File.Delete(f);
+
+                var badgeStyle = "neutral";
+                if (!string.IsNullOrEmpty(tl.HomeSectionSettings) && tl.HomeSectionSettings != "{}")
+                {
+                    try
+                    {
+                        var tlSettings = _jsonSerializer.DeserializeFromString<Dictionary<string, string>>(tl.HomeSectionSettings);
+                        if (tlSettings != null && tlSettings.TryGetValue("BadgeStyle", out var bs) && !string.IsNullOrEmpty(bs))
+                            badgeStyle = bs;
+                    }
+                    catch { }
+                }
 
                 var items = _libraryManager.GetItemList(new InternalItemsQuery
                 {
@@ -3821,7 +3874,7 @@ namespace HomeScreenCompanion
                 }
 
                 var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var selected = new List<(string BaseName, string Path)>();
+                var selected = new List<(string BaseName, string FilePath, string? PosterPath)>();
                 foreach (var item in items)
                 {
                     if (string.IsNullOrEmpty(item.Path)) continue;
@@ -3829,7 +3882,8 @@ namespace HomeScreenCompanion
                     if (item.ProductionYear.HasValue && item.ProductionYear > 0)
                         baseName += $" ({item.ProductionYear})";
                     if (!seenKeys.Add(baseName)) continue;
-                    selected.Add((baseName, item.Path));
+                    var posterPath = item.ImageInfos?.FirstOrDefault(i => i.Type == ImageType.Primary)?.Path;
+                    selected.Add((baseName, item.Path, posterPath));
                 }
 
                 if (tl.MaxItems > 0 && selected.Count > tl.MaxItems)
@@ -3841,13 +3895,23 @@ namespace HomeScreenCompanion
                 {
                     count++;
                     var sortPrefix = count.ToString().PadLeft(digits, '0');
-                    File.WriteAllText(Path.Combine(folderPath, entry.BaseName + ".strm"), entry.Path);
+                    File.WriteAllText(Path.Combine(folderPath, entry.BaseName + ".strm"), entry.FilePath);
                     var nfo = $"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<movie>\n  <sorttitle>{sortPrefix}</sorttitle>\n  <lockedfields>SortName|Images</lockedfields>\n</movie>";
                     File.WriteAllText(Path.Combine(folderPath, entry.BaseName + ".nfo"), nfo);
+                    if (!string.IsNullOrEmpty(entry.PosterPath) && File.Exists(entry.PosterPath))
+                        try { HomeScreenCompanionService.CreateRankedPoster(entry.PosterPath, count, Path.Combine(folderPath, entry.BaseName + ".jpg"), badgeStyle); }
+                        catch { }
                 }
 
-                // Update ForcedSortName directly in the library database so the new order applies
-                // immediately. MetadataRefreshMode=Default won't override locked SortName fields.
+                // Notify the file system monitor so Emby is aware of the changes
+                try
+                {
+                    _libraryMonitor?.ReportFileSystemChanged(folderPath);
+                }
+                catch { }
+
+                // For items already indexed in the library: update SortName and poster directly
+                // so changes are visible immediately without waiting for a full library scan.
                 try
                 {
                     var sortPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -3858,8 +3922,7 @@ namespace HomeScreenCompanion
                     var libItems = _libraryManager.GetItemList(new InternalItemsQuery
                     {
                         Recursive = true,
-                        IncludeItemTypes = new[] { "Movie" },
-                        IsVirtualItem = false
+                        IncludeItemTypes = new[] { "Movie" }
                     }).Where(i => !string.IsNullOrEmpty(i.Path)
                                && i.Path.StartsWith(folderPath + Path.DirectorySeparatorChar,
                                                     StringComparison.OrdinalIgnoreCase))
@@ -3867,10 +3930,34 @@ namespace HomeScreenCompanion
 
                     foreach (var li in libItems)
                     {
-                        if (!sortPaths.TryGetValue(li.Path, out var newSort)) continue;
-                        var prop = li.GetType().GetProperty("SortName");
-                        if (prop?.CanWrite == true) prop.SetValue(li, newSort);
-                        try { _libraryManager.UpdateItem(li, li.Parent, ItemUpdateType.MetadataEdit, null); }
+                        var strmPath = li.Path;
+                        if (string.IsNullOrEmpty(strmPath)) continue;
+
+                        // Update SortName
+                        if (sortPaths.TryGetValue(strmPath, out var newSort))
+                        {
+                            var prop = li.GetType().GetProperty("SortName");
+                            if (prop?.CanWrite == true) prop.SetValue(li, newSort);
+                        }
+
+                        // Update primary image to our local ranked poster
+                        var baseName = Path.GetFileNameWithoutExtension(strmPath);
+                        var jpgPath = Path.Combine(folderPath, baseName + ".jpg");
+                        if (File.Exists(jpgPath))
+                        {
+                            var imageInfo = new ItemImageInfo
+                            {
+                                Path = jpgPath,
+                                Type = ImageType.Primary,
+                                DateModified = File.GetLastWriteTimeUtc(jpgPath)
+                            };
+                            var otherImages = (li.ImageInfos ?? Array.Empty<ItemImageInfo>())
+                                .Where(i => i.Type != ImageType.Primary).ToList();
+                            otherImages.Add(imageInfo);
+                            li.ImageInfos = otherImages.ToArray();
+                        }
+
+                        try { _libraryManager.UpdateItem(li, li.Parent, ItemUpdateType.ImageUpdate, null); }
                         catch { }
                     }
                 }
