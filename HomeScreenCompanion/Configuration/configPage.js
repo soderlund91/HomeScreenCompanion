@@ -122,6 +122,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             border: 1px solid rgba(126, 77, 172, 0.35);
         }
 
+        .tag-indicator.playlist {
+            color: #39e0bc;
+            background: rgba(57, 224, 182, 0.15);
+            border: 1px solid rgba(57, 224, 188, 0.35);
+        }
+
         .tag-indicator.homescreen {
             color: #4CAF50;
             background: rgba(76,175,80,0.15);
@@ -534,14 +540,30 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }).join('');
     }
 
+    function parseDateYMD(dateStr) {
+        if (!dateStr) return null;
+        var s = String(dateStr);
+        // Fast path: ISO YYYY-MM-DD (with or without time/tz suffix)
+        var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+        if (m) return { year: +m[1], month: +m[2], day: +m[3] };
+        // Fallback for non-ISO formats: parse with Date and use UTC accessors
+        // (date-only strings are UTC midnight per spec, so getUTC* is correct)
+        var d = new Date(s);
+        if (!isNaN(d.getTime())) return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
+        return null;
+    }
+
     function getDateRowHtml(interval) {
         var type = interval.Type || 'SpecificDate';
-        var sDate = interval.Start ? new Date(interval.Start).toISOString().split('T')[0] : '';
-        var eDate = interval.End ? new Date(interval.End).toISOString().split('T')[0] : '';
-        var sMonth = interval.Start ? new Date(interval.Start).getMonth() + 1 : 12;
-        var sDay = interval.Start ? new Date(interval.Start).getDate() : 1;
-        var eMonth = interval.End ? new Date(interval.End).getMonth() + 1 : 12;
-        var eDay = interval.End ? new Date(interval.End).getDate() : 28;
+        if (type === 'EveryYear') console.log('[HSC schedule] raw interval from server:', JSON.stringify(interval));
+        var sDate = interval.Start ? interval.Start.split('T')[0] : '';
+        var eDate = interval.End ? interval.End.split('T')[0] : '';
+        var sParts = parseDateYMD(interval.Start);
+        var eParts = parseDateYMD(interval.End);
+        var sMonth = sParts ? sParts.month : 12;
+        var sDay   = sParts ? sParts.day   : 1;
+        var eMonth = eParts ? eParts.month : 12;
+        var eDay   = eParts ? eParts.day   : 28;
         var sMaxDay = getMaxDays(sMonth);
         var eMaxDay = getMaxDays(eMonth);
         sDay = Math.min(sDay, sMaxDay);
@@ -689,6 +711,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             if (criteria.length > 0) miFilters.push({ Operator: operator, Criteria: criteria, GroupOperator: groupOp });
         });
 
+        var playlistTab = row.querySelector('.playlist-tab');
+        var enablePlaylist = playlistTab ? !!(playlistTab.querySelector('.chkEnablePlaylist') || {}).checked : false;
+        var playlistName = playlistTab ? ((playlistTab.querySelector('.txtPlaylistName') || {}).value || '') : '';
+        var playlistUserIds = playlistTab && playlistTab.dataset.playlistLoaded === '1'
+            ? Array.from(playlistTab.querySelectorAll('.chkPlaylistUser:checked')).map(function(c) { return c.value; })
+            : (function() { try { return JSON.parse(decodeURIComponent((playlistTab && playlistTab.dataset.playlistUserids) || '%5B%5D')); } catch(ex) { return []; } })();
+
         var hseTab = row.querySelector('.homescreen-tab');
         var enableHse = hseTab ? !!(hseTab.querySelector('.chkEnableHomeSection') || {}).checked : false;
         var hseLibraryId = hseTab && hseTab.dataset.hseLoaded === '1'
@@ -734,6 +763,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var aiIncludeRecentlyWatched = !!(row.querySelector('.chkAiRecentlyWatched') || {}).checked;
         var aiRecentlyWatchedUserId = (row.querySelector('.selAiWatchedUser') || {}).value || '';
         var aiRecentlyWatchedCount = parseInt((row.querySelector('.txtAiWatchedCount') || {}).value, 10) || 20;
+        var aiRefreshIntervalDays = parseInt((row.querySelector('.txtAiRefreshInterval') || {}).value, 10) || 0;
 
         return {
             Name: entryLabel, Tag: tagName, Active: active, Blacklist: bl, ActiveIntervals: intervals,
@@ -742,6 +772,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             OverrideWhenActive: overrideWhenActive, SourceType: st,
             Urls: urls, LocalSources: localSources, Limit: miLimit,
             MediaInfoFilters: miFilters, MediaInfoConditions: [],
+            EnablePlaylist: enablePlaylist, PlaylistName: playlistName, PlaylistUserIds: playlistUserIds,
             EnableHomeSection: enableHse, HomeSectionLibraryId: hseLibraryId,
             HomeSectionUserIds: hseUserIds, HomeSectionSettings: JSON.stringify(hseSettings),
             HomeSectionTracked: [], LastModified: new Date().toISOString(),
@@ -749,6 +780,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             AiIncludeRecentlyWatched: aiIncludeRecentlyWatched,
             AiRecentlyWatchedUserId: aiRecentlyWatchedUserId,
             AiRecentlyWatchedCount: aiRecentlyWatchedCount,
+            AiRefreshIntervalDays: aiRefreshIntervalDays,
             TagTargetEpisode:        !!(row.querySelector('.chkTagTargetEpisode')  || {}).checked,
             TagTargetSeason:         !!(row.querySelector('.chkTagTargetSeason')   || {}).checked,
             TagTargetSeries:         !!(row.querySelector('.chkTagTargetSeries')   || {}).checked,
@@ -831,11 +863,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     var MI_NUMERIC_PROPS = ['CommunityRating', 'Year', 'Runtime', 'DateAdded', 'DateModified', 'FileSize', 'LastPlayed', 'PlayCount', 'BitRate', 'SampleRate', 'BitsPerSample', 'TrackNumber', 'DiscNumber', 'WatchedByCount'];
     var MI_UNIT_LABELS = { DateAdded: 'days ago', DateModified: 'days ago', LastPlayed: 'days ago', FileSize: 'MB', PlayCount: 'plays', BitRate: 'kbps', SampleRate: 'Hz', BitsPerSample: 'bits', WatchedByCount: 'users' };
     var MI_USER_PROPS = ['IsPlayed', 'LastPlayed', 'PlayCount'];
-    var MI_TEXT_MATCH_PROPS = ['Tag', 'Title', 'EpisodeTitle', 'Overview', 'Studio', 'Genre', 'Actor', 'Director', 'Writer', 'ContentRating', 'AudioLanguage', 'Artist', 'Album'];
+    var MI_TEXT_MATCH_PROPS = ['Tag', 'Title', 'EpisodeTitle', 'Overview', 'Studio', 'Genre', 'Actor', 'Director', 'Writer', 'ContentRating', 'AudioLanguage', 'Artist', 'Album', 'FolderPath', 'Country'];
     var MI_TEXT_MATCH_DEFAULT = {
         Title: 'contains', EpisodeTitle: 'contains', Overview: 'contains', Studio: 'contains', Genre: 'contains', Tag: 'contains',
         Actor: 'exact', Director: 'exact', Writer: 'exact', Artist: 'contains', Album: 'contains',
-        ContentRating: 'exact', AudioLanguage: 'exact'
+        ContentRating: 'exact', AudioLanguage: 'exact', FolderPath: 'contains', Country: 'contains'
     };
     var _miUsers = null;
     var MI_PRESETS = [
@@ -894,6 +926,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         Studio: 'e.g. Warner, Netflix, HBO', Genre: 'e.g. Action, Thriller',
         Actor: 'e.g. Tom Hanks, Idris Elba', Director: 'e.g. Nolan, Tarantino', Writer: 'e.g. Tarantino, Nolan',
         ContentRating: 'e.g. PG-13, R', AudioLanguage: 'e.g. eng, swe', ImdbId: 'e.g. tt1234567, tt7654321',
+        TvdbId: 'e.g. 121361',
+        FolderPath: 'e.g. /movies/action',
+        Country: 'e.g. United States',
         Artist: 'e.g. Radiohead, Pink Floyd', Album: 'e.g. OK Computer, Dark Side of the Moon'
     };
 
@@ -901,9 +936,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var groups = [
             { label: 'Video', props: [['Resolution','Resolution'], ['VideoCodec','Video Codec'], ['HDR','HDR']] },
             { label: 'Audio', props: [['AudioFormat','Audio Format'], ['AudioChannels','Audio Channels'], ['AudioLanguage','Audio Language']] },
-            { label: 'Content', props: [['MediaType','Media Type'], ['Tag','Tag'], ['Title','Title'], ['EpisodeTitle','Title (Episode)'], ['Overview','Overview'], ['Studio','Studio'], ['Genre','Genre'], ['Actor','Actor / Cast'], ['Director','Director'], ['Writer','Writer'], ['ContentRating','Content Rating'], ['ImdbId','IMDB ID'], ['Collection','In Collection'], ['Playlist','In Playlist']] },
+            { label: 'Content', props: [['MediaType','Media Type'], ['Tag','Tag'], ['Title','Title'], ['EpisodeTitle','Title (Episode)'], ['Overview','Overview'], ['Studio','Studio'], ['Genre','Genre'], ['Actor','Actor / Cast'], ['Director','Director'], ['Writer','Writer'], ['ContentRating','Content Rating'], ['ImdbId','IMDB ID'], ['TvdbId','TVDB ID'], ['Country','Country'], ['Collection','In Collection'], ['Playlist','In Playlist']] },
             { label: 'Music', props: [['Artist','Artist'], ['Album','Album'], ['BitRate','Bit Rate (kbps)'], ['SampleRate','Sample Rate (Hz)'], ['BitsPerSample','Bit Depth'], ['TrackNumber','Track Number'], ['DiscNumber','Disc Number']] },
-            { label: 'Metrics', props: [['CommunityRating','Community Rating'], ['Year','Year'], ['Runtime','Runtime (minutes)'], ['DateAdded','Date Added'], ['DateModified','Date Modified'], ['FileSize','File Size (MB)']] },
+            { label: 'Metrics', props: [['CommunityRating','Community Rating'], ['Year','Year'], ['Runtime','Runtime (minutes)'], ['DateAdded','Date Added'], ['DateModified','Date Modified'], ['FileSize','File Size (MB)'], ['FolderPath','Folder Path']] },
             { label: 'Activity', props: [['IsPlayed','Watched / Unwatched'], ['LastPlayed','Last Played'], ['PlayCount','Play Count'], ['WatchedByCount','Watched by (user count)']] }
         ];
         return groups.map(function (g) {
@@ -1009,7 +1044,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
 
     function getMiHintHtml(prop) {
-        if (MI_TEXT_MATCH_PROPS.indexOf(prop) < 0 && prop !== 'ImdbId') return '<div class="mi-rule-hint"></div>';
+        if (MI_TEXT_MATCH_PROPS.indexOf(prop) < 0 && prop !== 'ImdbId' && prop !== 'TvdbId') return '<div class="mi-rule-hint"></div>';
         return '<div class="mi-rule-hint" style="font-size:0.75em; opacity:0.5; margin-top:2px; padding-right:32px; text-align:right;">One value per line &mdash; matches if <em>any</em> line matches (OR)</div>';
     }
 
@@ -1312,6 +1347,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         if (tagConfig.EnableCollection) {
             indicatorsHtml += `<span class="tag-indicator collection"><i class="md-icon" style="font-size:1.1em;">library_books</i> Collection</span>`;
         }
+        if (tagConfig.EnablePlaylist) {
+            indicatorsHtml += `<span class="tag-indicator playlist"><i class="md-icon" style="font-size:1.1em;">queue_music</i> Playlist</span>`;
+        }
         if (tagConfig.EnableHomeSection) {
             indicatorsHtml += `<span class="tag-indicator homescreen"><i class="md-icon" style="font-size:1.1em;">home</i> Home Section</span>`;
         }
@@ -1358,6 +1396,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     <div class="tag-tab active" data-tab="general" style="padding: 8px 0; cursor: pointer; font-weight: bold; border-bottom: 2px solid #52B54B;">Source</div>
                     <div class="tag-tab" data-tab="tag" style="padding: 8px 0; cursor: pointer; opacity: 0.6; font-weight: bold; border-bottom: 2px solid transparent;">Tag</div>
                     <div class="tag-tab" data-tab="collection" style="padding: 8px 0; cursor: pointer; opacity: 0.6; font-weight: bold; border-bottom: 2px solid transparent;">Collection</div>
+                    <div class="tag-tab" data-tab="playlist" style="padding: 8px 0; cursor: pointer; opacity: 0.6; font-weight: bold; border-bottom: 2px solid transparent;">Playlist</div>
                     <div class="tag-tab" data-tab="schedule" style="padding: 8px 0; cursor: pointer; opacity: 0.6; font-weight: bold; border-bottom: 2px solid transparent;">Schedule</div>
                     <div class="tag-tab" data-tab="advanced" style="padding: 8px 0; cursor: pointer; opacity: 0.6; font-weight: bold; border-bottom: 2px solid transparent;">Blacklist</div>
                     <div class="tag-tab" data-tab="homescreen" style="padding: 8px 0; cursor: pointer; opacity: 0.6; font-weight: bold; border-bottom: 2px solid transparent;">Home Screen</div>
@@ -1407,7 +1446,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <select is="emby-select" class="selAiProvider" style="width:100%;">
                                 <option value="OpenAI" ${(tagConfig.AiProvider || 'OpenAI') === 'OpenAI' ? 'selected' : ''}>OpenAI (ChatGPT)</option>
                                 <option value="Gemini" ${(tagConfig.AiProvider || 'OpenAI') === 'Gemini' ? 'selected' : ''}>Google Gemini</option>
+                                <option value="Ollama" ${(tagConfig.AiProvider || 'OpenAI') === 'Ollama' ? 'selected' : ''}>Ollama (Local)</option>
                             </select>
+                        </div>
+
+                        <div class="ollama-experimental-warning" style="display:${(tagConfig.AiProvider || 'OpenAI') === 'Ollama' ? 'flex' : 'none'}; align-items:flex-start; gap:8px; background:rgba(232,168,56,0.1); border:1px solid rgba(232,168,56,0.35); border-radius:4px; padding:10px 12px; margin-bottom:15px; font-size:0.85em; line-height:1.5;">
+                            <i class="md-icon" style="font-size:1.1em; color:#e8a838; flex-shrink:0; margin-top:1px;">warning</i>
+                            <span style="opacity:0.85;"><strong>Experimental:</strong> Ollama support is experimental. Local models may return inaccurate IMDB IDs — the plugin will fall back to title matching, but results may vary depending on the model used.</span>
                         </div>
 
                         <div class="inputContainer" style="margin-bottom:15px;">
@@ -1444,6 +1489,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <label style="font-size:0.9em; white-space:nowrap; margin:0;">Max items</label>
                             <input is="emby-input" class="txtAiLimit" type="number" value="${aiLimit}" min="0" style="width:90px;" />
                             <span style="font-size:0.8em; opacity:0.5;">0 = no limit. Injected into the prompt automatically.</span>
+                        </div>
+
+                        <div style="display:flex; align-items:center; gap:12px; margin-top:0; margin-bottom:15px;">
+                            <label style="font-size:0.9em; white-space:nowrap; margin:0;">Refresh every</label>
+                            <input is="emby-input" class="txtAiRefreshInterval" type="number" value="${tagConfig.AiRefreshIntervalDays || 0}" min="0" style="width:90px;" />
+                            <span style="font-size:0.8em; opacity:0.5;">days &nbsp;(0 = run on every full sync)</span>
                         </div>
 
                         <div style="margin-top:0;">
@@ -1623,6 +1674,29 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     </div>
                 </div>
 
+                <div class="tab-content playlist-tab" style="display:none;"
+                    data-playlist-userids="${encodeURIComponent(JSON.stringify(tagConfig.PlaylistUserIds || []))}"
+                    data-playlist-loaded="0">
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label>
+                            <input is="emby-checkbox" type="checkbox" class="chkEnablePlaylist" ${tagConfig.EnablePlaylist ? 'checked' : ''} />
+                            <span>Create Playlist</span>
+                        </label>
+                        <div class="fieldDescription">Automatically create and maintain an Emby Playlist from these items.</div>
+                    </div>
+                    <div class="playlist-settings" style="margin-left:20px; padding-left:15px; border-left:2px solid var(--line-color); margin-top:10px; display:${tagConfig.EnablePlaylist ? 'block' : 'none'};">
+                        <div class="inputContainer">
+                            <input is="emby-input" type="text" class="txtPlaylistName" label="Playlist Name" value="${tagConfig.PlaylistName || ''}" placeholder="${labelName}" />
+                            <div class="fieldDescription">Leave empty to use Display Name.</div>
+                        </div>
+                        <div style="margin-top:15px;">
+                            <p style="margin:0 0 8px 0; font-size:0.9em; font-weight:bold; opacity:0.7;">Visible to users</p>
+                            <div class="fieldDescription" style="margin-bottom:8px;">Select which users can see this playlist. The first selected user will be the owner.</div>
+                            <div class="playlist-user-list-inner"><em style="opacity:0.5">Loading users...</em></div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="tab-content advanced-tab" style="display:none;">
                     <div class="inputContainer">
                         <p style="margin:0 0 5px 0; font-size:0.9em; font-weight:bold; opacity:0.7;">Blacklist / Ignore (IMDB IDs)</p>
@@ -1709,6 +1783,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
             var hasSchedule = row.querySelectorAll('.date-row').length > 0;
             var hasCollection = row.querySelector('.chkEnableCollection').checked;
+            var hasPlaylist = row.querySelector('.chkEnablePlaylist').checked;
             var hasHomeSection = row.querySelector('.chkEnableHomeSection').checked;
             var hasTag = row.querySelector('.chkEnableTag').checked;
             var overrideChk = row.querySelector('.chkOverrideWhenActive');
@@ -1733,6 +1808,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             if (hasCollection) {
                 html += `<span class="tag-indicator collection"><i class="md-icon" style="font-size:1.1em;">library_books</i> Collection</span>`;
             }
+            if (hasPlaylist) {
+                html += `<span class="tag-indicator playlist"><i class="md-icon" style="font-size:1.1em;">queue_music</i> Playlist</span>`;
+            }
             if (hasHomeSection) {
                 html += `<span class="tag-indicator homescreen"><i class="md-icon" style="font-size:1.1em;">home</i> Home Section</span>`;
             }
@@ -1754,9 +1832,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 row.querySelector('.tagname-tab').style.display = target === 'tag' ? 'block' : 'none';
                 row.querySelector('.schedule-tab').style.display = target === 'schedule' ? 'block' : 'none';
                 row.querySelector('.collection-tab').style.display = target === 'collection' ? 'block' : 'none';
+                row.querySelector('.playlist-tab').style.display = target === 'playlist' ? 'block' : 'none';
                 row.querySelector('.advanced-tab').style.display = target === 'advanced' ? 'block' : 'none';
                 row.querySelector('.homescreen-tab').style.display = target === 'homescreen' ? 'block' : 'none';
                 if (target === 'homescreen') initHomeSectionTab(row);
+                if (target === 'playlist') initPlaylistTab(row);
                 var activeTabEl = row.querySelector('.' + target + '-tab');
                 if (activeTabEl) activeTabEl.querySelectorAll('textarea.txtMiValue, textarea.txtTagBlacklist').forEach(function(ta) {
                     ta.style.height = 'auto';
@@ -1896,6 +1976,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             updateHseSectionAvailability(row);
         });
 
+        row.querySelector('.chkEnablePlaylist').addEventListener('change', function () {
+            row.querySelector('.playlist-settings').style.display = this.checked ? 'block' : 'none';
+            updateBadges(row);
+        });
+
         row.querySelector('.chkOverrideWhenActive').addEventListener('change', function () {
             updateBadges(row);
         });
@@ -1911,6 +1996,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             chkAiWatched.addEventListener('change', function () {
                 var opts = row.querySelector('.ai-recently-watched-options');
                 if (opts) opts.style.display = this.checked ? 'block' : 'none';
+            });
+        }
+
+        var selAiProv = row.querySelector('.selAiProvider');
+        if (selAiProv) {
+            selAiProv.addEventListener('change', function () {
+                var warn = row.querySelector('.ollama-experimental-warning');
+                if (warn) warn.style.display = this.value === 'Ollama' ? 'flex' : 'none';
             });
         }
 
@@ -2768,6 +2861,25 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             .catch(function() { return undefined; }); // ignorera nätverksfel tyst
     }
 
+    function initPlaylistTab(row) {
+        var tab = row.querySelector('.playlist-tab');
+        if (!tab || tab.dataset.playlistLoaded === '1') return;
+        tab.dataset.playlistLoaded = 'loading';
+
+        var savedUserIds = [];
+        try { savedUserIds = JSON.parse(decodeURIComponent(tab.dataset.playlistUserids || '%5B%5D')); } catch {}
+
+        getHseUsers().then(function(users) {
+            var html = '';
+            users.forEach(function(u) {
+                var chk = savedUserIds.indexOf(u.Id) !== -1 ? 'checked' : '';
+                html += '<div style="margin:4px 0;"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" is="emby-checkbox" class="chkPlaylistUser" value="' + u.Id + '" ' + chk + '/><span>' + u.Name + '</span></label></div>';
+            });
+            tab.querySelector('.playlist-user-list-inner').innerHTML = html || '<em style="opacity:0.5">No users found</em>';
+            tab.dataset.playlistLoaded = '1';
+        });
+    }
+
     function initHomeSectionTab(row) {
         var tab = row.querySelector('.homescreen-tab');
         if (!tab || tab.dataset.hseLoaded === '1') return;
@@ -2958,6 +3070,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 if (criteria.length > 0) miFilters.push({ Operator: operator, Criteria: criteria, GroupOperator: groupOp });
             });
 
+            var plTab = row.querySelector('.playlist-tab');
+            var enablePl = plTab ? !!(plTab.querySelector('.chkEnablePlaylist') || {}).checked : false;
+            var plName = plTab ? ((plTab.querySelector('.txtPlaylistName') || {}).value || '') : '';
+            var plUserIds = plTab && plTab.dataset.playlistLoaded === '1'
+                ? Array.from(plTab.querySelectorAll('.chkPlaylistUser:checked')).map(function(c) { return c.value; })
+                : (function() { try { return JSON.parse(decodeURIComponent((plTab && plTab.dataset.playlistUserids) || '%5B%5D')); } catch { return []; } })();
+
             var hseTab = row.querySelector('.homescreen-tab');
             var enableHse = hseTab ? !!(hseTab.querySelector('.chkEnableHomeSection') || {}).checked : false;
             var hseLibraryId = hseTab && hseTab.dataset.hseLoaded === '1'
@@ -3002,6 +3121,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 CollectionTargetSeries:  !!(row.querySelector('.chkCollTargetSeries')  || {}).checked,
                 MediaInfoTargetEpisode: false, MediaInfoTargetSeason: false, MediaInfoTargetSeries: false,
                 MediaInfoTargetType: '', MediaInfoSeasonMode: false,
+                EnablePlaylist: enablePl, PlaylistName: plName, PlaylistUserIds: plUserIds,
                 EnableHomeSection: enableHse, HomeSectionLibraryId: hseLibraryId, HomeSectionUserIds: hseUserIds,
                 HomeSectionSettings: JSON.stringify(hseSettings),
                 HomeSectionTracked: hseTracked
@@ -3035,7 +3155,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     AiPrompt: (row.querySelector('.txtAiPrompt') || {}).value || '',
                     AiIncludeRecentlyWatched: !!(row.querySelector('.chkAiRecentlyWatched') || {}).checked,
                     AiRecentlyWatchedUserId: (row.querySelector('.selAiWatchedUser') || {}).value || '',
-                    AiRecentlyWatchedCount: parseInt(((row.querySelector('.txtAiWatchedCount') || {}).value || '20'), 10) || 20
+                    AiRecentlyWatchedCount: parseInt(((row.querySelector('.txtAiWatchedCount') || {}).value || '20'), 10) || 20,
+                    AiRefreshIntervalDays: parseInt(((row.querySelector('.txtAiRefreshInterval') || {}).value || '0'), 10) || 0
                 }));
             } else {
                 var miLimitVal = parseInt((row.querySelector('.txtMediaInfoLimit') || {}).value, 10) || 0;
@@ -3053,6 +3174,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             TmdbApiKey: view.querySelector('#txtTmdbApiKey').value,
             OpenAiApiKey: (view.querySelector('#txtOpenAiApiKey') || {}).value || '',
             GeminiApiKey: (view.querySelector('#txtGeminiApiKey') || {}).value || '',
+            OllamaBaseUrl: (view.querySelector('#txtOllamaBaseUrl') || {}).value || 'http://localhost:11434',
+            OllamaModel: (view.querySelector('#txtOllamaModel') || {}).value || 'llama3.2',
+            AiSystemPrompt: (view.querySelector('#txtAiSystemPrompt') || {}).value || '',
             ExtendedConsoleOutput: view.querySelector('#chkExtendedConsoleOutput').checked,
             DryRunMode: view.querySelector('#chkDryRunMode').checked,
             PreserveTagsOnEmptyResult: view.querySelector('#chkPreserveTagsOnEmptyResult').checked,
@@ -3272,6 +3396,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     EnableTag: t.EnableTag !== false, EnableCollection: t.EnableCollection, CollectionName: t.CollectionName, CollectionDescription: t.CollectionDescription || '', CollectionPosterPath: t.CollectionPosterPath || '', OnlyCollection: t.OnlyCollection, OverrideWhenActive: t.OverrideWhenActive || false, LastModified: t.LastModified,
                     SourceType: t.SourceType || "External", MediaInfoConditions: t.MediaInfoConditions || [], MediaInfoFilters: t.MediaInfoFilters || [],
                     Limit: t.Limit || 0,
+                    EnablePlaylist: t.EnablePlaylist || false, PlaylistName: t.PlaylistName || '', PlaylistUserIds: t.PlaylistUserIds || [],
                     EnableHomeSection: t.EnableHomeSection || false, HomeSectionLibraryId: t.HomeSectionLibraryId || 'auto',
                     HomeSectionUserIds: t.HomeSectionUserIds || [], HomeSectionSettings: t.HomeSectionSettings || '{}',
                     HomeSectionTracked: t.HomeSectionTracked || [],
@@ -4164,9 +4289,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     existing.HomeSectionLibraryId = ctx.libraryItemId || 'auto';
                     existing.HomeSectionSettings = hseSettings;
                     existing.HomeSectionTracked = existing.HomeSectionTracked || [];
+                    existing.MaxItems = maxItems;
                 } else {
                     topLists.push({
                         TagName: tagName,
+                        MaxItems: maxItems,
                         HomeSectionUserIds: selectedUserIds,
                         HomeSectionLibraryId: ctx.libraryItemId || 'auto',
                         HomeSectionSettings: hseSettings,
@@ -5808,6 +5935,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             view.querySelector('#txtTmdbApiKey').value = config.TmdbApiKey || '';
                             var oaEl = view.querySelector('#txtOpenAiApiKey'); if (oaEl) oaEl.value = config.OpenAiApiKey || '';
                             var gmEl = view.querySelector('#txtGeminiApiKey'); if (gmEl) gmEl.value = config.GeminiApiKey || '';
+                            var olEl = view.querySelector('#txtOllamaBaseUrl'); if (olEl) olEl.value = config.OllamaBaseUrl || 'http://localhost:11434';
+                            var omEl = view.querySelector('#txtOllamaModel'); if (omEl) omEl.value = config.OllamaModel || 'llama3.2';
+                            var spEl = view.querySelector('#txtAiSystemPrompt'); if (spEl) spEl.value = config.AiSystemPrompt || '';
                             view.querySelector('#chkExtendedConsoleOutput').checked = config.ExtendedConsoleOutput || false;
                             view.querySelector('#chkDryRunMode').checked = config.DryRunMode || false;
                             view.querySelector('#chkPreserveTagsOnEmptyResult').checked = config.PreserveTagsOnEmptyResult !== false;
@@ -6073,6 +6203,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 view.querySelector('#txtTmdbApiKey').value = config.TmdbApiKey || '';
                 var oaElInit = view.querySelector('#txtOpenAiApiKey'); if (oaElInit) oaElInit.value = config.OpenAiApiKey || '';
                 var gmElInit = view.querySelector('#txtGeminiApiKey'); if (gmElInit) gmElInit.value = config.GeminiApiKey || '';
+                var olElInit = view.querySelector('#txtOllamaBaseUrl'); if (olElInit) olElInit.value = config.OllamaBaseUrl || 'http://localhost:11434';
+                var omElInit = view.querySelector('#txtOllamaModel'); if (omElInit) omElInit.value = config.OllamaModel || 'llama3.2';
+                var spElInit = view.querySelector('#txtAiSystemPrompt'); if (spElInit) spElInit.value = config.AiSystemPrompt || '';
                 view.querySelector('#chkExtendedConsoleOutput').checked = config.ExtendedConsoleOutput || false;
                 view.querySelector('#chkDryRunMode').checked = config.DryRunMode || false;
                 view.querySelector('#chkPreserveTagsOnEmptyResult').checked = config.PreserveTagsOnEmptyResult || false;

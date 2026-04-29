@@ -1008,51 +1008,105 @@
                         <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s;">expand_more</i>
                     </div>
                     <div class="advanced-body settings-panel-body" style="display:none;">
-                        <div class="inputContainer">
-                            <input is="emby-input" type="password" id="txtOpenAiApiKey" label="OpenAI API Key" />
-                            <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
-                                <input type="checkbox" class="chkShowApiKey" data-target="txtOpenAiApiKey" style="margin:0;" /> Show
-                            </label>
-                            <div class="fieldDescription">
-                                Used for AI created lists via ChatGPT (gpt-4o-mini). Get your key at <a href="https://platform.openai.com/api-keys" target="_blank" class="help-link">platform.openai.com</a>.
+
+                        <!-- OpenAI -->
+                        <div style="margin-bottom: 4px;">
+                            <div style="font-size: 1em; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; opacity: 0.75; margin-bottom: 10px;">OpenAI</div>
+                            <div class="inputContainer">
+                                <input is="emby-input" type="password" id="txtOpenAiApiKey" label="API Key" />
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
+                                    <input type="checkbox" class="chkShowApiKey" data-target="txtOpenAiApiKey" style="margin:0;" /> Show
+                                </label>
+                                <div class="fieldDescription">
+                                    Used for AI created lists via ChatGPT (gpt-4o-mini). Get your key at <a href="https://platform.openai.com/api-keys" target="_blank" class="help-link">platform.openai.com</a>.
+                                </div>
                             </div>
                         </div>
 
-                        <div class="inputContainer" style="margin-top: 15px;">
-                            <input is="emby-input" type="password" id="txtGeminiApiKey" label="Google Gemini API Key" />
-                            <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
-                                <input type="checkbox" class="chkShowApiKey" data-target="txtGeminiApiKey" style="margin:0;" /> Show
-                            </label>
-                            <div class="fieldDescription">
-                                Used for AI created lists via Google Gemini (gemini-3-flash-preview). Get your key at <a href="https://aistudio.google.com/app/apikey" target="_blank" class="help-link">Google AI Studio</a>.
+                        <!-- Google Gemini -->
+                        <div style="border-top: 1px solid rgba(128,128,128,0.15); padding-top: 18px; margin-top: 18px; margin-bottom: 4px;">
+                            <div style="font-size: 1em; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; opacity: 0.75; margin-bottom: 10px;">Google Gemini</div>
+                            <div class="inputContainer">
+                                <input is="emby-input" type="password" id="txtGeminiApiKey" label="API Key" />
+                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
+                                    <input type="checkbox" class="chkShowApiKey" data-target="txtGeminiApiKey" style="margin:0;" /> Show
+                                </label>
+                                <div class="fieldDescription">
+                                    Used for AI created lists via Google Gemini (gemini-3-flash-preview). Get your key at <a href="https://aistudio.google.com/app/apikey" target="_blank" class="help-link">Google AI Studio</a>.
+                                </div>
                             </div>
                         </div>
+
+                        <!-- Ollama -->
+                        <div style="border-top: 1px solid rgba(128,128,128,0.15); padding-top: 18px; margin-top: 18px; margin-bottom: 4px;">
+                            <div style="font-size: 1em; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; opacity: 0.75; margin-bottom: 10px;">Ollama (Local)</div>
+                            <div class="inputContainer">
+                                <input is="emby-input" type="text" id="txtOllamaBaseUrl" label="URL (including port)" placeholder="http://localhost:11434" />
+                                <div class="fieldDescription">
+                                    Full URL to your local Ollama instance — e.g. <code>http://localhost:11434</code> or <code>http://192.168.1.100:11434</code>. See <a href="https://ollama.com" target="_blank" class="help-link">ollama.com</a>.
+                                </div>
+                            </div>
+                            <div class="inputContainer" style="margin-top: 12px;">
+                                <input is="emby-input" type="text" id="txtOllamaModel" label="Model" placeholder="llama3.2" />
+                                <div class="fieldDescription">
+                                    The model to use, e.g. <code>llama3.2</code>, <code>mistral</code>, <code>gemma3</code>. Must be pulled first: <code>ollama pull llama3.2</code>.
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- System prompt -->
+                        <div style="border-top: 1px solid rgba(128,128,128,0.15); padding-top: 18px; margin-top: 18px;">
+                            <div class="advanced-section settings-panel" style="border: 1px solid rgba(128,128,128,0.2); border-radius: 4px;">
+                                <div class="advanced-header settings-panel-toggle" style="padding: 10px 14px; cursor: pointer; user-select: none; display: flex; align-items: center;">
+                                    <i class="md-icon" style="margin-right: 8px; font-size: 1.1em; opacity: 0.65;">tune</i>
+                                    <span style="font-size: 0.9em; font-weight: 600; opacity: 0.85;">Edit system prompt</span>
+                                    <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s; font-size: 1.1em; opacity: 0.65;">expand_more</i>
+                                </div>
+                                <div class="settings-panel-body" style="display:none; padding: 0 14px 14px;">
+                                    <div style="font-size: 0.9em; opacity: 0.75; margin-bottom: 14px; line-height: 1.6;">
+                                        <p style="margin: 0 0 8px;">The <strong>system prompt</strong> is a hidden instruction sent to the AI before every request. It tells the model what role to play and — critically — that it must respond with a specific JSON format that the plugin can parse.</p>
+                                        <p style="margin: 0 0 8px;">This is different from what you write in a <strong>source's prompt</strong> (e.g. "Best sci-fi movies from the 90s"). That text is your actual question. The system prompt is the ruleset the AI must follow when answering it.</p>
+                                        <p style="margin: 0; color: #e8a838;">Only edit this if you know what you're doing. If the JSON format instruction is removed or changed, the plugin will not be able to read the AI's response and the list will appear empty.</p>
+                                    </div>
+                                    <textarea is="emby-textarea" id="txtAiSystemPrompt" rows="7" style="width:100%; resize:vertical; box-sizing:border-box; font-family: monospace; font-size: 1em;"></textarea>
+                                </div>
+                            </div>
+                        </div>
+
                     </div>
                 </div>
 
-                <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.05em; color: #52B54B; text-transform: uppercase; letter-spacing: 1px;">Advanced Settings</h3>
-                <div class="checkboxContainer checkboxContainer-withDescription">
-                    <label>
-                        <input is="emby-checkbox" type="checkbox" id="chkExtendedConsoleOutput" />
-                        <span>Extended Log Output</span>
-                    </label>
-                    <div class="fieldDescription">Enable verbose logging for debugging purposes.</div>
-                </div>
+                <div class="advanced-section settings-panel" style="margin-bottom: 25px;">
+                    <div class="advanced-header settings-panel-toggle">
+                        <i class="md-icon" style="margin-right: 10px; color: #52B54B;">settings</i>
+                        <span style="font-size: 1.05em; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: #52B54B;">Advanced Settings</span>
+                        <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s;">expand_more</i>
+                    </div>
+                    <div class="advanced-body settings-panel-body" style="display:none;">
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="chkExtendedConsoleOutput" />
+                                <span>Extended Log Output</span>
+                            </label>
+                            <div class="fieldDescription">Enable verbose logging for debugging purposes.</div>
+                        </div>
 
-                <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
-                    <label>
-                        <input is="emby-checkbox" type="checkbox" id="chkDryRunMode" />
-                        <span>Dry Run Mode</span>
-                    </label>
-                    <div class="fieldDescription">Simulate process without modifying database.</div>
-                </div>
+                        <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="chkDryRunMode" />
+                                <span>Dry Run Mode</span>
+                            </label>
+                            <div class="fieldDescription">Simulate process without modifying database.</div>
+                        </div>
 
-                <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
-                    <label>
-                        <input is="emby-checkbox" type="checkbox" id="chkPreserveTagsOnEmptyResult" />
-                        <span>Preserve tags and collections on empty result</span>
-                    </label>
-                    <div class="fieldDescription">If an External or AI source returns zero items, keep existing tags and collection members instead of removing them.</div>
+                        <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="chkPreserveTagsOnEmptyResult" />
+                                <span>Preserve tags and collections on empty result</span>
+                            </label>
+                            <div class="fieldDescription">If an External or AI source returns zero items, keep existing tags and collection members instead of removing them.</div>
+                        </div>
+                    </div>
                 </div>
 
                 <hr style="border-color: var(--line-color); margin: 25px 0;" />
@@ -1136,7 +1190,7 @@
         </div>
 
         <div style="margin-top: 5em; padding-top: 2em; border-top: 1px solid var(--line-color); text-align: center; color: var(--theme-text-secondary);">
-            <p style="margin-bottom: 5px; font-weight: bold;">Home Screen Companion v4.0.1.0-BETA</p>
+            <p style="margin-bottom: 5px; font-weight: bold;">Home Screen Companion v4.0.2.0</p>
             <div style="display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 15px;">
                 <a href="https://github.com/soderlund91/HomeScreenCompanion/tree/main" target="_blank" class="simple-link">
                     <svg viewBox="0 0 16 16" width="1.2em" height="1.2em" style="vertical-align:middle;" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>

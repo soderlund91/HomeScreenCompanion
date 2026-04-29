@@ -18,17 +18,6 @@ namespace HomeScreenCompanion
         private static readonly System.Net.Http.HttpClient _netHttpClient = new System.Net.Http.HttpClient();
 
 
-        private const string AiSystemPrompt =
-            "You are a movie and TV show recommendation assistant. " +
-            "Respond ONLY with a valid JSON array. No explanation, no markdown, no code fences. " +
-            "Each item must have these fields: " +
-            "\"title\" (string, required), " +
-            "\"year\" (integer or null), " +
-            "\"imdb_id\" (string starting with \"tt\" if known, otherwise null), " +
-            "\"type\" (\"movie\" or \"show\"). " +
-            "Return exactly the items requested. Do not add any commentary. " +
-            "Example: [{\"title\":\"Inception\",\"year\":2010,\"imdb_id\":\"tt1375666\",\"type\":\"movie\"}]";
-
         public ListFetcher(IHttpClient httpClient, IJsonSerializer jsonSerializer)
         {
             _httpClient = httpClient;
@@ -426,6 +415,9 @@ namespace HomeScreenCompanion
             string prompt,
             string openAiApiKey,
             string geminiApiKey,
+            string ollamaBaseUrl,
+            string ollamaModel,
+            string systemPrompt,
             string recentlyWatchedContext,
             int limit,
             CancellationToken cancellationToken)
@@ -444,13 +436,19 @@ namespace HomeScreenCompanion
                 {
                     if (string.IsNullOrWhiteSpace(geminiApiKey))
                         throw new InvalidOperationException("Gemini API key is not configured.");
-                    rawJson = await CallGemini(geminiApiKey, userMessage, cancellationToken);
+                    rawJson = await CallGemini(geminiApiKey, systemPrompt, userMessage, cancellationToken);
+                }
+                else if (string.Equals(provider, "Ollama", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (string.IsNullOrWhiteSpace(ollamaBaseUrl))
+                        throw new InvalidOperationException("Ollama base URL is not configured.");
+                    rawJson = await CallOllama(ollamaBaseUrl, ollamaModel ?? "llama3.2", systemPrompt, userMessage, cancellationToken);
                 }
                 else
                 {
                     if (string.IsNullOrWhiteSpace(openAiApiKey))
                         throw new InvalidOperationException("OpenAI API key is not configured.");
-                    rawJson = await CallOpenAi(openAiApiKey, userMessage, cancellationToken);
+                    rawJson = await CallOpenAi(openAiApiKey, systemPrompt, userMessage, cancellationToken);
                 }
 
                 var cleaned = CleanAiJsonOutput(rawJson);
@@ -463,12 +461,12 @@ namespace HomeScreenCompanion
             }
         }
 
-        private async Task<string> CallOpenAi(string apiKey, string userMessage, CancellationToken cancellationToken)
+        private async Task<string> CallOpenAi(string apiKey, string systemPrompt, string userMessage, CancellationToken cancellationToken)
         {
             var requestBody = $"{{" +
                 $"\"model\":\"gpt-4o-mini\"," +
                 $"\"messages\":[" +
-                $"{{\"role\":\"system\",\"content\":{EscapeJsonString(AiSystemPrompt)}}}," +
+                $"{{\"role\":\"system\",\"content\":{EscapeJsonString(systemPrompt)}}}," +
                 $"{{\"role\":\"user\",\"content\":{EscapeJsonString(userMessage)}}}" +
                 $"]}}";
 
@@ -489,11 +487,11 @@ namespace HomeScreenCompanion
             return parsed?.choices?.FirstOrDefault()?.message?.content ?? "";
         }
 
-        private async Task<string> CallGemini(string apiKey, string userMessage, CancellationToken cancellationToken)
+        private async Task<string> CallGemini(string apiKey, string systemPrompt, string userMessage, CancellationToken cancellationToken)
         {
             var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}";
             var requestBody = $"{{" +
-                $"\"systemInstruction\":{{\"parts\":[{{\"text\":{EscapeJsonString(AiSystemPrompt)}}}]}}," +
+                $"\"systemInstruction\":{{\"parts\":[{{\"text\":{EscapeJsonString(systemPrompt)}}}]}}," +
                 $"\"contents\":[{{\"role\":\"user\",\"parts\":[{{\"text\":{EscapeJsonString(userMessage)}}}]}}]" +
                 $"}}";
 
@@ -511,6 +509,34 @@ namespace HomeScreenCompanion
 
             var parsed = _jsonSerializer.DeserializeFromString<GeminiResponse>(responseBody);
             return parsed?.candidates?.FirstOrDefault()?.content?.parts?.FirstOrDefault()?.text ?? "";
+        }
+
+        private async Task<string> CallOllama(string baseUrl, string model, string systemPrompt, string userMessage, CancellationToken cancellationToken)
+        {
+            var url = $"{baseUrl.TrimEnd('/')}/api/chat";
+            var requestBody = $"{{" +
+                $"\"model\":{EscapeJsonString(model)}," +
+                $"\"messages\":[" +
+                $"{{\"role\":\"system\",\"content\":{EscapeJsonString(systemPrompt)}}}," +
+                $"{{\"role\":\"user\",\"content\":{EscapeJsonString(userMessage)}}}" +
+                $"]," +
+                $"\"stream\":false" +
+                $"}}";
+
+            var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, url);
+            request.Content = new System.Net.Http.StringContent(requestBody, Encoding.UTF8, "application/json");
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(120));
+
+            var response = await _netHttpClient.SendAsync(request, cts.Token);
+            var responseBody = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException($"Ollama API error {(int)response.StatusCode}: {responseBody}");
+
+            var parsed = _jsonSerializer.DeserializeFromString<OllamaResponse>(responseBody);
+            return parsed?.message?.content ?? "";
         }
 
         private static string CleanAiJsonOutput(string raw)

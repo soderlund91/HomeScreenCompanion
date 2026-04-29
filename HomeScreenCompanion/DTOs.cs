@@ -153,6 +153,17 @@ namespace HomeScreenCompanion
         public string text { get; set; } = "";
     }
 
+    public class OllamaResponse
+    {
+        public OllamaMessage message { get; set; } = new OllamaMessage();
+    }
+
+    public class OllamaMessage
+    {
+        public string role { get; set; } = "";
+        public string content { get; set; } = "";
+    }
+
     public class AiListItem
     {
         public string title { get; set; } = "";

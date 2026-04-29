@@ -11,6 +11,18 @@ namespace HomeScreenCompanion
         public string TmdbApiKey { get; set; } = "";
         public string OpenAiApiKey { get; set; } = "";
         public string GeminiApiKey { get; set; } = "";
+        public string OllamaBaseUrl { get; set; } = "http://localhost:11434";
+        public string OllamaModel { get; set; } = "llama3.2";
+        public string AiSystemPrompt { get; set; } =
+            "You are a movie and TV show recommendation assistant. " +
+            "Respond ONLY with a valid JSON array. No explanation, no markdown, no code fences. " +
+            "Each item must have these fields: " +
+            "\"title\" (string, required), " +
+            "\"year\" (integer or null), " +
+            "\"imdb_id\" (string starting with \"tt\" if known, otherwise null), " +
+            "\"type\" (\"movie\" or \"show\"). " +
+            "Return exactly the items requested. Do not add any commentary. " +
+            "Example: [{\"title\":\"Inception\",\"year\":2010,\"imdb_id\":\"tt1375666\",\"type\":\"movie\"}]";
         public bool ExtendedConsoleOutput { get; set; } = false;
         public bool DryRunMode { get; set; } = false;
         public bool PreserveTagsOnEmptyResult { get; set; } = true;
@@ -44,6 +56,8 @@ namespace HomeScreenCompanion
         public bool AiIncludeRecentlyWatched { get; set; } = false;
         public string AiRecentlyWatchedUserId { get; set; } = "";
         public int AiRecentlyWatchedCount { get; set; } = 20;
+        public int AiRefreshIntervalDays { get; set; } = 0;
+        public DateTime AiLastRunDate { get; set; } = DateTime.MinValue;
         
         public List<string> Blacklist { get; set; } = new List<string>();
         public List<DateInterval> ActiveIntervals { get; set; } = new List<DateInterval>();
@@ -71,6 +85,10 @@ namespace HomeScreenCompanion
         public bool CollectionTargetEpisode { get; set; } = false;
         public bool CollectionTargetSeason  { get; set; } = false;
         public bool CollectionTargetSeries  { get; set; } = false;
+
+        public bool EnablePlaylist { get; set; } = false;
+        public string PlaylistName { get; set; } = "";
+        public List<string> PlaylistUserIds { get; set; } = new List<string>();
 
         public bool EnableHomeSection { get; set; } = false;
         public List<string> HomeSectionUserIds { get; set; } = new List<string>();
