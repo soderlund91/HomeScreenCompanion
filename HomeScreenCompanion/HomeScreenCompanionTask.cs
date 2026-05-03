@@ -2,7 +2,6 @@
 using MediaBrowser.Controller.Collections;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
-using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Querying;
@@ -23,7 +22,6 @@ namespace HomeScreenCompanion
     {
         private readonly ILibraryManager _libraryManager;
         private readonly ICollectionManager _collectionManager;
-        private readonly IPlaylistManager _playlistManager;
         private readonly IUserManager _userManager;
         private readonly IUserDataManager _userDataManager;
         private readonly IHttpClient _httpClient;
@@ -77,10 +75,6 @@ namespace HomeScreenCompanion
             public bool CollectionCreated;
             public int CollectionItemsAdded;
             public int CollectionItemsRemoved;
-            public bool EnablePlaylist;
-            public bool PlaylistCreated;
-            public int PlaylistItemsAdded;
-            public int PlaylistItemsRemoved;
             public bool EnableHomeSection;
             public bool HomeSectionSynced;
             public int HomeSectionUserCount;
@@ -94,11 +88,10 @@ namespace HomeScreenCompanion
             public int GroupTotal;
         }
 
-        public HomeScreenCompanionTask(ILibraryManager libraryManager, ICollectionManager collectionManager, IPlaylistManager playlistManager, IUserManager userManager, IUserDataManager userDataManager, IHttpClient httpClient, IJsonSerializer jsonSerializer, ILogManager logManager, ILibraryMonitor libraryMonitor)
+        public HomeScreenCompanionTask(ILibraryManager libraryManager, ICollectionManager collectionManager, IUserManager userManager, IUserDataManager userDataManager, IHttpClient httpClient, IJsonSerializer jsonSerializer, ILogManager logManager, ILibraryMonitor libraryMonitor)
         {
             _libraryManager = libraryManager;
             _collectionManager = collectionManager;
-            _playlistManager = playlistManager;
             _userManager = userManager;
             _userDataManager = userDataManager;
             _httpClient = httpClient;
@@ -177,7 +170,6 @@ namespace HomeScreenCompanion
                 var desiredCollectionsMap = new Dictionary<string, HashSet<long>>(StringComparer.OrdinalIgnoreCase);
                 var collectionDescriptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 var collectionPosters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                var desiredPlaylistsMap = new Dictionary<string, (HashSet<long> Ids, HashSet<string> SeenImdb, TagConfig Config)>(StringComparer.OrdinalIgnoreCase);
                 var managedTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var activeCollections = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var failedFetches = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -195,28 +187,6 @@ namespace HomeScreenCompanion
                         string cn = string.IsNullOrWhiteSpace(tc.CollectionName) ? tc.Tag.Trim() : tc.CollectionName.Trim();
                         if (!previouslyManagedCollections.Contains(cn))
                             previouslyManagedCollections.Add(cn);
-                    }
-                }
-
-                var activePlaylists = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var previouslyManagedPlaylists = LoadFileHistory("homescreencompanion_playlists.txt");
-                // Pre-seed from config so playlists get cleaned up even if a group was never run via full sync
-                foreach (var tc in config.Tags)
-                {
-                    if (!string.IsNullOrWhiteSpace(tc.Tag) && tc.PlaylistUserIds?.Count > 0)
-                    {
-                        string pn = string.IsNullOrWhiteSpace(tc.PlaylistName) ? tc.Tag.Trim() : tc.PlaylistName.Trim();
-                        foreach (var uid in tc.PlaylistUserIds)
-                        {
-                            // Only pre-seed if no entry (with or without GUID) already exists
-                            bool alreadyTracked = previouslyManagedPlaylists.Any(h => {
-                                var hp2 = h.Split('|');
-                                return hp2.Length >= 2
-                                    && string.Equals(hp2[0], pn, StringComparison.OrdinalIgnoreCase)
-                                    && string.Equals(hp2[1], uid, StringComparison.OrdinalIgnoreCase);
-                            });
-                            if (!alreadyTracked) previouslyManagedPlaylists.Add($"{pn}|{uid}");
-                        }
                     }
                 }
 
@@ -479,7 +449,6 @@ namespace HomeScreenCompanion
                         SourceType = srcLabel,
                         EnableTag = tagConfig.EnableTag && !tagConfig.OnlyCollection,
                         EnableCollection = tagConfig.EnableCollection,
-                        EnablePlaylist = tagConfig.EnablePlaylist,
                         EnableHomeSection = tagConfig.EnableHomeSection,
                         BoxSetHse = IsBoxSetHomeSectionEntry(tagConfig),
                         TagName = tagName,
@@ -965,19 +934,6 @@ namespace HomeScreenCompanion
                                 desiredCollectionsMap[cName].Add(localItem.InternalId);
                         }
 
-                        if (tagConfig.EnablePlaylist)
-                        {
-                            string pName = string.IsNullOrWhiteSpace(tagConfig.PlaylistName) ? cName : tagConfig.PlaylistName.Trim();
-                            if (!desiredPlaylistsMap.ContainsKey(pName))
-                                desiredPlaylistsMap[pName] = (new HashSet<long>(), new HashSet<string>(StringComparer.OrdinalIgnoreCase), tagConfig);
-                            foreach (var localItem in collectionOutputItems)
-                            {
-                                var imdb = localItem.GetProviderId("Imdb");
-                                if (string.IsNullOrEmpty(imdb) || desiredPlaylistsMap[pName].SeenImdb.Add(imdb))
-                                    desiredPlaylistsMap[pName].Ids.Add(localItem.InternalId);
-                            }
-                        }
-
                         gs.BoxSetFound = ApplyTagToSourceBoxSet(tagConfig, tagName, dryRun, cancellationToken);
                         gs.BoxSetTaggedCount = gs.BoxSetFound ? 1 : 0;
                     }
@@ -1236,121 +1192,6 @@ namespace HomeScreenCompanion
                     }
                 }
 
-                var playlistCreatedSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var playlistItemsAdded = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                var playlistItemsRemoved = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                foreach (var kvp in desiredPlaylistsMap)
-                {
-                    string pName = kvp.Key;
-                    var desiredMediaIds = kvp.Value.Ids;
-                    var plConfig = kvp.Value.Config;
-                    if (desiredMediaIds.Count == 0 || dryRun) continue;
-                    try
-                    {
-                        var targetUserIds = plConfig.PlaylistUserIds?.Count > 0
-                            ? plConfig.PlaylistUserIds
-                            : _userManager.GetUserList(new UserQuery { IsDisabled = false })
-                                .Where(u => u.Policy.IsAdministrator)
-                                .Take(1)
-                                .Select(u => u.Id.ToString("N"))
-                                .ToList();
-
-                        foreach (var userId in targetUserIds)
-                        {
-                            var user = _userManager.GetUserById(new Guid(userId));
-                            if (user == null) continue;
-
-                            // Look up tracked GUID from history — this is the ONLY way we find an existing playlist.
-                            // We never search by name/userId because ownership matching via dynamic is unreliable.
-                            BaseItem? existingPlaylist = null;
-                            var histEntry = previouslyManagedPlaylists.FirstOrDefault(h => {
-                                var hp = h.Split('|');
-                                return hp.Length >= 2
-                                    && string.Equals(hp[0], pName, StringComparison.OrdinalIgnoreCase)
-                                    && string.Equals(hp[1], userId, StringComparison.OrdinalIgnoreCase);
-                            });
-                            if (histEntry != null)
-                            {
-                                var hp = histEntry.Split('|');
-                                if (hp.Length >= 3 && Guid.TryParse(hp[2], out var trackedGuid))
-                                {
-                                    try { existingPlaylist = _libraryManager.GetItemById(trackedGuid); } catch { }
-                                    // Additional fallback: scan all playlists for matching GUID
-                                    if (existingPlaylist == null)
-                                    {
-                                        existingPlaylist = _libraryManager.GetItemList(new InternalItemsQuery
-                                        {
-                                            IncludeItemTypes = new[] { "Playlist" }, Recursive = true
-                                        }).FirstOrDefault(pl => pl.Id == trackedGuid);
-                                    }
-                                }
-                            }
-
-                            if (existingPlaylist == null)
-                            {
-                                // No tracked item found — create new playlist and capture GUID from result
-                                var createResult = await _playlistManager.CreatePlaylist(new PlaylistCreationRequest
-                                {
-                                    Name = pName, ItemIdList = desiredMediaIds.ToArray(), User = user, IsPublic = false
-                                });
-                                playlistCreatedSet.Add(pName);
-                                playlistItemsAdded[pName] = desiredMediaIds.Count;
-                                if (Guid.TryParse(createResult.Id, out var newGuid))
-                                {
-                                    try { existingPlaylist = _libraryManager.GetItemById(newGuid); } catch { }
-                                    if (existingPlaylist == null)
-                                    {
-                                        existingPlaylist = _libraryManager.GetItemList(new InternalItemsQuery
-                                        {
-                                            IncludeItemTypes = new[] { "Playlist" }, Recursive = true
-                                        }).FirstOrDefault(pl => pl.Id == newGuid);
-                                    }
-                                }
-                            }
-                            else
-                            {
-                                var currentEntries = _libraryManager.GetItemList(new InternalItemsQuery { ListIds = new[] { existingPlaylist.InternalId } });
-                                var mediaIdToEntryId = new Dictionary<long, long>();
-                                foreach (var entry in currentEntries)
-                                {
-                                    long entryId = entry.InternalId;
-                                    long mediaId = entryId;
-                                    if (entry.GetType().Name.Contains("PlaylistItem"))
-                                    {
-                                        try { var inner = ((dynamic)entry).Item; if (inner != null) mediaId = (long)inner.InternalId; } catch { }
-                                    }
-                                    if (!mediaIdToEntryId.ContainsKey(mediaId)) mediaIdToEntryId[mediaId] = entryId;
-                                }
-                                var toAdd = desiredMediaIds.Where(id => !mediaIdToEntryId.ContainsKey(id)).ToArray();
-                                var toRemoveIds = mediaIdToEntryId.Where(kvp2 => !desiredMediaIds.Contains(kvp2.Key)).Select(kvp2 => kvp2.Value).ToArray();
-                                if (toAdd.Length > 0) _playlistManager.AddToPlaylist(existingPlaylist.InternalId, toAdd, user);
-                                if (toRemoveIds.Length > 0) await _playlistManager.RemoveFromPlaylist(existingPlaylist.InternalId, toRemoveIds);
-                                playlistItemsAdded[pName] = Math.Max(playlistItemsAdded.GetValueOrDefault(pName), toAdd.Length);
-                                playlistItemsRemoved[pName] = Math.Max(playlistItemsRemoved.GetValueOrDefault(pName), toRemoveIds.Length);
-                            }
-
-                            // Store the GUID — this is what enables reliable find + delete in future syncs
-                            if (existingPlaylist != null)
-                                activePlaylists.Add($"{pName}|{userId}|{existingPlaylist.Id:N}");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        LogSummary($"  ! Playlist error for '{pName}': {ex.Message}", "Warn");
-                    }
-                }
-
-                foreach (var gs in statsList)
-                {
-                    if (!gs.EnablePlaylist) continue;
-                    var plConfig = config.Tags.FirstOrDefault(t => t == null ? false : string.Equals(t.Tag, gs.TagName, StringComparison.OrdinalIgnoreCase));
-                    if (plConfig == null) continue;
-                    string pName = string.IsNullOrWhiteSpace(plConfig.PlaylistName) ? (plConfig.CollectionName ?? plConfig.Tag ?? "") : plConfig.PlaylistName.Trim();
-                    gs.PlaylistCreated = playlistCreatedSet.Contains(pName);
-                    gs.PlaylistItemsAdded = playlistItemsAdded.GetValueOrDefault(pName);
-                    gs.PlaylistItemsRemoved = playlistItemsRemoved.GetValueOrDefault(pName);
-                }
-
                 int collDeleted = 0;
                 var toDelete = previouslyManagedCollections.Where(h => !activeCollections.Contains(h)).ToList();
                 foreach (var oldName in toDelete)
@@ -1378,53 +1219,7 @@ namespace HomeScreenCompanion
                     }
                 }
                 if (!dryRun) SaveFileHistory("homescreencompanion_collections.txt", activeCollections.ToList());
-
-                // Build a set of "pName|userId" keys that are active (ignore the GUID part for comparison)
-                var activePlaylistKeys = activePlaylists
-                    .Select(e => { var p = e.Split('|'); return p.Length >= 2 ? $"{p[0]}|{p[1]}" : e; })
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-                int playlistDeleted = 0;
-                var toDeletePlaylists = previouslyManagedPlaylists.Where(h => {
-                    var p = h.Split('|');
-                    var key = p.Length >= 2 ? $"{p[0]}|{p[1]}" : h;
-                    return !activePlaylistKeys.Contains(key);
-                }).ToList();
-                foreach (var entry in toDeletePlaylists)
-                {
-                    var ep = entry.Split('|');
-                    string plName = ep.Length >= 1 ? ep[0] : entry;
-                    try
-                    {
-                        BaseItem? playlist = null;
-                        if (ep.Length >= 3 && Guid.TryParse(ep[2], out var itemGuid))
-                        {
-                            playlist = _libraryManager.GetItemById(itemGuid);
-                        }
-                        if (playlist == null && ep.Length >= 2)
-                        {
-                            // Fallback for old-format entries without GUID
-                            playlist = _libraryManager.GetItemList(new InternalItemsQuery
-                            {
-                                IncludeItemTypes = new[] { "Playlist" }, Name = plName, Recursive = true
-                            }).FirstOrDefault(pl => {
-                                try { return string.Equals(((dynamic)pl).UserId?.ToString(), ep[1], StringComparison.OrdinalIgnoreCase); }
-                                catch { return false; }
-                            });
-                        }
-                        if (playlist != null && !dryRun)
-                        {
-                            _libraryManager.DeleteItem(playlist, new DeleteOptions { DeleteFileLocation = false });
-                            playlistDeleted++;
-                            if (debug) LogDebug($"  Playlist '{plName}' deleted (inactive)");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        LogSummary($"  ! Playlist cleanup of '{plName}' failed: {ex.Message}", "Warn");
-                    }
-                }
-                if (!dryRun) SaveFileHistory("homescreencompanion_playlists.txt", activePlaylists.ToList());
+                if (!dryRun) Plugin.Instance.SaveConfiguration();
 
                 tagsRemoved += CleanupBoxSetTags(config, dryRun, cancellationToken);
                 if (!dryRun) ManageHomeSections(config, cancellationToken, debug, statsList);
@@ -1523,10 +1318,6 @@ namespace HomeScreenCompanion
                             LogSummary(gs.CollectionCreated
                                 ? $"  Collection: created ({gs.CollectionItemsAdded} items)"
                                 : $"  Collection: updated (+{gs.CollectionItemsAdded}, -{gs.CollectionItemsRemoved})");
-                        if (gs.EnablePlaylist)
-                            LogSummary(gs.PlaylistCreated
-                                ? $"  Playlist: created ({gs.PlaylistItemsAdded} items)"
-                                : $"  Playlist: updated (+{gs.PlaylistItemsAdded}, -{gs.PlaylistItemsRemoved})");
                         if (gs.EnableHomeSection)
                             LogSummary(gs.HomeSectionSynced
                                 ? $"  Home section: synced for {gs.HomeSectionUserCount} user(s)"
@@ -1564,11 +1355,7 @@ namespace HomeScreenCompanion
                 LogSummary("Summary");
                 if (summaryTagsAdded > 0 || tagsRemoved > 0)
                     LogSummary($"  Tags:          +{summaryTagsAdded} added,  -{tagsRemoved} removed");
-                int totalPlCreated = statsList.Count(g => g.PlaylistCreated);
-                int totalPlUpdated = statsList.Count(g => !g.PlaylistCreated && !g.Skipped && g.EnablePlaylist && (g.PlaylistItemsAdded > 0 || g.PlaylistItemsRemoved > 0));
                 LogSummary($"  Collections:   {totalCollCreated} created,   {totalCollUpdated} updated,   {collDeleted} removed");
-                if (statsList.Any(g => g.EnablePlaylist) || playlistDeleted > 0)
-                    LogSummary($"  Playlists:     {totalPlCreated} created,   {totalPlUpdated} updated,   {playlistDeleted} removed");
                 LogSummary($"  Home sections: {totalHsSynced} synced,    {totalHsRemoved} removed");
                 LogSummary($"  Done in {elapsedStr}  ·  {finalStatus}");
                 LogSummary("══════════════════════════════════════════════════");
@@ -2329,130 +2116,6 @@ namespace HomeScreenCompanion
                 }
             }
 
-            bool _playlistCreated = false;
-            int _playlistItemsAdded = 0, _playlistItemsRemoved = 0;
-            if (tagConfig.EnablePlaylist && collectionOutputItems.Count > 0 && !dryRun)
-            {
-                try
-                {
-                    string pName = string.IsNullOrWhiteSpace(tagConfig.PlaylistName) ? cName : tagConfig.PlaylistName.Trim();
-                    var _plSeenImdb = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    var desiredMediaIds = collectionOutputItems
-                        .Where(item => {
-                            var imdb = item.GetProviderId("Imdb");
-                            return string.IsNullOrEmpty(imdb) || _plSeenImdb.Add(imdb);
-                        })
-                        .Select(i => i.InternalId)
-                        .ToHashSet();
-
-                    var targetUserIds = tagConfig.PlaylistUserIds?.Count > 0
-                        ? tagConfig.PlaylistUserIds
-                        : _userManager.GetUserList(new UserQuery { IsDisabled = false })
-                            .Where(u => u.Policy.IsAdministrator)
-                            .Take(1)
-                            .Select(u => u.Id.ToString("N"))
-                            .ToList();
-
-                    var _plHist2 = LoadFileHistory("homescreencompanion_playlists.txt");
-                    var _plHist2Changed = false;
-
-                    foreach (var userId in targetUserIds)
-                    {
-                        var user = _userManager.GetUserById(new Guid(userId));
-                        if (user == null) continue;
-
-                        // Find existing playlist by tracked GUID
-                        BaseItem? existingPlaylist = null;
-                        var histEntry = _plHist2.FirstOrDefault(h => {
-                            var hp = h.Split('|');
-                            return hp.Length >= 2
-                                && string.Equals(hp[0], pName, StringComparison.OrdinalIgnoreCase)
-                                && string.Equals(hp[1], userId, StringComparison.OrdinalIgnoreCase);
-                        });
-                        if (histEntry != null)
-                        {
-                            var hp = histEntry.Split('|');
-                            if (hp.Length >= 3 && Guid.TryParse(hp[2], out var trackedGuid))
-                            {
-                                try { existingPlaylist = _libraryManager.GetItemById(trackedGuid); } catch { }
-                                if (existingPlaylist == null)
-                                    existingPlaylist = _libraryManager.GetItemList(new InternalItemsQuery
-                                    {
-                                        IncludeItemTypes = new[] { "Playlist" }, Recursive = true
-                                    }).FirstOrDefault(pl => pl.Id == trackedGuid);
-                            }
-                        }
-
-                        if (existingPlaylist == null)
-                        {
-                            // Snapshot existing playlist IDs before creating
-                            var beforeIds = _libraryManager.GetItemList(new InternalItemsQuery
-                            {
-                                IncludeItemTypes = new[] { "Playlist" }, Recursive = true
-                            }).Select(pl => pl.Id).ToHashSet();
-
-                            await _playlistManager.CreatePlaylist(new PlaylistCreationRequest
-                            {
-                                Name = pName, ItemIdList = desiredMediaIds.ToArray(), User = user, IsPublic = false
-                            });
-                            _playlistCreated = true;
-                            _playlistItemsAdded = desiredMediaIds.Count;
-
-                            // Find the newly created playlist by elimination (new ID not in before-snapshot)
-                            existingPlaylist = _libraryManager.GetItemList(new InternalItemsQuery
-                            {
-                                IncludeItemTypes = new[] { "Playlist" }, Recursive = true
-                            }).FirstOrDefault(pl => !beforeIds.Contains(pl.Id));
-
-                            if (debug) LogDebug($"  Playlist '{pName}' created for {user.Name}");
-                        }
-                        else
-                        {
-                            var currentEntries = _libraryManager.GetItemList(new InternalItemsQuery { ListIds = new[] { existingPlaylist.InternalId } });
-                            var mediaIdToEntryId = new Dictionary<long, long>();
-                            foreach (var entry in currentEntries)
-                            {
-                                long entryId = entry.InternalId;
-                                long mediaId = entryId;
-                                if (entry.GetType().Name.Contains("PlaylistItem"))
-                                {
-                                    try { var inner = ((dynamic)entry).Item; if (inner != null) mediaId = (long)inner.InternalId; } catch { }
-                                }
-                                if (!mediaIdToEntryId.ContainsKey(mediaId)) mediaIdToEntryId[mediaId] = entryId;
-                            }
-                            var toAdd = desiredMediaIds.Where(id => !mediaIdToEntryId.ContainsKey(id)).ToArray();
-                            var toRemoveEntryIds = mediaIdToEntryId
-                                .Where(kvp => !desiredMediaIds.Contains(kvp.Key))
-                                .Select(kvp => kvp.Value).ToArray();
-                            if (toAdd.Length > 0) _playlistManager.AddToPlaylist(existingPlaylist.InternalId, toAdd, user);
-                            if (toRemoveEntryIds.Length > 0) await _playlistManager.RemoveFromPlaylist(existingPlaylist.InternalId, toRemoveEntryIds);
-                            _playlistItemsAdded = Math.Max(_playlistItemsAdded, toAdd.Length);
-                            _playlistItemsRemoved = Math.Max(_playlistItemsRemoved, toRemoveEntryIds.Length);
-                            if (debug) LogDebug($"  Playlist '{pName}' updated for {user.Name} (+{toAdd.Length}, -{toRemoveEntryIds.Length})");
-                        }
-
-                        if (existingPlaylist != null)
-                        {
-                            string newKey = $"{pName}|{userId}|{existingPlaylist.Id:N}";
-                            var oldEntry = _plHist2.FirstOrDefault(h => {
-                                var hp = h.Split('|');
-                                return hp.Length >= 2
-                                    && string.Equals(hp[0], pName, StringComparison.OrdinalIgnoreCase)
-                                    && string.Equals(hp[1], userId, StringComparison.OrdinalIgnoreCase);
-                            });
-                            if (oldEntry != null) _plHist2.Remove(oldEntry);
-                            _plHist2.Add(newKey);
-                            _plHist2Changed = true;
-                        }
-                    }
-                    if (_plHist2Changed) SaveFileHistory("homescreencompanion_playlists.txt", _plHist2);
-                }
-                catch (Exception ex)
-                {
-                    LogSummary($"  ! Playlist error: {ex.Message}", "Warn");
-                }
-            }
-
             if (!dryRun)
             {
                 TagCacheManager.Instance.Save();
@@ -2468,91 +2131,7 @@ namespace HomeScreenCompanion
                     }
                 }
 
-                string _pName = string.IsNullOrWhiteSpace(tagConfig.PlaylistName) ? cName : tagConfig.PlaylistName.Trim();
-                var _plHist = LoadFileHistory("homescreencompanion_playlists.txt");
-                var _plHistChanged = false;
-
-                void DeletePlaylistByHistEntry(string histEntry)
-                {
-                    try
-                    {
-                        var ep2 = histEntry.Split('|');
-                        BaseItem? pl = null;
-                        if (ep2.Length >= 3 && Guid.TryParse(ep2[2], out var g))
-                            pl = _libraryManager.GetItemById(g);
-                        if (pl == null && ep2.Length >= 2)
-                        {
-                            pl = _libraryManager.GetItemList(new InternalItemsQuery
-                            {
-                                IncludeItemTypes = new[] { "Playlist" }, Name = ep2[0], Recursive = true
-                            }).FirstOrDefault(p => {
-                                try { return string.Equals(((dynamic)p).UserId?.ToString(), ep2[1], StringComparison.OrdinalIgnoreCase); }
-                                catch { return false; }
-                            });
-                        }
-                        if (pl != null) _libraryManager.DeleteItem(pl, new DeleteOptions { DeleteFileLocation = false });
-                    }
-                    catch { }
-                }
-
-                if (!tagConfig.EnablePlaylist || !tagConfig.Active)
-                {
-                    // Group disabled or inactive — delete all playlists tracked for this group
-                    var usersForThisGroup = new HashSet<string>(tagConfig.PlaylistUserIds ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
-                    var toRemoveKeys = _plHist.Where(h => {
-                        var hp = h.Split('|');
-                        return hp.Length >= 2 && (
-                            string.Equals(hp[0], _pName, StringComparison.OrdinalIgnoreCase)
-                            || usersForThisGroup.Contains(hp[1]));
-                    }).ToList();
-                    foreach (var key in toRemoveKeys)
-                    {
-                        DeletePlaylistByHistEntry(key);
-                        _plHist.Remove(key);
-                        _plHistChanged = true;
-                    }
-                }
-                else if (tagConfig.PlaylistUserIds?.Count > 0)
-                {
-                    // Group active — clean up orphaned entries for renamed playlists
-                    var userIdSet = new HashSet<string>(tagConfig.PlaylistUserIds, StringComparer.OrdinalIgnoreCase);
-                    var otherActiveNames = config.Tags
-                        .Where(tc => tc != tagConfig && tc.Active && tc.EnablePlaylist)
-                        .Select(tc => string.IsNullOrWhiteSpace(tc.PlaylistName) ? tc.Tag?.Trim() ?? "" : tc.PlaylistName.Trim())
-                        .Where(n => !string.IsNullOrEmpty(n))
-                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-                    var orphanedKeys = _plHist.Where(h => {
-                        var op = h.Split('|');
-                        return op.Length >= 2
-                            && userIdSet.Contains(op[1])
-                            && !string.Equals(op[0], _pName, StringComparison.OrdinalIgnoreCase)
-                            && !otherActiveNames.Contains(op[0]);
-                    }).ToList();
-                    foreach (var key in orphanedKeys)
-                    {
-                        DeletePlaylistByHistEntry(key);
-                        _plHist.Remove(key);
-                        _plHistChanged = true;
-                    }
-
-                    // Update history with current GUID for each user (written by the playlist block above)
-                    // The playlist block stores GUIDs in _singleRunPlaylistGuids; sync them to history
-                    foreach (var uid in tagConfig.PlaylistUserIds)
-                    {
-                        string prefix = $"{_pName}|{uid}|";
-                        var existing = _plHist.FirstOrDefault(h => h.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-                            || (h.Split('|') is var p2 && p2.Length == 2 && string.Equals(p2[0], _pName) && string.Equals(p2[1], uid)));
-                        // Entry will be updated properly when full sync runs; just ensure at least the key exists
-                        if (existing == null)
-                        {
-                            _plHist.Add($"{_pName}|{uid}");
-                            _plHistChanged = true;
-                        }
-                    }
-                }
-
-                if (_plHistChanged) SaveFileHistory("homescreencompanion_playlists.txt", _plHist);
+                Plugin.Instance.SaveConfiguration();
             }
 
             var _boxSetFound = ApplyTagToSourceBoxSet(tagConfig, tagName, dryRun, cancellationToken);
@@ -2607,10 +2186,6 @@ namespace HomeScreenCompanion
                 LogSummary(_collCreated
                     ? $"  Collection: created ({_collItemsAdded} items)"
                     : $"  Collection: updated (+{_collItemsAdded}, -{_collItemsRemoved})");
-            if (tagConfig.EnablePlaylist)
-                LogSummary(_playlistCreated
-                    ? $"  Playlist: created ({_playlistItemsAdded} items)"
-                    : $"  Playlist: updated (+{_playlistItemsAdded}, -{_playlistItemsRemoved})");
             if (tagConfig.EnableHomeSection)
                 LogSummary(_singleGs.HomeSectionSynced
                     ? $"  Home section: synced for {_singleGs.HomeSectionUserCount} user(s)"
@@ -2625,8 +2200,6 @@ namespace HomeScreenCompanion
                 LogSummary($"  Collections tagged: {_boxSetTaggedCount}");
             if (tagConfig.EnableCollection)
                 LogSummary($"  Collections:   {(_collCreated ? 1 : 0)} created,   {(!_collCreated && collResult > 0 ? 1 : 0)} updated");
-            if (tagConfig.EnablePlaylist)
-                LogSummary($"  Playlists:     {(_playlistCreated ? 1 : 0)} created,   {(!_playlistCreated && (_playlistItemsAdded > 0 || _playlistItemsRemoved > 0) ? 1 : 0)} updated");
             if (tagConfig.EnableHomeSection)
                 LogSummary($"  Home sections: {(_singleGs.HomeSectionSynced ? 1 : 0)} synced");
             LogSummary($"  Done in {elapsedStr}  ·  {finalStatus}");

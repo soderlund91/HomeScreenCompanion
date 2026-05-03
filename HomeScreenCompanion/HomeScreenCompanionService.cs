@@ -103,11 +103,6 @@ namespace HomeScreenCompanion
     public class ManagedCollectionInfo { public string Id { get; set; } = ""; public string Name { get; set; } = ""; public int ItemCount { get; set; } }
     public class GetManagedCollectionsResponse { public List<ManagedCollectionInfo> Collections { get; set; } = new List<ManagedCollectionInfo>(); }
 
-    [Route("/HomeScreenCompanion/Manage/Playlists", "GET")]
-    public class GetManagedPlaylistsRequest : IReturn<GetManagedPlaylistsResponse> { }
-    public class ManagedPlaylistInfo { public string Id { get; set; } = ""; public string Name { get; set; } = ""; public int ItemCount { get; set; } }
-    public class GetManagedPlaylistsResponse { public List<ManagedPlaylistInfo> Playlists { get; set; } = new List<ManagedPlaylistInfo>(); }
-
     [Route("/HomeScreenCompanion/Manage/DeleteTag", "POST")]
     public class DeleteManagedTagRequest : IReturn<DeleteManagedTagResponse> { public string TagName { get; set; } = ""; }
     public class DeleteManagedTagResponse { public bool Success { get; set; } public string Message { get; set; } = ""; public int ItemsUpdated { get; set; } }
@@ -953,28 +948,6 @@ public class HomeScreenCompanionService : IService
             }
             result.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
             return new GetManagedCollectionsResponse { Collections = result };
-        }
-
-        public object Get(GetManagedPlaylistsRequest request)
-        {
-            var playlists = _libraryManager.GetItemList(new InternalItemsQuery
-            {
-                IncludeItemTypes = new[] { "Playlist" },
-                Recursive = true
-            });
-            var result = new List<ManagedPlaylistInfo>();
-            foreach (var p in playlists)
-            {
-                var childCount = _libraryManager.GetItemList(new InternalItemsQuery { ListIds = new[] { p.InternalId } }).Count();
-                result.Add(new ManagedPlaylistInfo
-                {
-                    Id = p.Id.ToString("N"),
-                    Name = p.Name ?? "",
-                    ItemCount = childCount
-                });
-            }
-            result.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
-            return new GetManagedPlaylistsResponse { Playlists = result };
         }
 
         public object Post(DeleteManagedTagRequest request)

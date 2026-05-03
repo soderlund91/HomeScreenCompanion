@@ -122,12 +122,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             border: 1px solid rgba(126, 77, 172, 0.35);
         }
 
-        .tag-indicator.playlist {
-            color: #39e0bc;
-            background: rgba(57, 224, 182, 0.15);
-            border: 1px solid rgba(57, 224, 188, 0.35);
-        }
-
         .tag-indicator.homescreen {
             color: #4CAF50;
             background: rgba(76,175,80,0.15);
@@ -711,13 +705,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             if (criteria.length > 0) miFilters.push({ Operator: operator, Criteria: criteria, GroupOperator: groupOp });
         });
 
-        var playlistTab = row.querySelector('.playlist-tab');
-        var enablePlaylist = playlistTab ? !!(playlistTab.querySelector('.chkEnablePlaylist') || {}).checked : false;
-        var playlistName = playlistTab ? ((playlistTab.querySelector('.txtPlaylistName') || {}).value || '') : '';
-        var playlistUserIds = playlistTab && playlistTab.dataset.playlistLoaded === '1'
-            ? Array.from(playlistTab.querySelectorAll('.chkPlaylistUser:checked')).map(function(c) { return c.value; })
-            : (function() { try { return JSON.parse(decodeURIComponent((playlistTab && playlistTab.dataset.playlistUserids) || '%5B%5D')); } catch(ex) { return []; } })();
-
         var hseTab = row.querySelector('.homescreen-tab');
         var enableHse = hseTab ? !!(hseTab.querySelector('.chkEnableHomeSection') || {}).checked : false;
         var hseLibraryId = hseTab && hseTab.dataset.hseLoaded === '1'
@@ -772,7 +759,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             OverrideWhenActive: overrideWhenActive, SourceType: st,
             Urls: urls, LocalSources: localSources, Limit: miLimit,
             MediaInfoFilters: miFilters, MediaInfoConditions: [],
-            EnablePlaylist: enablePlaylist, PlaylistName: playlistName, PlaylistUserIds: playlistUserIds,
             EnableHomeSection: enableHse, HomeSectionLibraryId: hseLibraryId,
             HomeSectionUserIds: hseUserIds, HomeSectionSettings: JSON.stringify(hseSettings),
             HomeSectionTracked: [], LastModified: new Date().toISOString(),
@@ -1347,9 +1333,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         if (tagConfig.EnableCollection) {
             indicatorsHtml += `<span class="tag-indicator collection"><i class="md-icon" style="font-size:1.1em;">library_books</i> Collection</span>`;
         }
-        if (tagConfig.EnablePlaylist) {
-            indicatorsHtml += `<span class="tag-indicator playlist"><i class="md-icon" style="font-size:1.1em;">queue_music</i> Playlist</span>`;
-        }
         if (tagConfig.EnableHomeSection) {
             indicatorsHtml += `<span class="tag-indicator homescreen"><i class="md-icon" style="font-size:1.1em;">home</i> Home Section</span>`;
         }
@@ -1396,7 +1379,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     <div class="tag-tab active" data-tab="general" style="padding: 8px 0; cursor: pointer; font-weight: bold; border-bottom: 2px solid #52B54B;">Source</div>
                     <div class="tag-tab" data-tab="tag" style="padding: 8px 0; cursor: pointer; opacity: 0.6; font-weight: bold; border-bottom: 2px solid transparent;">Tag</div>
                     <div class="tag-tab" data-tab="collection" style="padding: 8px 0; cursor: pointer; opacity: 0.6; font-weight: bold; border-bottom: 2px solid transparent;">Collection</div>
-                    <div class="tag-tab" data-tab="playlist" style="padding: 8px 0; cursor: pointer; opacity: 0.6; font-weight: bold; border-bottom: 2px solid transparent;">Playlist</div>
                     <div class="tag-tab" data-tab="schedule" style="padding: 8px 0; cursor: pointer; opacity: 0.6; font-weight: bold; border-bottom: 2px solid transparent;">Schedule</div>
                     <div class="tag-tab" data-tab="advanced" style="padding: 8px 0; cursor: pointer; opacity: 0.6; font-weight: bold; border-bottom: 2px solid transparent;">Blacklist</div>
                     <div class="tag-tab" data-tab="homescreen" style="padding: 8px 0; cursor: pointer; opacity: 0.6; font-weight: bold; border-bottom: 2px solid transparent;">Home Screen</div>
@@ -1452,7 +1434,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                         <div class="ollama-experimental-warning" style="display:${(tagConfig.AiProvider || 'OpenAI') === 'Ollama' ? 'flex' : 'none'}; align-items:flex-start; gap:8px; background:rgba(232,168,56,0.1); border:1px solid rgba(232,168,56,0.35); border-radius:4px; padding:10px 12px; margin-bottom:15px; font-size:0.85em; line-height:1.5;">
                             <i class="md-icon" style="font-size:1.1em; color:#e8a838; flex-shrink:0; margin-top:1px;">warning</i>
-                            <span style="opacity:0.85;"><strong>Experimental:</strong> Ollama support is experimental. Local models may return inaccurate IMDB IDs — the plugin will fall back to title matching, but results may vary depending on the model used.</span>
+                            <span style="opacity:0.85;"><strong>Experimental:</strong> Ollama support is experimental. Local models may return inaccurate IMDB IDs — the plugin will fall back to title matching, but results WILL vary depending on the model used. Testing shows that "gemini-3-flash-preview:cloud" is a good model to use. </span>
                         </div>
 
                         <div class="inputContainer" style="margin-bottom:15px;">
@@ -1674,29 +1656,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     </div>
                 </div>
 
-                <div class="tab-content playlist-tab" style="display:none;"
-                    data-playlist-userids="${encodeURIComponent(JSON.stringify(tagConfig.PlaylistUserIds || []))}"
-                    data-playlist-loaded="0">
-                    <div class="checkboxContainer checkboxContainer-withDescription">
-                        <label>
-                            <input is="emby-checkbox" type="checkbox" class="chkEnablePlaylist" ${tagConfig.EnablePlaylist ? 'checked' : ''} />
-                            <span>Create Playlist</span>
-                        </label>
-                        <div class="fieldDescription">Automatically create and maintain an Emby Playlist from these items.</div>
-                    </div>
-                    <div class="playlist-settings" style="margin-left:20px; padding-left:15px; border-left:2px solid var(--line-color); margin-top:10px; display:${tagConfig.EnablePlaylist ? 'block' : 'none'};">
-                        <div class="inputContainer">
-                            <input is="emby-input" type="text" class="txtPlaylistName" label="Playlist Name" value="${tagConfig.PlaylistName || ''}" placeholder="${labelName}" />
-                            <div class="fieldDescription">Leave empty to use Display Name.</div>
-                        </div>
-                        <div style="margin-top:15px;">
-                            <p style="margin:0 0 8px 0; font-size:0.9em; font-weight:bold; opacity:0.7;">Visible to users</p>
-                            <div class="fieldDescription" style="margin-bottom:8px;">Select which users can see this playlist. The first selected user will be the owner.</div>
-                            <div class="playlist-user-list-inner"><em style="opacity:0.5">Loading users...</em></div>
-                        </div>
-                    </div>
-                </div>
-
                 <div class="tab-content advanced-tab" style="display:none;">
                     <div class="inputContainer">
                         <p style="margin:0 0 5px 0; font-size:0.9em; font-weight:bold; opacity:0.7;">Blacklist / Ignore (IMDB IDs)</p>
@@ -1783,7 +1742,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
             var hasSchedule = row.querySelectorAll('.date-row').length > 0;
             var hasCollection = row.querySelector('.chkEnableCollection').checked;
-            var hasPlaylist = row.querySelector('.chkEnablePlaylist').checked;
             var hasHomeSection = row.querySelector('.chkEnableHomeSection').checked;
             var hasTag = row.querySelector('.chkEnableTag').checked;
             var overrideChk = row.querySelector('.chkOverrideWhenActive');
@@ -1808,9 +1766,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             if (hasCollection) {
                 html += `<span class="tag-indicator collection"><i class="md-icon" style="font-size:1.1em;">library_books</i> Collection</span>`;
             }
-            if (hasPlaylist) {
-                html += `<span class="tag-indicator playlist"><i class="md-icon" style="font-size:1.1em;">queue_music</i> Playlist</span>`;
-            }
             if (hasHomeSection) {
                 html += `<span class="tag-indicator homescreen"><i class="md-icon" style="font-size:1.1em;">home</i> Home Section</span>`;
             }
@@ -1832,11 +1787,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 row.querySelector('.tagname-tab').style.display = target === 'tag' ? 'block' : 'none';
                 row.querySelector('.schedule-tab').style.display = target === 'schedule' ? 'block' : 'none';
                 row.querySelector('.collection-tab').style.display = target === 'collection' ? 'block' : 'none';
-                row.querySelector('.playlist-tab').style.display = target === 'playlist' ? 'block' : 'none';
                 row.querySelector('.advanced-tab').style.display = target === 'advanced' ? 'block' : 'none';
                 row.querySelector('.homescreen-tab').style.display = target === 'homescreen' ? 'block' : 'none';
                 if (target === 'homescreen') initHomeSectionTab(row);
-                if (target === 'playlist') initPlaylistTab(row);
                 var activeTabEl = row.querySelector('.' + target + '-tab');
                 if (activeTabEl) activeTabEl.querySelectorAll('textarea.txtMiValue, textarea.txtTagBlacklist').forEach(function(ta) {
                     ta.style.height = 'auto';
@@ -1974,11 +1927,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             row.querySelector('.collection-settings').style.display = this.checked ? 'block' : 'none';
             updateBadges(row);
             updateHseSectionAvailability(row);
-        });
-
-        row.querySelector('.chkEnablePlaylist').addEventListener('change', function () {
-            row.querySelector('.playlist-settings').style.display = this.checked ? 'block' : 'none';
-            updateBadges(row);
         });
 
         row.querySelector('.chkOverrideWhenActive').addEventListener('change', function () {
@@ -2861,24 +2809,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             .catch(function() { return undefined; }); // ignorera nätverksfel tyst
     }
 
-    function initPlaylistTab(row) {
-        var tab = row.querySelector('.playlist-tab');
-        if (!tab || tab.dataset.playlistLoaded === '1') return;
-        tab.dataset.playlistLoaded = 'loading';
 
-        var savedUserIds = [];
-        try { savedUserIds = JSON.parse(decodeURIComponent(tab.dataset.playlistUserids || '%5B%5D')); } catch {}
-
-        getHseUsers().then(function(users) {
-            var html = '';
-            users.forEach(function(u) {
-                var chk = savedUserIds.indexOf(u.Id) !== -1 ? 'checked' : '';
-                html += '<div style="margin:4px 0;"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" is="emby-checkbox" class="chkPlaylistUser" value="' + u.Id + '" ' + chk + '/><span>' + u.Name + '</span></label></div>';
-            });
-            tab.querySelector('.playlist-user-list-inner').innerHTML = html || '<em style="opacity:0.5">No users found</em>';
-            tab.dataset.playlistLoaded = '1';
-        });
-    }
 
     function initHomeSectionTab(row) {
         var tab = row.querySelector('.homescreen-tab');
@@ -3070,13 +3001,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 if (criteria.length > 0) miFilters.push({ Operator: operator, Criteria: criteria, GroupOperator: groupOp });
             });
 
-            var plTab = row.querySelector('.playlist-tab');
-            var enablePl = plTab ? !!(plTab.querySelector('.chkEnablePlaylist') || {}).checked : false;
-            var plName = plTab ? ((plTab.querySelector('.txtPlaylistName') || {}).value || '') : '';
-            var plUserIds = plTab && plTab.dataset.playlistLoaded === '1'
-                ? Array.from(plTab.querySelectorAll('.chkPlaylistUser:checked')).map(function(c) { return c.value; })
-                : (function() { try { return JSON.parse(decodeURIComponent((plTab && plTab.dataset.playlistUserids) || '%5B%5D')); } catch { return []; } })();
-
             var hseTab = row.querySelector('.homescreen-tab');
             var enableHse = hseTab ? !!(hseTab.querySelector('.chkEnableHomeSection') || {}).checked : false;
             var hseLibraryId = hseTab && hseTab.dataset.hseLoaded === '1'
@@ -3121,7 +3045,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 CollectionTargetSeries:  !!(row.querySelector('.chkCollTargetSeries')  || {}).checked,
                 MediaInfoTargetEpisode: false, MediaInfoTargetSeason: false, MediaInfoTargetSeries: false,
                 MediaInfoTargetType: '', MediaInfoSeasonMode: false,
-                EnablePlaylist: enablePl, PlaylistName: plName, PlaylistUserIds: plUserIds,
                 EnableHomeSection: enableHse, HomeSectionLibraryId: hseLibraryId, HomeSectionUserIds: hseUserIds,
                 HomeSectionSettings: JSON.stringify(hseSettings),
                 HomeSectionTracked: hseTracked
@@ -3396,7 +3319,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     EnableTag: t.EnableTag !== false, EnableCollection: t.EnableCollection, CollectionName: t.CollectionName, CollectionDescription: t.CollectionDescription || '', CollectionPosterPath: t.CollectionPosterPath || '', OnlyCollection: t.OnlyCollection, OverrideWhenActive: t.OverrideWhenActive || false, LastModified: t.LastModified,
                     SourceType: t.SourceType || "External", MediaInfoConditions: t.MediaInfoConditions || [], MediaInfoFilters: t.MediaInfoFilters || [],
                     Limit: t.Limit || 0,
-                    EnablePlaylist: t.EnablePlaylist || false, PlaylistName: t.PlaylistName || '', PlaylistUserIds: t.PlaylistUserIds || [],
                     EnableHomeSection: t.EnableHomeSection || false, HomeSectionLibraryId: t.HomeSectionLibraryId || 'auto',
                     HomeSectionUserIds: t.HomeSectionUserIds || [], HomeSectionSettings: t.HomeSectionSettings || '{}',
                     HomeSectionTracked: t.HomeSectionTracked || [],

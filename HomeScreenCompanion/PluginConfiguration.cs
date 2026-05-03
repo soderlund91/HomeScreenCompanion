@@ -86,10 +86,6 @@ namespace HomeScreenCompanion
         public bool CollectionTargetSeason  { get; set; } = false;
         public bool CollectionTargetSeries  { get; set; } = false;
 
-        public bool EnablePlaylist { get; set; } = false;
-        public string PlaylistName { get; set; } = "";
-        public List<string> PlaylistUserIds { get; set; } = new List<string>();
-
         public bool EnableHomeSection { get; set; } = false;
         public List<string> HomeSectionUserIds { get; set; } = new List<string>();
         public string HomeSectionLibraryId { get; set; } = "auto";
