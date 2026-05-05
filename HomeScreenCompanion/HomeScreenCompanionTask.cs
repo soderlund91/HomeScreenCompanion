@@ -1226,6 +1226,7 @@ namespace HomeScreenCompanion
 
                 tagsRemoved += CleanupBoxSetTags(config, dryRun, cancellationToken);
                 if (!dryRun) ManageHomeSections(config, cancellationToken, debug, statsList);
+                CleanupDisabledPlaylists(config, dryRun);
                 SyncTopListFolders(config, dryRun);
 
                 progress.Report(100);
@@ -2355,7 +2356,7 @@ namespace HomeScreenCompanion
             };
             if (!dryRun && tagConfig.EnableHomeSection)
                 ManageHomeSections(config, cancellationToken, debug, new List<GroupRunStats> { _singleGs }, tagName);
-            
+            CleanupDisabledPlaylists(config, dryRun);
             SyncTopListFolders(config, dryRun);
 
             var elapsed = DateTime.Now - startTime;
@@ -2750,6 +2751,60 @@ namespace HomeScreenCompanion
                 }
             }
             return true;
+        }
+
+        private void CleanupDisabledPlaylists(PluginConfiguration config, bool dryRun)
+        {
+            bool configChanged = false;
+            foreach (var tc in config.Tags ?? new List<TagConfig>())
+            {
+                if (tc.PlaylistMappings == null || tc.PlaylistMappings.Count == 0) continue;
+
+                bool isGroupActive = tc.Active && IsScheduleActive(tc.ActiveIntervals);
+
+                if (!tc.EnablePlaylist || !isGroupActive)
+                {
+                    // Delete all playlists for this group (disabled or inactive)
+                    foreach (var mapping in tc.PlaylistMappings.ToList())
+                    {
+                        if (!string.IsNullOrEmpty(mapping.PlaylistId) && Guid.TryParse(mapping.PlaylistId, out var guid))
+                        {
+                            var pl = _libraryManager.GetItemById(guid);
+                            if (pl != null && !dryRun)
+                            {
+                                try { _libraryManager.DeleteItem(pl, new DeleteOptions { DeleteFileLocation = false }); }
+                                catch (Exception ex) { LogSummary($"  ! Could not delete playlist: {ex.Message}", "Warn"); }
+                            }
+                        }
+                    }
+                    if (!dryRun) tc.PlaylistMappings.Clear();
+                    configChanged = true;
+                    LogSummary($"  ! Removed playlists for {(tc.EnablePlaylist ? "inactive" : "disabled")} group '{tc.Name ?? tc.Tag}'", "Info");
+                }
+                else
+                {
+                    // Delete playlists for users that have been unchecked from PlaylistUserIds
+                    var activeUserIds = new HashSet<string>(tc.PlaylistUserIds ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+                    var orphans = tc.PlaylistMappings.Where(m => !activeUserIds.Contains(m.UserId)).ToList();
+                    foreach (var orphan in orphans)
+                    {
+                        if (!string.IsNullOrEmpty(orphan.PlaylistId) && Guid.TryParse(orphan.PlaylistId, out var guid))
+                        {
+                            var pl = _libraryManager.GetItemById(guid);
+                            if (pl != null && !dryRun)
+                            {
+                                try { _libraryManager.DeleteItem(pl, new DeleteOptions { DeleteFileLocation = false }); }
+                                catch (Exception ex) { LogSummary($"  ! Could not delete orphaned playlist: {ex.Message}", "Warn"); }
+                            }
+                        }
+                        if (!dryRun) tc.PlaylistMappings.Remove(orphan);
+                        configChanged = true;
+                        LogSummary($"  ! Removed playlist for deselected user {orphan.UserId}", "Info");
+                    }
+                }
+            }
+            if (configChanged && !dryRun)
+                Plugin.Instance?.SaveConfiguration();
         }
 
         // Runs once per full/single run — removes the BoxSet tag from any BoxSet that is no longer a target,

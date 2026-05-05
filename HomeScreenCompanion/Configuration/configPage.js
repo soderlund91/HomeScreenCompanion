@@ -151,9 +151,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }
 
         .tag-indicator.playlist {
-            color: #2196a8;
-            background: rgba(33, 150, 168, 0.15);
-            border: 1px solid rgba(33, 150, 168, 0.35);
+            color: #2db396;
+            background: rgba(45, 184, 154, 0.15);
+            border: 1px solid rgba(43, 190, 154, 0.35);
         }
 
         .tag-indicator.toplist {
@@ -1357,6 +1357,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }
         if (tagConfig.EnableTag) {
             indicatorsHtml += `<span class="tag-indicator tag"><i class="md-icon" style="font-size:1.1em;">label</i> Tag</span>`;
+        }
+        if (tagConfig.EnablePlaylist) {
+            indicatorsHtml += `<span class="tag-indicator playlist"><i class="md-icon" style="font-size:1.1em;">queue_music</i> Playlist</span>`;
         }
         if (_topListTagNames.has(tagName.toLowerCase())) {
             indicatorsHtml += `<span class="tag-indicator toplist"><i class="md-icon" style="font-size:1.1em;">format_list_numbered</i> Top-List</span>`;
