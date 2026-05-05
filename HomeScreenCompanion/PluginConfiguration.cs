@@ -92,7 +92,19 @@ namespace HomeScreenCompanion
         public string HomeSectionSettings { get; set; } = "{}";
         public List<HomeSectionTracking> HomeSectionTracked { get; set; } = new List<HomeSectionTracking>();
 
+        public bool EnablePlaylist { get; set; } = false;
+        public string PlaylistName { get; set; } = "";
+        public List<string> PlaylistUserIds { get; set; } = new List<string>();
+        public List<PlaylistMapping> PlaylistMappings { get; set; } = new List<PlaylistMapping>();
+
         public DateTime LastModified { get; set; } = DateTime.MinValue;
+    }
+
+    public class PlaylistMapping
+    {
+        public string UserId { get; set; } = "";
+        public string PlaylistId { get; set; } = ""; // Guid of the playlist BaseItem
+        public List<long> LastSyncedItemIds { get; set; } = new List<long>(); // media InternalIds from last sync
     }
 
     public class TopListHomeSection

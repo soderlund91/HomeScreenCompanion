@@ -1,5 +1,6 @@
 ﻿using MediaBrowser.Common.Net;
 using MediaBrowser.Controller.Collections;
+using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
@@ -28,6 +29,7 @@ namespace HomeScreenCompanion
         private readonly IJsonSerializer _jsonSerializer;
         private readonly ILogger _logger;
         private readonly ILibraryMonitor _libraryMonitor;
+        private readonly IPlaylistManager _playlistManager;
 
         public static HomeScreenCompanionTask? Instance { get; private set; }
         public static string LastRunStatus { get; private set; } = "Unknown (resets at server restart)";
@@ -88,7 +90,7 @@ namespace HomeScreenCompanion
             public int GroupTotal;
         }
 
-        public HomeScreenCompanionTask(ILibraryManager libraryManager, ICollectionManager collectionManager, IUserManager userManager, IUserDataManager userDataManager, IHttpClient httpClient, IJsonSerializer jsonSerializer, ILogManager logManager, ILibraryMonitor libraryMonitor)
+        public HomeScreenCompanionTask(ILibraryManager libraryManager, ICollectionManager collectionManager, IPlaylistManager playlistManager, IUserManager userManager, IUserDataManager userDataManager, IHttpClient httpClient, IJsonSerializer jsonSerializer, ILogManager logManager, ILibraryMonitor libraryMonitor)
         {
             _libraryManager = libraryManager;
             _collectionManager = collectionManager;
@@ -98,6 +100,7 @@ namespace HomeScreenCompanion
             _jsonSerializer = jsonSerializer;
             _logger = logManager.GetLogger("HomeScreenCompanion");
             _libraryMonitor = libraryMonitor;
+            _playlistManager = playlistManager;
             Instance = this;
         }
 
@@ -2113,6 +2116,197 @@ namespace HomeScreenCompanion
                     LogSummary($"  ! Collection error: {ex.Message}", "Warn");
                     LastRunStatus = $"Success ({DateTime.Now:HH:mm})";
                     return (true, $"{matchedLocalItems.Count} matched, {tagsAdded}↑ {tagsRemoved}↓ tags — collection error: {ex.Message}");
+                }
+            }
+
+            // Playlist sync — one individual playlist per user in PlaylistUserIds
+            if (tagConfig.EnablePlaylist && !dryRun)
+            {
+                try
+                {
+                    // Deduplicate — pick one physical version per logical movie (IMDb > TMDb > InternalId)
+                    var seenPlKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    var desiredPlIds = new HashSet<long>();
+                    foreach (var item in collectionOutputItems)
+                    {
+                        var key = item.GetProviderId("Imdb")
+                               ?? item.GetProviderId("Tmdb")
+                               ?? item.InternalId.ToString();
+                        if (seenPlKeys.Add(key))
+                            desiredPlIds.Add(item.InternalId);
+                    }
+                    bool plMappingChanged = false;
+                    foreach (var userId in tagConfig.PlaylistUserIds)
+                    {
+                        if (!Guid.TryParse(userId, out var userGuid)) continue;
+                        var plUser = _userManager.GetUserById(userGuid);
+                        if (plUser == null) continue;
+
+                        var plName = string.IsNullOrWhiteSpace(tagConfig.PlaylistName) ? tagConfig.Name : tagConfig.PlaylistName;
+
+                        // 1. Try to find playlist by stored ID (most reliable)
+                        var mapping = tagConfig.PlaylistMappings?.FirstOrDefault(m =>
+                            string.Equals(m.UserId, userId, StringComparison.OrdinalIgnoreCase));
+
+                        BaseItem? existingPlaylist = null;
+                        if (mapping != null && Guid.TryParse(mapping.PlaylistId, out var storedGuid))
+                        {
+                            var candidate = _libraryManager.GetItemById(storedGuid);
+                            if (candidate != null && candidate.GetType().Name.Contains("Playlist"))
+                                existingPlaylist = candidate;
+                        }
+
+                        // 2. Name-based recovery: only when a mapping existed but the stored playlist is gone.
+                        // Skipped when mapping == null (user has never had a playlist) to prevent
+                        // accidentally claiming another user's same-named playlist.
+                        if (existingPlaylist == null && mapping != null)
+                        {
+                            var claimedByOthers = (tagConfig.PlaylistMappings ?? new List<PlaylistMapping>())
+                                .Where(m => !string.Equals(m.UserId, userId, StringComparison.OrdinalIgnoreCase)
+                                         && Guid.TryParse(m.PlaylistId, out _))
+                                .Select(m => Guid.Parse(m.PlaylistId))
+                                .ToHashSet();
+
+                            var plQuery = _libraryManager.QueryItems(new InternalItemsQuery
+                            {
+                                IncludeItemTypes = new[] { "Playlist" },
+                                SearchTerm = plName,
+                                Limit = 10
+                            });
+                            existingPlaylist = plQuery.Items.FirstOrDefault(p =>
+                                p.Name.Equals(plName, StringComparison.OrdinalIgnoreCase)
+                                && !claimedByOthers.Contains(p.Id));
+
+                            if (existingPlaylist != null)
+                            {
+                                mapping.PlaylistId = existingPlaylist.Id.ToString();
+                                plMappingChanged = true;
+                            }
+                        }
+
+                        if (existingPlaylist == null)
+                        {
+                            // 3. Create new playlist
+                            await _playlistManager.CreatePlaylist(new PlaylistCreationRequest
+                            {
+                                Name = plName,
+                                ItemIdList = desiredPlIds.ToArray(),
+                                User = plUser
+                            });
+
+                            if (mapping == null)
+                            {
+                                mapping = new PlaylistMapping { UserId = userId };
+                                tagConfig.PlaylistMappings ??= new List<PlaylistMapping>();
+                                tagConfig.PlaylistMappings.Add(mapping);
+                            }
+
+                            // CreatePlaylist may return Id as InternalId (long) rather than a Guid depending
+                            // on Emby version — confirm the real Guid by querying back by name immediately.
+                            // Exclude playlists already claimed by other users in this run.
+                            var claimedAtCreate = (tagConfig.PlaylistMappings ?? new List<PlaylistMapping>())
+                                .Where(m => !string.Equals(m.UserId, userId, StringComparison.OrdinalIgnoreCase)
+                                         && Guid.TryParse(m.PlaylistId, out _))
+                                .Select(m => Guid.Parse(m.PlaylistId))
+                                .ToHashSet();
+
+                            var confirmQuery = _libraryManager.QueryItems(new InternalItemsQuery
+                            {
+                                IncludeItemTypes = new[] { "Playlist" },
+                                SearchTerm = plName,
+                                Limit = 20
+                            });
+                            var newPl = confirmQuery.Items
+                                .Where(p => p.Name.Equals(plName, StringComparison.OrdinalIgnoreCase)
+                                         && !claimedAtCreate.Contains(p.Id))
+                                .OrderByDescending(p => p.DateCreated)
+                                .FirstOrDefault();
+
+                            if (newPl != null)
+                            {
+                                mapping.PlaylistId = newPl.Id.ToString();
+                                plMappingChanged = true;
+
+                                // Transfer ownership so the playlist belongs to the target user, not admin.
+                                try
+                                {
+                                    dynamic dynPl = newPl;
+                                    bool ownerSet = false;
+                                    try { dynPl.OwnerUserId = plUser.Id; ownerSet = true; } catch { }
+                                    if (!ownerSet) try { dynPl.UserId = plUser.Id; ownerSet = true; } catch { }
+                                    if (ownerSet)
+                                        _libraryManager.UpdateItem(newPl, newPl.Parent, ItemUpdateType.MetadataEdit, null);
+                                    LogSummary($"  ! Created playlist '{plName}' for {plUser.Name} id={newPl.Id} (owner {(ownerSet ? "set" : "not set")})", "Info");
+                                }
+                                catch (Exception ex)
+                                {
+                                    LogSummary($"  ! Created playlist '{plName}' for {plUser.Name} but could not set owner: {ex.Message}", "Warn");
+                                }
+                            }
+                            else
+                            {
+                                LogSummary($"  ! Created playlist '{plName}' for {plUser.Name} but could not confirm ID — will retry on next sync", "Warn");
+                            }
+                        }
+                        else
+                        {
+                            // Full sync: always read actual playlist contents and diff against desired.
+                            // This ensures additions and deletions from the source are always reflected,
+                            // regardless of prior sync state or manual playlist edits.
+                            var playlistItems = _libraryManager.GetItemList(new InternalItemsQuery { ListIds = new[] { existingPlaylist.InternalId } });
+
+                            // Build map: inner media item InternalId -> playlist entry ID
+                            var currentEntryMap = new Dictionary<long, long>();
+                            foreach (var pItem in playlistItems)
+                            {
+                                long entryId = 0;
+                                try { entryId = pItem.ListItemEntryId; } catch { }
+                                if (entryId == 0) entryId = pItem.InternalId;
+
+                                long innerItemId = pItem.InternalId;
+                                if (pItem.GetType().Name.Contains("PlaylistItem"))
+                                {
+                                    try { var temp = ((dynamic)pItem).Item; if (temp != null) innerItemId = ((BaseItem)temp).InternalId; } catch { }
+                                }
+
+                                currentEntryMap.TryAdd(innerItemId, entryId);
+                            }
+
+                            var currentItemIds = currentEntryMap.Keys.ToHashSet();
+
+                            var entryIdsToRemove = currentItemIds
+                                .Where(id => !desiredPlIds.Contains(id))
+                                .Select(id => currentEntryMap[id])
+                                .ToList();
+
+                            var toAdd = desiredPlIds.Where(id => !currentItemIds.Contains(id)).ToArray();
+
+                            if (entryIdsToRemove.Count > 0)
+                            {
+                                try {
+                                    await _playlistManager.RemoveFromPlaylist(existingPlaylist.InternalId, entryIdsToRemove.ToArray());
+                                    LogSummary($"  ! Removed {entryIdsToRemove.Count} item(s) from playlist '{plName}'", "Info");
+                                } catch (Exception ex) {
+                                    LogSummary($"  ! Error removing items from playlist: {ex.Message}", "Warn");
+                                }
+                            }
+
+                            if (toAdd.Length > 0)
+                            {
+                                _playlistManager.AddToPlaylist(existingPlaylist.InternalId, toAdd, plUser);
+                                LogSummary($"  ! Added {toAdd.Length} item(s) to playlist '{plName}'", "Info");
+                            }
+
+                            if (entryIdsToRemove.Count > 0 || toAdd.Length > 0)
+                                plMappingChanged = true;
+                        }
+                    }
+                    if (plMappingChanged)
+                        Plugin.Instance?.SaveConfiguration();
+                }
+                catch (Exception ex)
+                {
+                    LogSummary($"  ! Playlist error: {ex.Message}", "Warn");
                 }
             }
 

@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Common.Net;
+using HttpRequestOptions = MediaBrowser.Common.Net.HttpRequestOptions;
 using MediaBrowser.Model.Serialization;
 
 namespace HomeScreenCompanion
@@ -361,7 +362,7 @@ namespace HomeScreenCompanion
             return await FetchTraktRobust(options);
         }
 
-        private async Task<List<ExternalItemDto>> FetchTraktRobust(HttpRequestOptions options)
+        private async Task<List<ExternalItemDto>> FetchTraktRobust(MediaBrowser.Common.Net.HttpRequestOptions options)
         {
             try
             {

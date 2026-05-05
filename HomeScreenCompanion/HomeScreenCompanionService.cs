@@ -1,4 +1,5 @@
-﻿using MediaBrowser.Common.Net;
+using MediaBrowser.Common.Net;
+using HttpRequestOptions = MediaBrowser.Common.Net.HttpRequestOptions;
 using SkiaSharp;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -384,7 +385,7 @@ public class HomeScreenCompanionService : IService
                 var fileName = $"{Guid.NewGuid():N}{ext}";
                 var filePath = Path.Combine(imagesDir, fileName);
 
-                using (var stream = await _httpClient.Get(new HttpRequestOptions { Url = request.Url, CancellationToken = CancellationToken.None }))
+                using (var stream = await _httpClient.Get(new MediaBrowser.Common.Net.HttpRequestOptions { Url = request.Url, CancellationToken = CancellationToken.None }))
                 using (var fs = File.Create(filePath))
                 {
                     await stream.CopyToAsync(fs);
