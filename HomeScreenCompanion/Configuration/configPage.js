@@ -6,6 +6,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     var originalConfigState = null;
     var statusRequestId = 0;
 
+    var DEFAULT_AI_SYSTEM_PROMPT = 'You are a movie and TV show recommendation assistant. Respond ONLY with a valid JSON array. No explanation, no markdown, no code fences. Each item must have these fields: "title" (string, required), "year" (integer or null), "imdb_id" (string starting with "tt" if known, otherwise null), "type" ("movie" or "show"). Return exactly the items requested. Do not add any commentary. Example: [{"title":"Inception","year":2010,"imdb_id":"tt1375666","type":"movie"}]';
+
+    function updateSystemPromptResetBtn(view) {
+        var ta = view.querySelector('#txtAiSystemPrompt');
+        var btn = view.querySelector('#btnResetAiSystemPrompt');
+        if (!ta || !btn) return;
+        btn.style.display = ta.value.trim() !== DEFAULT_AI_SYSTEM_PROMPT.trim() ? '' : 'none';
+    }
+
     function applyPluginTheme() {
         var candidates = ['.skinHeader', '.mainDrawer', '.contentScrollSlider', 'body'];
         var bg = null;
@@ -5738,6 +5747,18 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var settingsTab = view.querySelector('#tabSettings');
             settingsTab.addEventListener('input',  changeHandler, { signal: _signal });
             settingsTab.addEventListener('change', changeHandler, { signal: _signal });
+
+            var spTa = view.querySelector('#txtAiSystemPrompt');
+            var resetBtn = view.querySelector('#btnResetAiSystemPrompt');
+            if (spTa && resetBtn) {
+                spTa.addEventListener('input', function () { updateSystemPromptResetBtn(view); }, { signal: _signal });
+                resetBtn.addEventListener('click', function () {
+                    spTa.value = DEFAULT_AI_SYSTEM_PROMPT;
+                    updateSystemPromptResetBtn(view);
+                    changeHandler();
+                }, { signal: _signal });
+            }
+
             form.addEventListener('click', (e) => {
                 var dayBtn = e.target.closest('.day-toggle');
                 if (dayBtn) dayBtn.classList.toggle('active');
@@ -5946,7 +5967,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             var gmEl = view.querySelector('#txtGeminiApiKey'); if (gmEl) gmEl.value = config.GeminiApiKey || '';
                             var olEl = view.querySelector('#txtOllamaBaseUrl'); if (olEl) olEl.value = config.OllamaBaseUrl || 'http://localhost:11434';
                             var omEl = view.querySelector('#txtOllamaModel'); if (omEl) omEl.value = config.OllamaModel || 'llama3.2';
-                            var spEl = view.querySelector('#txtAiSystemPrompt'); if (spEl) spEl.value = config.AiSystemPrompt || '';
+                            var spEl = view.querySelector('#txtAiSystemPrompt'); if (spEl) spEl.value = config.AiSystemPrompt || ''; updateSystemPromptResetBtn(view);
                             view.querySelector('#chkExtendedConsoleOutput').checked = config.ExtendedConsoleOutput || false;
                             view.querySelector('#chkDryRunMode').checked = config.DryRunMode || false;
                             view.querySelector('#chkPreserveTagsOnEmptyResult').checked = config.PreserveTagsOnEmptyResult !== false;
@@ -6218,7 +6239,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var gmElInit = view.querySelector('#txtGeminiApiKey'); if (gmElInit) gmElInit.value = config.GeminiApiKey || '';
                 var olElInit = view.querySelector('#txtOllamaBaseUrl'); if (olElInit) olElInit.value = config.OllamaBaseUrl || 'http://localhost:11434';
                 var omElInit = view.querySelector('#txtOllamaModel'); if (omElInit) omElInit.value = config.OllamaModel || 'llama3.2';
-                var spElInit = view.querySelector('#txtAiSystemPrompt'); if (spElInit) spElInit.value = config.AiSystemPrompt || '';
+                var spElInit = view.querySelector('#txtAiSystemPrompt'); if (spElInit) spElInit.value = config.AiSystemPrompt || ''; updateSystemPromptResetBtn(view);
                 view.querySelector('#chkExtendedConsoleOutput').checked = config.ExtendedConsoleOutput || false;
                 view.querySelector('#chkDryRunMode').checked = config.DryRunMode || false;
                 view.querySelector('#chkPreserveTagsOnEmptyResult').checked = config.PreserveTagsOnEmptyResult || false;
