@@ -7,7 +7,6 @@ using MediaBrowser.Model.Serialization;
 using System;
 using System.IO;
 using System.Linq;
-using System.Text.Json;
 
 namespace HomeScreenCompanion
 {

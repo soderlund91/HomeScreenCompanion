@@ -1,7 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFramework>net6.0</TargetFramework>
+		<TargetFramework>netstandard2.0</TargetFramework>
+		<LangVersion>latest</LangVersion>
 		<ImplicitUsings>disable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
@@ -30,10 +31,13 @@
 	</ItemGroup>
 
 	<ItemGroup>
-	  <Reference Include="SkiaSharp">
-	    <HintPath>$(AppData)\Emby-Server\system\SkiaSharp.dll</HintPath>
-	    <Private>False</Private>
-	  </Reference>
+	  <PackageReference Include="SkiaSharp" Version="2.88.0" />
+	  <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
+	  <!-- 4.6.0 provides assembly version 4.0.2.0 which matches MediaBrowser SDK's dependency. -->
+	  <PackageReference Include="System.Memory" Version="4.6.0" />
+	</ItemGroup>
+
+	<ItemGroup>
 	  <Reference Include="MediaBrowser.Common">
 	    <HintPath>$(AppData)\Emby-Server\system\MediaBrowser.Common.dll</HintPath>
 	    <Private>False</Private>
