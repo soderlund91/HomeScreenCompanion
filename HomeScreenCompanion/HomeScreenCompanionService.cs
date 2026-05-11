@@ -1113,7 +1113,7 @@ public class HomeScreenCompanionService : IService
 
                 // First pass: deduplicate and preserve query order
                 var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var selected = new List<(string BaseName, string FilePath, string? PosterPath)>();
+                var selected = new List<(string BaseName, string FilePath, string? PosterPath, string? ThumbPath)>();
                 foreach (var item in items)
                 {
                     if (string.IsNullOrEmpty(item.Path)) continue;
@@ -1122,7 +1122,8 @@ public class HomeScreenCompanionService : IService
                         baseName += $" ({item.ProductionYear})";
                     if (!seenKeys.Add(baseName)) continue;
                     var posterPath = item.ImageInfos?.FirstOrDefault(i => i.Type == ImageType.Primary)?.Path;
-                    selected.Add((baseName, item.Path, posterPath));
+                    var thumbPath  = item.ImageInfos?.FirstOrDefault(i => i.Type == ImageType.Thumb)?.Path;
+                    selected.Add((baseName, item.Path, posterPath, thumbPath));
                 }
 
                 // Apply max-items limit before writing
@@ -1142,6 +1143,9 @@ public class HomeScreenCompanionService : IService
                     File.WriteAllText(Path.Combine(folderPath, fileName + ".nfo"), nfo);
                     if (!string.IsNullOrEmpty(entry.PosterPath) && File.Exists(entry.PosterPath))
                         try { CreateRankedPoster(entry.PosterPath, count, Path.Combine(folderPath, fileName + ".jpg"), request.BadgeStyle); }
+                        catch { }
+                    if (!string.IsNullOrEmpty(entry.ThumbPath) && File.Exists(entry.ThumbPath))
+                        try { CreateRankedPoster(entry.ThumbPath, count, Path.Combine(folderPath, fileName + "-thumb.jpg"), request.BadgeStyle); }
                         catch { }
                 }
 
@@ -1446,7 +1450,7 @@ public class HomeScreenCompanionService : IService
 
                 var items    = request.Items ?? new List<ManualTopListItem>();
                 var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var selected = new List<(string BaseName, string FilePath, string? PosterPath)>();
+                var selected = new List<(string BaseName, string FilePath, string? PosterPath, string? ThumbPath)>();
 
                 foreach (var entry in items)
                 {
@@ -1458,7 +1462,8 @@ public class HomeScreenCompanionService : IService
                         baseName += $" ({mediaItem.ProductionYear})";
                     if (!seenKeys.Add(baseName)) continue;
                     var posterPath = mediaItem.ImageInfos?.FirstOrDefault(i => i.Type == ImageType.Primary)?.Path;
-                    selected.Add((baseName, mediaItem.Path, posterPath));
+                    var thumbPath  = mediaItem.ImageInfos?.FirstOrDefault(i => i.Type == ImageType.Thumb)?.Path;
+                    selected.Add((baseName, mediaItem.Path, posterPath, thumbPath));
                 }
 
                 int digits = Math.Max(2, selected.Count.ToString().Length);
@@ -1472,6 +1477,9 @@ public class HomeScreenCompanionService : IService
                     File.WriteAllText(Path.Combine(folderPath, entry.BaseName + ".nfo"), nfo);
                     if (!string.IsNullOrEmpty(entry.PosterPath) && File.Exists(entry.PosterPath))
                         try { CreateRankedPoster(entry.PosterPath, count, Path.Combine(folderPath, entry.BaseName + ".jpg"), request.BadgeStyle); }
+                        catch { }
+                    if (!string.IsNullOrEmpty(entry.ThumbPath) && File.Exists(entry.ThumbPath))
+                        try { CreateRankedPoster(entry.ThumbPath, count, Path.Combine(folderPath, entry.BaseName + "-thumb.jpg"), request.BadgeStyle); }
                         catch { }
                 }
 

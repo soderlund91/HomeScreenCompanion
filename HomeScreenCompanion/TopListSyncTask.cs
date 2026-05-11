@@ -324,7 +324,16 @@ namespace HomeScreenCompanion
                                 var foldersProp = policy.GetType().GetProperty("EnabledFolders");
                                 var folders = foldersProp?.GetValue(policy) as string[] ?? Array.Empty<string>();
 
-                                var missing = allTopListLibIds
+                                var userIdStr = user.Id.ToString();
+                                var userTopListLibIds = topLists
+                                    .Where(t => !string.IsNullOrEmpty(t.HomeSectionLibraryId) && t.HomeSectionLibraryId != "auto")
+                                    .Where(t => t.HomeSectionUserIds != null && t.HomeSectionUserIds.Any(uid =>
+                                        string.Equals(uid, userIdStr, StringComparison.OrdinalIgnoreCase) ||
+                                        string.Equals(uid.Replace("-", ""), userIdStr.Replace("-", ""), StringComparison.OrdinalIgnoreCase)))
+                                    .Select(t => t.HomeSectionLibraryId.Trim().ToLowerInvariant())
+                                    .Distinct().ToList();
+
+                                var missing = userTopListLibIds
                                     .Where(id => !folders.Any(f => string.Equals(f, id, StringComparison.OrdinalIgnoreCase)))
                                     .ToList();
                                 if (missing.Count == 0) continue;
