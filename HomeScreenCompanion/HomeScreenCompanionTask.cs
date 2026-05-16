@@ -4231,7 +4231,7 @@ namespace HomeScreenCompanion
                 }
 
                 var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var selected = new List<(string BaseName, string FilePath, string? PosterPath)>();
+                var selected = new List<(string BaseName, string FilePath, string? PosterPath, string? ThumbPath)>();
                 foreach (var item in items)
                 {
                     if (string.IsNullOrEmpty(item.Path)) continue;
@@ -4240,7 +4240,8 @@ namespace HomeScreenCompanion
                         baseName += $" ({item.ProductionYear})";
                     if (!seenKeys.Add(baseName)) continue;
                     var posterPath = item.ImageInfos?.FirstOrDefault(i => i.Type == ImageType.Primary)?.Path;
-                    selected.Add((baseName, item.Path, posterPath));
+                    var thumbPath  = item.ImageInfos?.FirstOrDefault(i => i.Type == ImageType.Thumb)?.Path;
+                    selected.Add((baseName, item.Path, posterPath, thumbPath));
                 }
 
                 if (effectiveMaxItems > 0 && selected.Count > effectiveMaxItems)
