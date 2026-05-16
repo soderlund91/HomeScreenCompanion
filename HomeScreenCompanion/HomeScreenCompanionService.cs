@@ -1462,6 +1462,7 @@ public class HomeScreenCompanionService : IService
                 var items    = request.Items ?? new List<ManualTopListItem>();
                 var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var selected = new List<(string BaseName, string FilePath, string? PosterPath, string? ThumbPath)>();
+                var strmToOriginal = new Dictionary<string, BaseItem>(StringComparer.OrdinalIgnoreCase);
 
                 foreach (var entry in items)
                 {
@@ -1475,6 +1476,7 @@ public class HomeScreenCompanionService : IService
                     var posterPath = mediaItem.ImageInfos?.FirstOrDefault(i => i.Type == ImageType.Primary)?.Path;
                     var thumbPath  = mediaItem.ImageInfos?.FirstOrDefault(i => i.Type == ImageType.Thumb)?.Path;
                     selected.Add((baseName, mediaItem.Path, posterPath, thumbPath));
+                    strmToOriginal[Path.Combine(folderPath, baseName + ".strm")] = mediaItem;
                 }
 
                 int digits = Math.Max(2, selected.Count.ToString().Length);
@@ -1537,9 +1539,22 @@ public class HomeScreenCompanionService : IService
 
                     foreach (var li in libItems)
                     {
-                        if (!sortPaths.TryGetValue(li.Path, out var newSort)) continue;
-                        var prop = li.GetType().GetProperty("SortName");
-                        if (prop?.CanWrite == true) prop.SetValue(li, newSort);
+                        if (string.IsNullOrEmpty(li.Path)) continue;
+
+                        if (sortPaths.TryGetValue(li.Path, out var newSort))
+                        {
+                            var prop = li.GetType().GetProperty("SortName");
+                            if (prop?.CanWrite == true) prop.SetValue(li, newSort);
+                        }
+
+                        // Merge STRM as an alternate version of the original library movie.
+                        try
+                        {
+                            if (strmToOriginal.TryGetValue(li.Path, out var origItem) && li.Id != origItem.Id)
+                                _libraryManager.MergeItems(new[] { origItem, li });
+                        }
+                        catch { }
+
                         try { _libraryManager.UpdateItem(li, li.Parent, ItemUpdateType.MetadataEdit, null); }
                         catch { }
                     }
