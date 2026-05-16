@@ -1133,20 +1133,31 @@ public class HomeScreenCompanionService : IService
                 // Second pass: write .strm, .nfo and ranked poster
                 int digits = Math.Max(2, selected.Count.ToString().Length);
                 int count = 0;
-                foreach (var entry in selected)
+                var tempDir1 = Path.Combine(Path.GetTempPath(), "hsc_" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(tempDir1);
+                try
                 {
-                    count++;
-                    var sortPrefix = count.ToString().PadLeft(digits, '0');
-                    var fileName = entry.BaseName;
-                    File.WriteAllText(Path.Combine(folderPath, fileName + ".strm"), entry.FilePath);
-                    var nfo = $"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<movie>\n  <sorttitle>{sortPrefix}</sorttitle>\n  <lockedfields>SortName|Images</lockedfields>\n</movie>";
-                    File.WriteAllText(Path.Combine(folderPath, fileName + ".nfo"), nfo);
-                    if (!string.IsNullOrEmpty(entry.PosterPath) && File.Exists(entry.PosterPath))
-                        try { CreateRankedPoster(entry.PosterPath, count, Path.Combine(folderPath, fileName + ".jpg"), request.BadgeStyle); }
-                        catch { }
-                    if (!string.IsNullOrEmpty(entry.ThumbPath) && File.Exists(entry.ThumbPath))
-                        try { CreateRankedPoster(entry.ThumbPath, count, Path.Combine(folderPath, fileName + "-thumb.jpg"), request.BadgeStyle); }
-                        catch { }
+                    foreach (var entry in selected)
+                    {
+                        count++;
+                        var sortPrefix = count.ToString().PadLeft(digits, '0');
+                        var fileName = entry.BaseName;
+                        File.WriteAllText(Path.Combine(folderPath, fileName + ".strm"), entry.FilePath);
+                        var nfo = $"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<movie>\n  <sorttitle>{sortPrefix}</sorttitle>\n  <lockedfields>SortName|Images</lockedfields>\n</movie>";
+                        File.WriteAllText(Path.Combine(folderPath, fileName + ".nfo"), nfo);
+                        var localPoster = EnsureLocalImagePath(_httpClient, entry.PosterPath, tempDir1);
+                        if (!string.IsNullOrEmpty(localPoster))
+                            try { CreateRankedPoster(localPoster, count, Path.Combine(folderPath, fileName + ".jpg"), request.BadgeStyle); }
+                            catch { }
+                        var localThumb = EnsureLocalImagePath(_httpClient, entry.ThumbPath, tempDir1);
+                        if (!string.IsNullOrEmpty(localThumb))
+                            try { CreateRankedPoster(localThumb, count, Path.Combine(folderPath, fileName + "-thumb.jpg"), request.BadgeStyle); }
+                            catch { }
+                    }
+                }
+                finally
+                {
+                    try { Directory.Delete(tempDir1, true); } catch { }
                 }
 
                 return new PrepareTopListFolderResponse { Success = true, FolderPath = folderPath, FilesCreated = count };
@@ -1468,19 +1479,30 @@ public class HomeScreenCompanionService : IService
 
                 int digits = Math.Max(2, selected.Count.ToString().Length);
                 int count  = 0;
-                foreach (var entry in selected)
+                var tempDir2 = Path.Combine(Path.GetTempPath(), "hsc_" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(tempDir2);
+                try
                 {
-                    count++;
-                    var sortPrefix = count.ToString().PadLeft(digits, '0');
-                    File.WriteAllText(Path.Combine(folderPath, entry.BaseName + ".strm"), entry.FilePath);
-                    var nfo = $"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<movie>\n  <sorttitle>{sortPrefix}</sorttitle>\n  <lockedfields>SortName|Images</lockedfields>\n</movie>";
-                    File.WriteAllText(Path.Combine(folderPath, entry.BaseName + ".nfo"), nfo);
-                    if (!string.IsNullOrEmpty(entry.PosterPath) && File.Exists(entry.PosterPath))
-                        try { CreateRankedPoster(entry.PosterPath, count, Path.Combine(folderPath, entry.BaseName + ".jpg"), request.BadgeStyle); }
-                        catch { }
-                    if (!string.IsNullOrEmpty(entry.ThumbPath) && File.Exists(entry.ThumbPath))
-                        try { CreateRankedPoster(entry.ThumbPath, count, Path.Combine(folderPath, entry.BaseName + "-thumb.jpg"), request.BadgeStyle); }
-                        catch { }
+                    foreach (var entry in selected)
+                    {
+                        count++;
+                        var sortPrefix = count.ToString().PadLeft(digits, '0');
+                        File.WriteAllText(Path.Combine(folderPath, entry.BaseName + ".strm"), entry.FilePath);
+                        var nfo = $"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<movie>\n  <sorttitle>{sortPrefix}</sorttitle>\n  <lockedfields>SortName|Images</lockedfields>\n</movie>";
+                        File.WriteAllText(Path.Combine(folderPath, entry.BaseName + ".nfo"), nfo);
+                        var localPoster = EnsureLocalImagePath(_httpClient, entry.PosterPath, tempDir2);
+                        if (!string.IsNullOrEmpty(localPoster))
+                            try { CreateRankedPoster(localPoster, count, Path.Combine(folderPath, entry.BaseName + ".jpg"), request.BadgeStyle); }
+                            catch { }
+                        var localThumb = EnsureLocalImagePath(_httpClient, entry.ThumbPath, tempDir2);
+                        if (!string.IsNullOrEmpty(localThumb))
+                            try { CreateRankedPoster(localThumb, count, Path.Combine(folderPath, entry.BaseName + "-thumb.jpg"), request.BadgeStyle); }
+                            catch { }
+                    }
+                }
+                finally
+                {
+                    try { Directory.Delete(tempDir2, true); } catch { }
                 }
 
                 try
@@ -1532,6 +1554,29 @@ public class HomeScreenCompanionService : IService
             }
         }
 
+        internal static string EnsureLocalImagePath(IHttpClient httpClient, string path, string tempDir)
+        {
+            if (string.IsNullOrEmpty(path)) return null;
+            if (!path.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                return File.Exists(path) ? path : null;
+            try
+            {
+                var tempPath = Path.Combine(tempDir, Guid.NewGuid().ToString("N") + ".jpg");
+                using var stream = httpClient.Get(new MediaBrowser.Common.Net.HttpRequestOptions
+                {
+                    Url = path,
+                    CancellationToken = CancellationToken.None
+                }).GetAwaiter().GetResult();
+                using var fs = File.Create(tempPath);
+                stream.CopyTo(fs);
+                return File.Exists(tempPath) ? tempPath : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         internal static void CreateRankedPoster(string sourcePath, int rank, string outputPath, string badgeStyle = "neutral")
         {
             using var original = SKBitmap.Decode(sourcePath);
@@ -1541,8 +1586,9 @@ public class HomeScreenCompanionService : IService
             var canvas = surface.Canvas;
             canvas.DrawBitmap(original, 0, 0);
 
-            float radius = original.Width * 0.15f;
-            float margin = original.Width * 0.04f;
+            float shortSide = Math.Min(original.Width, original.Height);
+            float radius = shortSide * 0.15f;
+            float margin = shortSide * 0.04f;
             float cx = margin + radius;
             float cy = margin + radius;
 
