@@ -24,6 +24,7 @@ namespace HomeScreenCompanion
         private readonly ILibraryManager _libraryManager;
         private readonly ICollectionManager _collectionManager;
         private readonly IUserManager _userManager;
+        private readonly IUserViewManager _userViewManager;
         private readonly IUserDataManager _userDataManager;
         private readonly IHttpClient _httpClient;
         private readonly IJsonSerializer _jsonSerializer;
@@ -90,11 +91,12 @@ namespace HomeScreenCompanion
             public int GroupTotal;
         }
 
-        public HomeScreenCompanionTask(ILibraryManager libraryManager, ICollectionManager collectionManager, IPlaylistManager playlistManager, IUserManager userManager, IUserDataManager userDataManager, IHttpClient httpClient, IJsonSerializer jsonSerializer, ILogManager logManager, ILibraryMonitor libraryMonitor)
+        public HomeScreenCompanionTask(ILibraryManager libraryManager, ICollectionManager collectionManager, IPlaylistManager playlistManager, IUserManager userManager, IUserViewManager userViewManager, IUserDataManager userDataManager, IHttpClient httpClient, IJsonSerializer jsonSerializer, ILogManager logManager, ILibraryMonitor libraryMonitor)
         {
             _libraryManager = libraryManager;
             _collectionManager = collectionManager;
             _userManager = userManager;
+            _userViewManager = userViewManager;
             _userDataManager = userDataManager;
             _httpClient = httpClient;
             _jsonSerializer = jsonSerializer;
@@ -1228,6 +1230,7 @@ namespace HomeScreenCompanion
                 if (!dryRun) ManageHomeSections(config, cancellationToken, debug, statsList);
                 CleanupDisabledPlaylists(config, dryRun);
                 SyncTopListFolders(config, dryRun);
+                if (!dryRun) TopListSyncTask.SyncAll(_libraryManager, _userViewManager, _userManager, _jsonSerializer, cancellationToken);
 
                 progress.Report(100);
                 var elapsed = DateTime.Now - startTime;
@@ -4223,16 +4226,30 @@ namespace HomeScreenCompanion
 
                 int digits = Math.Max(2, selected.Count.ToString().Length);
                 int count = 0;
-                foreach (var entry in selected)
+                var tempDir = Path.Combine(Path.GetTempPath(), "hsc_" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(tempDir);
+                try
                 {
-                    count++;
-                    var sortPrefix = count.ToString().PadLeft(digits, '0');
-                    File.WriteAllText(Path.Combine(folderPath, entry.BaseName + ".strm"), entry.FilePath);
-                    var nfo = $"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<movie>\n  <sorttitle>{sortPrefix}</sorttitle>\n  <lockedfields>SortName|Images</lockedfields>\n</movie>";
-                    File.WriteAllText(Path.Combine(folderPath, entry.BaseName + ".nfo"), nfo);
-                    if (!string.IsNullOrEmpty(entry.PosterPath) && File.Exists(entry.PosterPath))
-                        try { HomeScreenCompanionService.CreateRankedPoster(entry.PosterPath, count, Path.Combine(folderPath, entry.BaseName + ".jpg"), badgeStyle); }
-                        catch { }
+                    foreach (var entry in selected)
+                    {
+                        count++;
+                        var sortPrefix = count.ToString().PadLeft(digits, '0');
+                        File.WriteAllText(Path.Combine(folderPath, entry.BaseName + ".strm"), entry.FilePath);
+                        var nfo = $"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<movie>\n  <sorttitle>{sortPrefix}</sorttitle>\n  <lockedfields>SortName|Images</lockedfields>\n</movie>";
+                        File.WriteAllText(Path.Combine(folderPath, entry.BaseName + ".nfo"), nfo);
+                        var localPoster = HomeScreenCompanionService.EnsureLocalImagePath(_httpClient, entry.PosterPath, tempDir);
+                        if (!string.IsNullOrEmpty(localPoster))
+                            try { HomeScreenCompanionService.CreateRankedPoster(localPoster, count, Path.Combine(folderPath, entry.BaseName + ".jpg"), badgeStyle); }
+                            catch { }
+                        var localThumb = HomeScreenCompanionService.EnsureLocalImagePath(_httpClient, entry.ThumbPath, tempDir);
+                        if (!string.IsNullOrEmpty(localThumb))
+                            try { HomeScreenCompanionService.CreateRankedPoster(localThumb, count, Path.Combine(folderPath, entry.BaseName + "-thumb.jpg"), badgeStyle); }
+                            catch { }
+                    }
+                }
+                finally
+                {
+                    try { Directory.Delete(tempDir, true); } catch { }
                 }
 
                 // Notify the file system monitor so Emby is aware of the changes

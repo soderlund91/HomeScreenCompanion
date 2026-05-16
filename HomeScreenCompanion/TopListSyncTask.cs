@@ -83,6 +83,13 @@ namespace HomeScreenCompanion
             Log($"Starting top-list sync  ·  {topLists.Count} top-list(s)");
             int totalUpdated = 0;
 
+            // Collect all configured top-list library IDs so each top-list always excludes
+            // its siblings, even if their libraries haven't been discovered via GetVirtualFolders yet.
+            var allTlLibIds = topLists
+                .Where(t => !string.IsNullOrEmpty(t.HomeSectionLibraryId) && t.HomeSectionLibraryId != "auto")
+                .Select(t => t.HomeSectionLibraryId.Trim().ToLowerInvariant())
+                .Distinct().ToList();
+
             foreach (var tl in topLists)
             {
                 Log($"  Processing: {tl.TagName ?? "(unnamed)"}");
@@ -172,6 +179,7 @@ namespace HomeScreenCompanion
                             .Select(s => s.Trim().ToLowerInvariant()).Where(s => s.Length > 0);
                         var mergedExcludeIds = allViewIds.Where(id => id != ownId)
                             .Concat(storedExclude.Where(id => id != ownId))
+                            .Concat(allTlLibIds.Where(id => id != ownId))
                             .Distinct().ToList();
                         var excludeStr = string.Join(",", mergedExcludeIds);
 

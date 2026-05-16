@@ -1143,6 +1143,9 @@ public class HomeScreenCompanionService : IService
                     if (!string.IsNullOrEmpty(entry.PosterPath) && File.Exists(entry.PosterPath))
                         try { CreateRankedPoster(entry.PosterPath, count, Path.Combine(folderPath, fileName + ".jpg"), request.BadgeStyle); }
                         catch { }
+                    if (!string.IsNullOrEmpty(entry.ThumbPath) && File.Exists(entry.ThumbPath))
+                        try { CreateRankedPoster(entry.ThumbPath, count, Path.Combine(folderPath, fileName + "-thumb.jpg"), request.BadgeStyle); }
+                        catch { }
                 }
 
                 return new PrepareTopListFolderResponse { Success = true, FolderPath = folderPath, FilesCreated = count };
@@ -1473,6 +1476,9 @@ public class HomeScreenCompanionService : IService
                     if (!string.IsNullOrEmpty(entry.PosterPath) && File.Exists(entry.PosterPath))
                         try { CreateRankedPoster(entry.PosterPath, count, Path.Combine(folderPath, entry.BaseName + ".jpg"), request.BadgeStyle); }
                         catch { }
+                    if (!string.IsNullOrEmpty(entry.ThumbPath) && File.Exists(entry.ThumbPath))
+                        try { CreateRankedPoster(entry.ThumbPath, count, Path.Combine(folderPath, entry.BaseName + "-thumb.jpg"), request.BadgeStyle); }
+                        catch { }
                 }
 
                 try
@@ -1524,6 +1530,29 @@ public class HomeScreenCompanionService : IService
             }
         }
 
+        internal static string EnsureLocalImagePath(IHttpClient httpClient, string path, string tempDir)
+        {
+            if (string.IsNullOrEmpty(path)) return null;
+            if (!path.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                return File.Exists(path) ? path : null;
+            try
+            {
+                var tempPath = Path.Combine(tempDir, Guid.NewGuid().ToString("N") + ".jpg");
+                using var stream = httpClient.Get(new MediaBrowser.Common.Net.HttpRequestOptions
+                {
+                    Url = path,
+                    CancellationToken = CancellationToken.None
+                }).GetAwaiter().GetResult();
+                using var fs = File.Create(tempPath);
+                stream.CopyTo(fs);
+                return File.Exists(tempPath) ? tempPath : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         internal static void CreateRankedPoster(string sourcePath, int rank, string outputPath, string badgeStyle = "neutral")
         {
             using var original = SKBitmap.Decode(sourcePath);
@@ -1533,8 +1562,9 @@ public class HomeScreenCompanionService : IService
             var canvas = surface.Canvas;
             canvas.DrawBitmap(original, 0, 0);
 
-            float radius = original.Width * 0.15f;
-            float margin = original.Width * 0.04f;
+            float shortSide = Math.Min(original.Width, original.Height);
+            float radius = shortSide * 0.15f;
+            float margin = shortSide * 0.04f;
             float cx = margin + radius;
             float cy = margin + radius;
 
