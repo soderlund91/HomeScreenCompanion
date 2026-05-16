@@ -4137,6 +4137,28 @@ namespace HomeScreenCompanion
 
             if (dryRun) return;
 
+            // Build lookup of original (non-strm) movies keyed by IMDb ID so we can link
+            // each top-list STRM item to its source as an Emby alternate version.
+            var topListsFolder = Path.Combine(dataPath, "toplists") + Path.DirectorySeparatorChar;
+            var origLookup = new Dictionary<string, BaseItem>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                foreach (var m in _libraryManager.GetItemList(new InternalItemsQuery
+                {
+                    IncludeItemTypes = new[] { "Movie" },
+                    Recursive = true,
+                    IsVirtualItem = false
+                }))
+                {
+                    if (string.IsNullOrEmpty(m.Path)) continue;
+                    if (m.Path.StartsWith(topListsFolder, StringComparison.OrdinalIgnoreCase)) continue;
+                    var imdb = m.GetProviderId("Imdb");
+                    if (!string.IsNullOrEmpty(imdb) && !origLookup.ContainsKey(imdb))
+                        origLookup[imdb] = m;
+                }
+            }
+            catch { }
+
             // Build set of tag names that are managed by the plugin's source groups.
             // Manual top-lists have names that don't match any source tag, so they are
             // excluded here — their .strm files are maintained by the UI (PrepareManualFolder)
@@ -4306,7 +4328,23 @@ namespace HomeScreenCompanion
                             li.ImageInfos = otherImages.ToArray();
                         }
 
-                        try { _libraryManager.UpdateItem(li, li.Parent, ItemUpdateType.ImageUpdate, null); }
+                        // Merge STRM as an alternate version of the original library movie.
+                        // MergeItems replicates what Emby does automatically when two video
+                        // files for the same film share a folder, but across different virtual
+                        // libraries.
+                        try
+                        {
+                            var strmImdb = li.GetProviderId("Imdb");
+                            if (!string.IsNullOrEmpty(strmImdb)
+                                && origLookup.TryGetValue(strmImdb, out var primary)
+                                && li.Id != primary.Id)
+                            {
+                                _libraryManager.MergeItems(new[] { primary, li });
+                            }
+                        }
+                        catch { }
+
+                        try { _libraryManager.UpdateItem(li, li.Parent, ItemUpdateType.MetadataEdit, null); }
                         catch { }
                     }
                 }
