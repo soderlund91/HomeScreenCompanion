@@ -2502,6 +2502,14 @@ namespace HomeScreenCompanion
                 if (!settingsDict.ContainsKey("SectionType"))
                     settingsDict["SectionType"] = (tc.EnableCollection && !string.IsNullOrEmpty(tc.CollectionName)) ? "boxset" : "items";
 
+                // Back-fill CustomName from group name/tag when not explicitly configured
+                if (!settingsDict.TryGetValue("CustomName", out var _existingCn) || string.IsNullOrWhiteSpace(_existingCn))
+                {
+                    var _defaultCn = !string.IsNullOrWhiteSpace(tc.Name) ? tc.Name : tc.Tag;
+                    if (!string.IsNullOrWhiteSpace(_defaultCn))
+                        settingsDict["CustomName"] = _defaultCn;
+                }
+
                 settingsDict.TryGetValue("SectionType", out var sectionType);
 
                 // For items-type sections, dynamically ensure all top-list libraries are excluded
@@ -2605,12 +2613,12 @@ namespace HomeScreenCompanion
                         var currentSections = _userManager.GetHomeSections(userInternalId, cancellationToken);
                         var allCurrentSections = currentSections?.Sections ?? Array.Empty<ContentSection>();
 
-                        // Hitta vår sektion: 1) via spårat ID, 2) via markör i Subtitle (skyddar mot att Emby tilldelar nytt ID vid omordning)
+                        // Hitta vår sektion: 1) via spårat ID, 2) via CustomName-fallback (skyddar mot att Emby tilldelar nytt ID vid omordning)
                         ContentSection? ownedSection = null;
                         if (tracked != null && !string.IsNullOrEmpty(tracked.SectionId) && !tracked.SectionId.StartsWith("hsc__"))
                             ownedSection = allCurrentSections.FirstOrDefault(s => s.Id == tracked.SectionId);
-                        if (ownedSection == null && !string.IsNullOrEmpty(sectionMarker))
-                            ownedSection = allCurrentSections.FirstOrDefault(s => s.Subtitle == sectionMarker);
+                        if (ownedSection == null && settingsDict.TryGetValue("CustomName", out var _hsFallbackName) && !string.IsNullOrEmpty(_hsFallbackName))
+                            ownedSection = allCurrentSections.FirstOrDefault(s => string.Equals(s.CustomName, _hsFallbackName, StringComparison.OrdinalIgnoreCase));
 
                         if (ownedSection != null)
                         {

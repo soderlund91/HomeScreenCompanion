@@ -109,8 +109,7 @@ namespace HomeScreenCompanion
                         var sections = userManager.GetHomeSections(uid, cancellationToken)?.Sections
                             ?? Array.Empty<ContentSection>();
 
-                        var owned = sections.FirstOrDefault(s => s.Id == tracking.SectionId)
-                            ?? sections.FirstOrDefault(s => s.Subtitle == sectionMarker);
+                        var owned = sections.FirstOrDefault(s => s.Id == tracking.SectionId);
                         if (owned == null) continue;
 
                         // Get ALL views for this user (includes Live TV) via IUserViewManager.
@@ -266,8 +265,7 @@ namespace HomeScreenCompanion
                         {
                             var uid = userManager.GetInternalId(tracking.UserId);
                             var secs = userManager.GetHomeSections(uid, cancellationToken)?.Sections ?? Array.Empty<ContentSection>();
-                            var owned = secs.FirstOrDefault(s => s.Id == tracking.SectionId)
-                                ?? secs.FirstOrDefault(s => s.Subtitle == tcMarker);
+                            var owned = secs.FirstOrDefault(s => s.Id == tracking.SectionId);
                             if (owned == null) continue;
                             var updatedSec = HomeScreenCompanionTask.BuildContentSection(jsonSerializer, tcSettings, string.Empty, owned);
                             typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSec, owned.Id);

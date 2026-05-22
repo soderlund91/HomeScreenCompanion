@@ -749,6 +749,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             else delete hseSettings['_queryExcludeViewIds'];
         } else {
             try { hseSettings = JSON.parse(decodeURIComponent((hseTab && hseTab.dataset.hseSettings) || '%7B%7D')); } catch(ex) {}
+            // Mirror the placeholder fallback from the loaded-form path: use group name as CustomName when not explicitly set
+            if (!hseSettings.CustomName) {
+                var _hseDefaultName = (row.querySelector('.txtEntryLabel') || {}).value
+                    || (row.querySelector('.txtTagName') || {}).value || '';
+                if (_hseDefaultName) hseSettings.CustomName = _hseDefaultName;
+            }
         }
 
         var urls = [];

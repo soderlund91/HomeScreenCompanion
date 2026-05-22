@@ -787,9 +787,9 @@ public class HomeScreenCompanionService : IService
                         var currentSections = _userManager.GetHomeSections(userInternalId, CancellationToken.None);
                         var allSections = currentSections?.Sections ?? Array.Empty<ContentSection>();
 
-                        ContentSection ownedSection =
-                            allSections.FirstOrDefault(s => s.Id == tracking.SectionId) ??
-                            allSections.FirstOrDefault(s => s.Subtitle == sectionMarker);
+                        ContentSection ownedSection = allSections.FirstOrDefault(s => s.Id == tracking.SectionId);
+                        if (ownedSection == null && settingsDict.TryGetValue("CustomName", out var _applyFallbackName) && !string.IsNullOrEmpty(_applyFallbackName))
+                            ownedSection = allSections.FirstOrDefault(s => string.Equals(s.CustomName, _applyFallbackName, StringComparison.OrdinalIgnoreCase));
 
                         if (ownedSection == null) continue;
 
@@ -1913,8 +1913,8 @@ public class HomeScreenCompanionService : IService
                         ContentSection ownedSection = null;
                         if (tracked != null && !string.IsNullOrEmpty(tracked.SectionId) && !tracked.SectionId.StartsWith("hsc__"))
                             ownedSection = allSections.FirstOrDefault(s => s.Id == tracked.SectionId);
-                        if (ownedSection == null)
-                            ownedSection = allSections.FirstOrDefault(s => s.Subtitle == sectionMarker);
+                        if (ownedSection == null && settingsDict.TryGetValue("CustomName", out var _tlFallbackName) && !string.IsNullOrEmpty(_tlFallbackName))
+                            ownedSection = allSections.FirstOrDefault(s => string.Equals(s.CustomName, _tlFallbackName, StringComparison.OrdinalIgnoreCase));
 
                         string trackId;
                         if (ownedSection != null)
