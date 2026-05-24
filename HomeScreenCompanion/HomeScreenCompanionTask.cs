@@ -3090,6 +3090,11 @@ namespace HomeScreenCompanion
                             extQuery.IsUnplayed = null;
                         }
                     }
+                    else if (existing?.Query != null)
+                    {
+                        // _queryIsPlayed saknas i inställningar — bevara befintligt värde istället för att tyst nollställa
+                        extQuery.IsPlayed = existing.Query.IsPlayed;
+                    }
 
                     // Generisk _query* → övriga ItemsQuery-properties
                     foreach (var key in settings.Keys.Where(k =>

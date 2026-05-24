@@ -2839,7 +2839,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         return String(sd);
                     })(),
                     '_queryIsPlayed': (section.Query != null && section.Query.IsPlayed === true) ? 'true'
-                                    : (section.Query != null && section.Query.IsUnplayed === true) ? 'false'
+                                    : (section.Query != null && (section.Query.IsUnplayed === true || section.Query.IsPlayed === false)) ? 'false'
                                     : ''
                 };
 
