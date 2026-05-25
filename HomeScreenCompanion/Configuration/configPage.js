@@ -346,7 +346,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         .search-input-wrapper .search-icon {
             position: absolute;
             left: 10px;
-            font-size: 1.2em;
+            font-size: 1em;
             opacity: 0.5;
             pointer-events: none;
         }
@@ -505,12 +505,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 0.85em;
+            font-size: 0.9em;
             border-top: 1px solid var(--line-color);
             box-sizing: border-box;
         }
         .plugin-footer .footer-version {
-            color: var(--plugin-popup-color);
+            color: var(--theme-text-secondary);
         }
         .plugin-footer .footer-sep {
             margin: 0 12px;
@@ -520,6 +520,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             color: #E67E22;
             text-decoration: none;
             font-weight: bold;
+        }
+        .plugin-footer .simple-link {
+            font-size: 1em;
+            transition: none;
+            transform: none;
+        }
+        .plugin-footer .simple-link:hover {
+            transform: none;
         }
     </style>`;
 
@@ -6263,7 +6271,23 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 view.querySelector('#btnBackupConfig').addEventListener('click', () => {
                     window.ApiClient.getPluginConfiguration(pluginId).then(config => {
-                        var json = JSON.stringify(config, null, 2);
+                        var backup = Object.assign({}, config);
+                        delete backup.TopLists;
+                        delete backup.HomeSyncEnabled;
+                        delete backup.HomeSyncSourceUserId;
+                        delete backup.HomeSyncTargetUserIds;
+                        delete backup.HomeSyncLibraryOrder;
+                        backup.Tags = (config.Tags || []).map(function (t) {
+                            var tag = Object.assign({}, t);
+                            delete tag.HomeSectionUserIds;
+                            delete tag.HomeSectionLibraryId;
+                            delete tag.HomeSectionSettings;
+                            delete tag.HomeSectionTracked;
+                            delete tag.PlaylistUserIds;
+                            delete tag.PlaylistMappings;
+                            return tag;
+                        });
+                        var json = JSON.stringify(backup, null, 2);
                         var blob = new Blob([json], { type: "application/json" });
                         var url = URL.createObjectURL(blob);
                         var a = document.createElement('a');
@@ -6293,7 +6317,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             view.querySelector('#chkPreserveTagsOnEmptyResult').checked = config.PreserveTagsOnEmptyResult !== false;
 
                             var container = view.querySelector('#tagListContainer'); container.innerHTML = '';
-                            _topListTagNames = new Set((config.TopLists || []).map(function (tl) { return (tl.TagName || '').toLowerCase(); }).filter(Boolean));
+                            if (config.TopLists) _topListTagNames = new Set(config.TopLists.map(function (tl) { return (tl.TagName || '').toLowerCase(); }).filter(Boolean));
                             var grouped = groupConfigTags(config.Tags);
 
                             var keys = Object.keys(grouped);
