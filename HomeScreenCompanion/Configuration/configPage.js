@@ -40,6 +40,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             root.style.setProperty('--plugin-popup-badge',  'rgba(255,255,255,0.1)');
             root.style.setProperty('--plugin-input-border', 'rgba(255,255,255,0.2)');
             root.style.setProperty('--plugin-input-bg',     'rgba(255,255,255,0.08)');
+            root.style.setProperty('--plugin-footer-bg',    '#181818');
             root.dataset.pluginTheme = 'dark';
         } else {
             root.style.setProperty('--plugin-popup-bg',     '#f2f2f2');
@@ -51,8 +52,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             root.style.setProperty('--plugin-popup-badge',  'rgba(0,0,0,0.1)');
             root.style.setProperty('--plugin-input-border', 'rgba(0,0,0,0.28)');
             root.style.setProperty('--plugin-input-bg',     'rgba(0,0,0,0.04)');
+            root.style.setProperty('--plugin-footer-bg',    '#c5cad1');
             root.dataset.pluginTheme = 'light';
         }
+        var drawer = document.querySelector('.mainDrawer');
+        var drawerRight = drawer ? drawer.getBoundingClientRect().right : 0;
+        var footerLeft = (drawerRight > 0 && drawerRight < window.innerWidth * 0.5) ? drawerRight : 0;
+        root.style.setProperty('--plugin-footer-left', footerLeft + 'px');
     }
 
     var cachedCollections = [];
@@ -485,6 +491,35 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             background: var(--theme-background-level2) !important;
             border: 1px solid rgba(128,128,128,0.4) !important;
             color: var(--theme-text-primary) !important;
+        }
+        .plugin-footer {
+            position: fixed;
+            bottom: 0;
+            left: var(--plugin-footer-left, 0);
+            right: 0;
+            z-index: 200;
+            background: var(--plugin-footer-bg);
+            color: var(--plugin-popup-muted);
+            height: 50px;
+            padding: 0 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.85em;
+            border-top: 1px solid var(--line-color);
+            box-sizing: border-box;
+        }
+        .plugin-footer .footer-version {
+            color: var(--plugin-popup-color);
+        }
+        .plugin-footer .footer-sep {
+            margin: 0 12px;
+            opacity: 0.35;
+        }
+        .plugin-footer .footer-update-link {
+            color: #E67E22;
+            text-decoration: none;
+            font-weight: bold;
         }
     </style>`;
 
@@ -3320,44 +3355,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         });
     }
 
-    function showDiscreetUpdateIndicator(container, latestTag, releaseUrl) {
-        var existing = container.querySelector('#updateDiscreetIndicator');
-        if (existing) return;
-        var el = document.createElement('div');
-        el.id = 'updateDiscreetIndicator';
-        el.style.cssText = 'font-size:0.78em; opacity:0.45; padding: 0 0 8px 0;';
-        el.innerHTML = '<a href="' + releaseUrl + '" target="_blank" rel="noopener"'
-            + ' style="color:inherit; text-decoration:none;">'
-            + '\u2191 Update available: v' + latestTag + '</a>';
-        container.appendChild(el);
-    }
-
-    function showUpdateBanner(container, latestTag, releaseUrl) {
-        var existing = container.querySelector('#autoTagVersionBadge');
-        if (existing) return;
-        var dismissKey = 'hsc_update_dismissed_v' + latestTag;
-        var badge = document.createElement('div');
-        badge.id = 'autoTagVersionBadge';
-        badge.style.cssText = 'font-size:1.2em; padding: 0 0 10px 0; display:flex; align-items:center; gap:8px;';
-        badge.innerHTML = '<a href="' + releaseUrl + '" target="_blank" rel="noopener"'
-            + ' style="color:#E67E22; font-weight:bold; text-decoration:none;">'
-            + 'New update: v' + latestTag + ' available</a>'
-            + '<button id="dismissUpdateBtn"'
-            + ' style="background:none; border:none; cursor:pointer; color:#888; font-size:0.8em; padding:2px 6px; border-radius:3px; opacity:0.7;"'
-            + ' title="Dismiss and don\'t show again">\u2715</button>';
-        container.appendChild(badge);
-        badge.querySelector('#dismissUpdateBtn').addEventListener('click', function () {
-            localStorage.setItem(dismissKey, '1');
-            badge.remove();
-            showDiscreetUpdateIndicator(container, latestTag, releaseUrl);
-        });
-    }
-
     function checkForUpdates(view) {
-        if (view.querySelector('#autoTagVersionBadge') || view.querySelector('#updateDiscreetIndicator')) return;
-
         window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/Version")).then(function (result) {
             var currentVer = result.Version || '';
+            var footerVer = document.getElementById('footerVersionText');
+            if (footerVer && currentVer) {
+                var releaseUrl = 'https://github.com/soderlund91/HomeScreenCompanion/releases/tag/v' + currentVer;
+                footerVer.innerHTML = '<a href="' + releaseUrl + '" target="_blank" style="color:inherit;text-decoration:none;">v' + currentVer + '</a>';
+            }
             if (!currentVer) return;
 
             fetch('https://api.github.com/repos/soderlund91/HomeScreenCompanion/releases/latest')
@@ -3373,13 +3378,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         if ((a[i] || 0) < (b[i] || 0)) break;
                     }
                     if (isNewer) {
-                        var container = view.querySelector('#versionBadgeArea');
-                        if (!container) return;
-                        var dismissKey = 'hsc_update_dismissed_v' + latestTag;
-                        if (localStorage.getItem(dismissKey)) {
-                            showDiscreetUpdateIndicator(container, latestTag, release.html_url);
-                        } else {
-                            showUpdateBanner(container, latestTag, release.html_url);
+                        var footerUpdate = document.getElementById('footerUpdateInfo');
+                        if (footerUpdate) {
+                            footerUpdate.innerHTML = '<a href="' + release.html_url + '"'
+                                + ' target="_blank" class="footer-update-link">Update available: v' + latestTag + ' available</a>';
+                            var footerUpdateSep = document.getElementById('footerUpdateSep');
+                            if (footerUpdateSep) footerUpdateSep.style.display = '';
                         }
                     }
                 })
@@ -3388,22 +3392,18 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
 
     window._testUpdateBanner = function (mode) {
-        var container = document.querySelector('#versionBadgeArea');
-        if (!container) { console.warn('_testUpdateBanner: #versionBadgeArea not found'); return; }
         var fakeTag = '99.99.99';
         var fakeUrl = 'https://github.com/soderlund91/HomeScreenCompanion/releases';
-        var dismissKey = 'hsc_update_dismissed_v' + fakeTag;
-        var b = container.querySelector('#autoTagVersionBadge');
-        var d = container.querySelector('#updateDiscreetIndicator');
-        if (b) b.remove();
-        if (d) d.remove();
-        if (mode === 'banner') {
-            localStorage.removeItem(dismissKey);
-            showUpdateBanner(container, fakeTag, fakeUrl);
-        } else if (mode === 'discreet') {
-            showDiscreetUpdateIndicator(container, fakeTag, fakeUrl);
+        var footerUpdate = document.getElementById('footerUpdateInfo');
+        if (!footerUpdate) { console.warn('_testUpdateBanner: #footerUpdateInfo not found'); return; }
+        var footerUpdateSep = document.getElementById('footerUpdateSep');
+        if (mode === 'banner' || mode === 'discreet') {
+            footerUpdate.innerHTML = '<a href="' + fakeUrl + '"'
+                + ' target="_blank" class="footer-update-link">Update available: v' + fakeTag + ' available</a>';
+            if (footerUpdateSep) footerUpdateSep.style.display = '';
         } else if (mode === 'reset') {
-            localStorage.removeItem(dismissKey);
+            footerUpdate.innerHTML = '';
+            if (footerUpdateSep) footerUpdateSep.style.display = 'none';
         }
     };
 

@@ -10,7 +10,7 @@
 		<AssemblyName>HomeScreenCompanion</AssemblyName>
 		<RootNamespace>HomeScreenCompanion</RootNamespace>
 		
-		<Version>4.1.1.1</Version>
+		<Version>4.1.2.0</Version>
 
 		<Product>Home Screen Companion</Product>
 		
@@ -54,5 +54,9 @@
 	<ItemGroup>
 	  <Folder Include="Dependencies\" />
 	</ItemGroup>
+
+	<Target Name="InjectVersionIntoHtml" BeforeTargets="BeforeBuild">
+		<Exec Command="powershell -Command &quot;$f='$(ProjectDir)Configuration\configPage.html'; (Get-Content $f -Raw) -replace 'Home Screen Companion v[\d.]+', 'Home Screen Companion v$(Version)' | Set-Content $f -NoNewline&quot;" />
+	</Target>
 
 </Project>
