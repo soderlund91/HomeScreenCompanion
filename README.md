@@ -11,7 +11,7 @@ It works by connecting one or more **sources** to a tag and/or collection in you
 
 > [!IMPORTANT]
 >
-> From plugin version 3.3.0.0, Emby beta server 4.10.0.8+ is required
+> Check each release for required server version
 
 
 ---
