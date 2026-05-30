@@ -1440,6 +1440,72 @@ public class HomeScreenCompanionService : IService
             return args;
         }
 
+        private void EnforceTopListLibraryPermissions(string libId, IEnumerable<string> assignedUserIds)
+        {
+            var normalizedLibId = (libId ?? "").Trim().Replace("-", "").ToLowerInvariant();
+            if (string.IsNullOrEmpty(normalizedLibId)) return;
+
+            var assignedSet = new HashSet<string>(
+                (assignedUserIds ?? Enumerable.Empty<string>()).Select(id => id.Replace("-", "").ToLowerInvariant()),
+                StringComparer.OrdinalIgnoreCase);
+
+            var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
+            var mgrType = _userManager.GetType();
+
+            var getPolicyMethod = mgrType.GetMethods(bf)
+                .Where(m => m.Name == "GetUserPolicy").OrderBy(m => m.GetParameters().Length).FirstOrDefault()
+                ?? typeof(IUserManager).GetMethods().FirstOrDefault(m => m.Name == "GetUserPolicy");
+
+            var updateMethod = mgrType.GetMethods(bf)
+                .Where(m => m.Name == "UpdateUserPolicy").OrderBy(m => m.GetParameters().Length).FirstOrDefault()
+                ?? typeof(IUserManager).GetMethods().FirstOrDefault(m => m.Name == "UpdateUserPolicy");
+
+            if (updateMethod == null) return;
+
+            foreach (var user in _userManager.GetUserList(new UserQuery { IsDisabled = false }))
+            {
+                try
+                {
+                    object policy = null;
+                    if (getPolicyMethod != null)
+                    {
+                        try
+                        {
+                            var gp = getPolicyMethod.GetParameters();
+                            policy = getPolicyMethod.Invoke(_userManager, BuildArgList(gp, BuildUserArg(gp[0].ParameterType, user), null));
+                        }
+                        catch { }
+                    }
+                    if (policy == null) policy = user.GetType().GetProperty("Policy")?.GetValue(user);
+                    if (policy == null) continue;
+
+                    var enableAllProp = policy.GetType().GetProperty("EnableAllFolders");
+                    if (enableAllProp?.GetValue(policy) is true) continue;
+
+                    var foldersProp = policy.GetType().GetProperty("EnabledFolders");
+                    var folders = foldersProp?.GetValue(policy) as string[] ?? Array.Empty<string>();
+
+                    var userNormId = user.Id.ToString().Replace("-", "").ToLowerInvariant();
+                    var hasAccess = folders.Any(f => string.Equals(f.Replace("-", ""), normalizedLibId, StringComparison.OrdinalIgnoreCase));
+                    var shouldHaveAccess = assignedSet.Contains(userNormId);
+
+                    if (shouldHaveAccess == hasAccess) continue;
+
+                    string[] newFolders;
+                    if (shouldHaveAccess)
+                        newFolders = folders.Concat(new[] { normalizedLibId }).ToArray();
+                    else
+                        newFolders = folders.Where(f => !string.Equals(f.Replace("-", ""), normalizedLibId, StringComparison.OrdinalIgnoreCase)).ToArray();
+
+                    foldersProp?.SetValue(policy, newFolders);
+
+                    var up = updateMethod.GetParameters();
+                    updateMethod.Invoke(_userManager, BuildArgList(up, BuildUserArg(up[0].ParameterType, user), policy));
+                }
+                catch { }
+            }
+        }
+
         public object Post(PrepareManualTopListFolderRequest request)
         {
             try
@@ -2095,6 +2161,8 @@ public class HomeScreenCompanionService : IService
                     _jsonSerializer, _userManager, config,
                     new[] { resolvedLibraryIdLower },
                     CancellationToken.None);
+
+                EnforceTopListLibraryPermissions(resolvedLibraryId, tl.HomeSectionUserIds);
 
                 Plugin.Instance.SaveConfiguration();
                 _taskManager.QueueScheduledTask<TopListSyncTask>();

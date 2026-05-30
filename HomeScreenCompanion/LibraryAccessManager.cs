@@ -4,6 +4,7 @@ using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Querying;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
@@ -78,10 +79,81 @@ namespace HomeScreenCompanion
                     return;
                 }
 
-                var users = _userManager.GetUserList(new UserQuery { IsDisabled = false });
+                // If this is a top-list library, only assigned users should have access.
+                // Emby grants all users access during library creation, so we actively revoke
+                // from non-assigned users and ensure assigned users keep access.
+                var matchingTopList = Plugin.Instance?.Configuration?.TopLists?
+                    .FirstOrDefault(t =>
+                        !string.IsNullOrEmpty(t.HomeSectionLibraryId) &&
+                        t.HomeSectionLibraryId != "auto" &&
+                        string.Equals(t.HomeSectionLibraryId.Trim().Replace("-", ""), libId, StringComparison.OrdinalIgnoreCase));
+
+                if (matchingTopList != null)
+                {
+                    var assignedIds = new HashSet<string>(
+                        (matchingTopList.HomeSectionUserIds ?? new List<string>())
+                            .Select(id => id.Replace("-", "").ToLowerInvariant()),
+                        StringComparer.OrdinalIgnoreCase);
+
+                    _logger.Info($"[LibraryAccess] '{libName}' is a top-list library — enforcing per-user access ({assignedIds.Count} assigned user(s)).");
+
+                    var users = _userManager.GetUserList(new UserQuery { IsDisabled = false });
+                    foreach (var user in users)
+                    {
+                        try
+                        {
+                            object policy = null;
+                            if (getPolicyMethod != null)
+                            {
+                                try
+                                {
+                                    var gp = getPolicyMethod.GetParameters();
+                                    policy = getPolicyMethod.Invoke(_userManager,
+                                        BuildArgArray(gp, BuildUserIdArg(gp[0].ParameterType, user), null));
+                                }
+                                catch { }
+                            }
+                            if (policy == null)
+                                policy = user.GetType().GetProperty("Policy")?.GetValue(user);
+                            if (policy == null) continue;
+
+                            var enableAllProp = policy.GetType().GetProperty("EnableAllFolders");
+                            if (enableAllProp?.GetValue(policy) is true) continue;
+
+                            var foldersProp = policy.GetType().GetProperty("EnabledFolders");
+                            var folders = foldersProp?.GetValue(policy) as string[] ?? Array.Empty<string>();
+
+                            var userNormId = user.Id.ToString().Replace("-", "").ToLowerInvariant();
+                            var hasAccess = folders.Any(f => string.Equals(f, libId, StringComparison.OrdinalIgnoreCase));
+                            var shouldHaveAccess = assignedIds.Contains(userNormId);
+
+                            if (shouldHaveAccess && !hasAccess)
+                            {
+                                foldersProp?.SetValue(policy, folders.Concat(new[] { libId }).ToArray());
+                                var up = updateMethod.GetParameters();
+                                updateMethod.Invoke(_userManager, BuildArgArray(up, BuildUserIdArg(up[0].ParameterType, user), policy));
+                                _logger.Info($"[LibraryAccess] Granted '{libName}' to assigned user '{user.Name}'.");
+                            }
+                            else if (!shouldHaveAccess && hasAccess)
+                            {
+                                foldersProp?.SetValue(policy, folders.Where(f => !string.Equals(f, libId, StringComparison.OrdinalIgnoreCase)).ToArray());
+                                var up = updateMethod.GetParameters();
+                                updateMethod.Invoke(_userManager, BuildArgArray(up, BuildUserIdArg(up[0].ParameterType, user), policy));
+                                _logger.Info($"[LibraryAccess] Revoked '{libName}' from non-assigned user '{user.Name}'.");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.Error($"[LibraryAccess] Error for user '{user.Name}': {ex.GetBaseException().Message}");
+                        }
+                    }
+                    return;
+                }
+
+                var allUsers = _userManager.GetUserList(new UserQuery { IsDisabled = false });
                 int updated = 0;
 
-                foreach (var user in users)
+                foreach (var user in allUsers)
                 {
                     try
                     {

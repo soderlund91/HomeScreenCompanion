@@ -1,232 +1,109 @@
-
+# 🎬 Home Screen Companion for Emby
 
 <img width="481" height="142" alt="HSC" src="https://github.com/user-attachments/assets/2887420a-7198-472e-8afb-a49eda3231d9" />
 
+**Home Screen Companion** is the ultimate plugin for your Emby server. It automates the management of tags, collections, and playlists for your movies and TV shows, while keeping everyone's home screens perfectly synchronized and looking great.
 
-# Home Screen Companion
-
-**HomeScreenCompanion** is a plugin for Emby Server that automatically manages tags and collections for your Movies and TV Shows — and keeps your home screen sections in sync across multiple users.
-
-It works by connecting one or more **sources** to a tag and/or collection in your Emby library. Sources can be external lists from Trakt or MDBList, rules-based filters on your own library, AI-generated recommendations, or your existing local collections and playlists. Each source runs on a schedule, and the plugin makes sure your library always reflects the current state — adding and removing tags and collection memberships automatically.
+Whether you want to pull trending lists from Trakt, build smart dynamic playlists from your own library, get AI-powered recommendations, or effortlessly copy your perfect home screen layout to all your users — Home Screen Companion does the heavy lifting for you. Sit back and let your server manage itself!
 
 > [!IMPORTANT]
->
-> Check each release for required server version
-
+> Check each release for required server version.
 
 ---
 
-## Key Features
+## ✨ Key Features
 
-- **Five source types** — External List, Smart Playlist, AI List, Local Collection, Local Playlist
-- **Automatic tagging and collections** — items are added and removed as lists change
-- **Advanced scheduling** — annual, weekly, or specific date windows
-- **Per-entry home screen sections** — automatically managed sections for any tag or collection
-- **Home screen sync** — mirror one user's home screen layout to any number of other users
-
----
-
-## Source Types
-
-### External List
-
-Connect to curated lists on **Trakt** or **MDBList**. The plugin fetches the list on a schedule, matches items to your library by IMDB ID, and keeps tags and collections in sync automatically.
-
-- Supports any Trakt or MDBList URL — trending, popular, user lists, curated sets
-- Multiple URLs can be combined into a single tag/collection entry
-- Items removed from the remote list are automatically untagged
-
-**Supported services:**
-- **Trakt.tv** — Trending, Popular, Watched, User Lists
-- **MDBList.com** — Dynamic lists with custom criteria
-
-**Example URLs:**
-```
-https://trakt.tv/movies/trending
-https://trakt.tv/movies/popular
-https://trakt.tv/users/username/lists/my-list
-https://mdblist.com/lists/user/listname/
-```
-
-**API keys required:** Trakt Client ID and/or MDBList API Key (configured in the Settings tab).
+- **5 Powerful Source Types:** Import from external list services, create rules-based "Smart Playlists", leverage AI recommendations, or use your existing local collections and playlists.
+- **Automatic Tagging & Collections:** Items are automatically tagged, untagged, and managed in Emby Collections as your sources update.
+- **Advanced Scheduling:** Control exactly when a list is active. Perfect for seasonal content like "Christmas Movies" or weekly "Friday Night Action".
+- **Dynamic Home Screen Sections:** Automatically inject dedicated rows onto the home screen based on tags or collections. The plugin creates, updates, and cleans them up automatically.
+- **Home Screen Sync:** Created the perfect home screen layout? Sync it to all your other users with a single click—or keep it synced automatically!
+- **User Playlists:** Create and sync dynamic Emby Playlists directly to specific users based on any of your sources.
 
 ---
 
-### Smart Playlist
+## 🚀 Source Types
 
-Build dynamic lists directly from your library using a flexible rule builder. No external service needed — the plugin scans your library and tags items that match your criteria.
+### 1. External Lists (Trakt & MDBList)
+Connect your Emby server to popular and curated lists on **Trakt** or **MDBList**. The plugin fetches the lists regularly, matches the movies/shows to your library, and updates your tags and collections automatically.
+* **Supports:** Trakt (Trending, Popular, Watched, User Lists) and MDBList (Dynamic lists).
+* *API key required for the respective service.*
 
-Rules can be combined with **AND/OR** logic, grouped into multiple condition groups, and negated with `!`.
+### 2. Smart Playlists
+Build dynamic lists right from your own library using our flexible, built-in rule engine. No external services required!
+* **Filter by:** Resolution (4K, 1080p), Audio Format (Atmos, TrueHD), Genre, Rating, Watch Status (Played/Unplayed), Date Added, and much more.
+* **Examples:** *"All Unplayed 4K HDR movies with Atmos"* or *"Action movies from 2020+ rated above 7"*.
 
-**Available filter criteria:**
+### 3. AI-Generated Lists
+Let Artificial Intelligence curate content for you! Just write a simple prompt (e.g., *"Best psychological thrillers from the 90s"*) and the AI will generate a list matched perfectly against your library.
+* **Supports:** OpenAI (GPT-4o-mini), Google Gemini, and local Ollama models (e.g., Llama 3).
+* **Personalized:** You can optionally include a user's watch history so the AI tailors the recommendations just for them!
 
-| Category | Properties |
-| :--- | :--- |
-| **Video** | Resolution (8K, 4K, 1080p, 720p, SD), Codec (HEVC, AV1, H.264), HDR (Any, Dolby Vision, HDR10) |
-| **Audio** | Format (Atmos, TrueHD, DTS-HD MA, DTS, AC3, AAC), Channels (7.1+, 5.1, Stereo, Mono), Language |
-| **Content** | Genre, Studio, Actor, Director, Writer, Content Rating, Title, Overview, Tag, IMDB ID |
-| **Metrics** | Year, Runtime, Community Rating, File Size, Date Added, Date Modified |
-| **Watch status** | Watched/Unwatched, Last Played, Play Count — per user, any user, or all users |
+### 4. Local Collections
+Tag items based on an existing Emby Collection. Combine this with scheduling to create time-limited promotions of curated content.
 
-**Example use cases:**
-- Tag all 4K Dolby Vision movies with Atmos audio → `4K AND Dolby Vision AND Atmos`
-- "Recently added and never watched" → `Date Added <= 30 AND Unwatched`
-- Action movies from 2010+ rated above 7 → `Genre: Action AND Year >= 2010 AND Rating >= 7`
-- All HEVC content under 90 minutes → `HEVC AND Runtime < 90`
-
-Premade filter templates are available for common use cases (4K, recent additions, unwatched, etc.), and you can save your own filter sets for reuse.
-
----
-
-### AI List
-
-Generate recommendations using AI. Write a natural language prompt and the plugin calls an AI model to produce a list of movies and shows, then matches them against your library.
-
-**Supported AI providers:**
-- **OpenAI** (GPT-4o-mini) — requires an OpenAI API key
-- **Google Gemini** (Gemini Flash) — requires a Google Gemini API key
-
-**Personalization:** Optionally include a user's recently watched history as context. The AI uses this to tailor recommendations to that user's taste.
-
-**Configuration:**
-| Setting | Description |
-| :--- | :--- |
-| **AI Provider** | OpenAI or Google Gemini |
-| **API Key** | Your key for the selected provider |
-| **Prompt** | Natural language description of what you want (e.g., *"Best psychological thrillers from the 90s"*) |
-| **Include recently watched** | Adds watch history to the prompt for personalized results |
-| **Source user** | Which user's watch history to use |
-| **History count** | How many recent items to include (5–100, default 20) |
-
-A **Test** button lets you preview the AI output before saving.
+### 5. Local Playlists
+Works just like Local Collections, but uses an existing Emby Playlist as the source.
 
 ---
 
-### Local Collection
+## ⏰ Smart Scheduling
 
-Tag items based on an existing Emby Collection. Combine with scheduling to create time-limited promotions of curated content — no external API needed.
+Only want to show certain collections at specific times? No problem!
+* **Annually:** Make your "Holiday Movies" collection active only from December 1st to 31st every year.
+* **Weekly:** Activate a "Weekend Binge" list only on Fridays and Saturdays.
+* **Specific Dates:** Perfect for one-time events or themed weeks.
 
----
-
-### Local Playlist
-
-Tag items based on an existing Emby Playlist. Works the same as Local Collection but uses playlists as the source.
-
----
-
-## Collections
-
-Any source type can automatically maintain an Emby Collection alongside its tag.
-
-| Setting | Description |
-| :--- | :--- |
-| **Create Collection** | Automatically create and manage an Emby Collection for this entry |
-| **Collection Name** | Optional custom name (defaults to the tag name) |
-
-When a source is disabled or its schedule ends, the plugin automatically removes the collection.
+When the schedule ends, the plugin automatically cleans up the tags and collections from your server.
 
 ---
 
-## Scheduling
+## 📺 Home Screen & Syncing
 
-Set any entry to be active only during specific time windows.
+Take total control over how Emby looks for you and your users.
 
-| Rule | Description |
-| :--- | :--- |
-| **Annual** | Active between a recurring start and end date each year (e.g., Dec 1–31 for "Christmas Movies") |
-| **Weekly** | Active on selected days of the week (e.g., only on Fridays) |
-| **Specific Dates** | Active between a fixed start and end date — for one-time events |
+### Per-Entry Home Screen Sections
+Add a custom row to the home screen for any specific tag or collection. The plugin handles everything—no manual Emby configuration required. Just select which users should see the section, customize the sorting and display style, and the plugin rolls it out.
 
-When a schedule window closes, tags and collections are automatically cleaned up.
-
----
-
-## Home Screen
-
-Two complementary features give you full control over home screen sections.
-
-### Per-entry Home Screen Sections
-
-Add a dedicated home screen section to any tag/collection entry. The plugin creates, updates, and removes the section automatically on each sync — no manual Emby configuration needed.
-
-| Setting | Description |
-| :--- | :--- |
-| **Section Type** | *Single Collection* — shows the managed collection as a boxset row. *Dynamic Media* — shows items filtered by the entry's tag |
-| **Item Types** | Movie, Series, Episode, MusicVideo (Dynamic Media only) |
-| **Custom Title** | Override the section name on the home screen |
-| **Image Type** | Default, Primary, Backdrop, or Thumb |
-| **Sort By** | Default, Rating, Date Added, Name, Runtime, Release Date, Year, or Random |
-| **Sort Order** | Ascending, Descending, or Default |
-| **Scroll Direction** | Horizontal, Vertical, or Default |
-| **Target Users** | Which users get this section |
-
-### Home Screen Sync (Manage tab)
-
-Mirror one user's full home screen layout to any number of other users — automatically, or on a schedule
-
-| Setting | Description |
-| :--- | :--- |
-| **Enable sync** | Turn the copy feature on or off |
-| **Source user** | The user whose layout is used as master |
-| **Target users** | Users whose home screens will be overwritten to match the source |
-
-The plugin page shows last sync time, result, and number of sections copied.
+### Home Screen Sync
+Ever get frustrated trying to give all your users the same great home screen experience?
+With **Home Screen Sync**, you choose one user as the "Master" and copy their entire home screen layout to any (or all) other users. You can even set it to sync automatically in the background!
 
 ---
 
-## Safety & Stability
+## 🛡️ Safety & Reliability
 
-- **Fail-Safe Cleanup** — if a remote list fails to download, the plugin skips cleanup for that tag/collection to prevent accidental data loss
-- **Dry Run Mode** — test your configuration in the logs without modifying anything in your library
-- **Live Logging** — view the execution log directly inside the plugin settings with real-time status updates
+* **Fail-Safe Cleanup:** If an external list fails to download, the plugin skips the cleanup process for that tag, ensuring your library never accidentally loses data.
+* **Dry Run Mode:** Want to test your rules without changing anything? Turn on Dry Run to see exactly what *would* happen in the logs.
+* **Live Logging:** Follow the execution in real-time directly from the plugin's settings page.
 
 ---
 
-## Installation
+## ⚙️ Installation & Setup
 
-1. Download the latest `.dll` from the [Releases](../../releases) page.
+1. Download the latest `.dll` file from the [Releases](../../releases) page.
 2. Shut down your Emby Server.
-3. Place the `.dll` file in your Emby plugins folder.
-4. Start Emby Server.
+3. Place the `.dll` file in your Emby `plugins` folder.
+4. Start your Emby Server.
+5. Go to your Emby Dashboard—you will find **Home Screen Companion** in the sidebar menu!
 
----
-
-## Configuration
-
-Go to your Emby Dashboard. You will find **Home Screen Companion** in the sidebar menu.
-
-The plugin page has three tabs: **Tag and Collection**, **Home Screen**, and **Settings**.
-
-### API Keys (Settings tab)
-
-| Key | Required for |
-| :--- | :--- |
-| **Trakt Client ID** | External List sources using Trakt URLs |
-| **MDBList API Key** | External List sources using MDBList URLs |
-| **OpenAI API Key** | AI List sources using OpenAI |
-| **Google Gemini API Key** | AI List sources using Google Gemini |
+*(Don't forget to enter your API keys in the **Settings** tab if you plan to use External Lists or AI features).*
 
 ---
 
 ### Screenshots
 
-<img width="768" height="673" alt="main" src="https://github.com/user-attachments/assets/efc94da5-030a-4380-ab07-5ec9e5ff7151" />
+<details>
+<summary>Click to view screenshots</summary>
 
+<img width="768" alt="main" src="https://github.com/user-attachments/assets/efc94da5-030a-4380-ab07-5ec9e5ff7151" />
+<img width="740" alt="lmi" src="https://github.com/user-attachments/assets/f2e0f1f4-fdc0-4eea-b9ef-a1b2acd14611" />
+<img width="743" alt="schedule" src="https://github.com/user-attachments/assets/f9efe07b-5974-4485-bbd7-381e6bd071dd" />
+<img width="728" alt="home screen section" src="https://github.com/user-attachments/assets/8dc7b72b-4272-4527-b505-44fa155d4692" />
+<img width="737" alt="sync" src="https://github.com/user-attachments/assets/29103ea5-fce7-47be-9f75-99ee38b58975" />
 
-<img width="740" height="936" alt="lmi" src="https://github.com/user-attachments/assets/f2e0f1f4-fdc0-4eea-b9ef-a1b2acd14611" />
-
-
-<img width="743" height="711" alt="schedule" src="https://github.com/user-attachments/assets/f9efe07b-5974-4485-bbd7-381e6bd071dd" />
-
-
-<img width="728" height="1272" alt="home screen section" src="https://github.com/user-attachments/assets/8dc7b72b-4272-4527-b505-44fa155d4692" />
-
-
-<img width="737" height="799" alt="sync" src="https://github.com/user-attachments/assets/29103ea5-fce7-47be-9f75-99ee38b58975" />
-
-
+</details>
 
 ---
 
-_**Disclaimer:** This plugin is not affiliated with Emby, Trakt, MDBList, OpenAI, or Google.
-This plugin is heavily vibe-coded, tested on my own server — use at your own risk._
+*Disclaimer: This plugin is not affiliated with Emby, Trakt, MDBList, OpenAI, Google, or Ollama. This plugin is heavily vibe-coded, tested on my own server — use at your own risk.*

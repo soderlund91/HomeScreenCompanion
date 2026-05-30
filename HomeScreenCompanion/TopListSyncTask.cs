@@ -356,6 +356,88 @@ namespace HomeScreenCompanion
                 catch { }
             }
 
+            // Revoke top-list library access from users not assigned to those top-lists.
+            // Build map: normalizedLibId → set of assigned user IDs (no dashes).
+            var tlLibToAssignedUsers = topLists
+                .Where(t => !string.IsNullOrEmpty(t.HomeSectionLibraryId) && t.HomeSectionLibraryId != "auto")
+                .ToDictionary(
+                    t => t.HomeSectionLibraryId.Trim().Replace("-", "").ToLowerInvariant(),
+                    t => new HashSet<string>(
+                        (t.HomeSectionUserIds ?? new List<string>())
+                            .Select(id => id.Replace("-", "").ToLowerInvariant()),
+                        StringComparer.OrdinalIgnoreCase));
+
+            if (tlLibToAssignedUsers.Count > 0)
+            {
+                try
+                {
+                    var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
+                    var mgrType = userManager.GetType();
+
+                    var getPolicyMethod = mgrType.GetMethods(bf)
+                        .Where(m => m.Name == "GetUserPolicy")
+                        .OrderBy(m => m.GetParameters().Length)
+                        .FirstOrDefault()
+                        ?? typeof(IUserManager).GetMethods().FirstOrDefault(m => m.Name == "GetUserPolicy");
+
+                    var updateMethod = mgrType.GetMethods(bf)
+                        .Where(m => m.Name == "UpdateUserPolicy")
+                        .OrderBy(m => m.GetParameters().Length)
+                        .FirstOrDefault()
+                        ?? typeof(IUserManager).GetMethods().FirstOrDefault(m => m.Name == "UpdateUserPolicy");
+
+                    if (updateMethod != null)
+                    {
+                        var users = userManager.GetUserList(new UserQuery { IsDisabled = false });
+                        foreach (var user in users)
+                        {
+                            try
+                            {
+                                object policy = null;
+                                if (getPolicyMethod != null)
+                                {
+                                    try
+                                    {
+                                        var gp = getPolicyMethod.GetParameters();
+                                        policy = getPolicyMethod.Invoke(userManager, MakeArgArray(gp, MakeUserIdArg(userManager, gp[0].ParameterType, user), null));
+                                    }
+                                    catch { }
+                                }
+                                if (policy == null)
+                                    policy = user.GetType().GetProperty("Policy")?.GetValue(user);
+                                if (policy == null) continue;
+
+                                var enableAllProp = policy.GetType().GetProperty("EnableAllFolders");
+                                if (enableAllProp?.GetValue(policy) is true) continue;
+
+                                var foldersProp = policy.GetType().GetProperty("EnabledFolders");
+                                var folders = foldersProp?.GetValue(policy) as string[] ?? Array.Empty<string>();
+
+                                var userNormId = user.Id.ToString().Replace("-", "").ToLowerInvariant();
+                                // Normalize folder IDs for comparison (Emby may store with or without dashes).
+                                var toRemove = tlLibToAssignedUsers
+                                    .Where(kvp => !kvp.Value.Contains(userNormId))
+                                    .Select(kvp => kvp.Key)
+                                    .Where(id => folders.Any(f => string.Equals(f.Replace("-", ""), id, StringComparison.OrdinalIgnoreCase)))
+                                    .ToList();
+
+                                if (toRemove.Count == 0) continue;
+
+                                foldersProp?.SetValue(policy, folders
+                                    .Where(f => !toRemove.Contains(f.Replace("-", "").ToLowerInvariant()))
+                                    .ToArray());
+
+                                var up = updateMethod.GetParameters();
+                                updateMethod.Invoke(userManager, MakeArgArray(up, MakeUserIdArg(userManager, up[0].ParameterType, user), policy));
+                                Log($"    Revoked top-list library access from '{user.Name}' ({toRemove.Count} lib(s)).");
+                            }
+                            catch { }
+                        }
+                    }
+                }
+                catch { }
+            }
+
             Plugin.Instance?.SaveConfiguration();
             var summary = $"Updated {totalUpdated} section(s) across {topLists.Count} top-list(s).";
             Log(summary);
