@@ -2641,6 +2641,67 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             });
     }
 
+    function buildUserMultiSelectHtml(users, selectedIds, checkboxClass) {
+        function escAttr(s) { return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;'); }
+        function escHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+        if (!users || users.length === 0) return '<em style="opacity:0.5">No users found</em>';
+        var sel = selectedIds || [];
+        var rows = users.map(function(u) {
+            var chk = sel.indexOf(u.Id) !== -1 ? ' checked' : '';
+            return '<label class="filter-chk-row">' +
+                '<input type="checkbox" class="' + escAttr(checkboxClass) + '" value="' + escAttr(u.Id) + '"' + chk + '>' +
+                '<span>' + escHtml(u.Name) + '</span></label>';
+        }).join('');
+        var checkedNames = users.filter(function(u) { return sel.indexOf(u.Id) !== -1; }).map(function(u) { return u.Name; });
+        var lbl = checkedNames.length === 0 ? 'No users selected'
+            : checkedNames.length === users.length ? 'All users'
+            : checkedNames.join(', ');
+        return '<div class="filter-dropdown-wrapper hsc-user-dropdown">' +
+            '<button type="button" class="filter-dropdown-btn hsc-user-dropdown-btn">' +
+            '<span class="hsc-user-dropdown-label">' + escHtml(lbl) + '</span>' +
+            '<i class="md-icon hsc-user-dropdown-caret" style="font-size:1em;margin-left:4px;">expand_more</i>' +
+            '</button>' +
+            '<div class="filter-dropdown-panel" style="min-width:220px;">' + rows + '</div>' +
+            '</div>';
+    }
+
+    function wireUserMultiSelect(container) {
+        var wrapper = container && container.querySelector('.hsc-user-dropdown');
+        if (!wrapper) return;
+        var btn    = wrapper.querySelector('.hsc-user-dropdown-btn');
+        var panel  = wrapper.querySelector('.filter-dropdown-panel');
+        var lbl    = wrapper.querySelector('.hsc-user-dropdown-label');
+        var caret  = wrapper.querySelector('.hsc-user-dropdown-caret');
+        function updateLabel() {
+            var allBoxes     = panel.querySelectorAll('input[type="checkbox"]');
+            var checkedBoxes = panel.querySelectorAll('input[type="checkbox"]:checked');
+            if (checkedBoxes.length === 0) {
+                lbl.textContent = 'No users selected';
+            } else if (checkedBoxes.length === allBoxes.length) {
+                lbl.textContent = 'All users';
+            } else {
+                lbl.textContent = Array.from(checkedBoxes).map(function(cb) {
+                    return cb.closest('label').querySelector('span').textContent;
+                }).join(', ');
+            }
+        }
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var open = panel.classList.toggle('open');
+            caret.textContent = open ? 'expand_less' : 'expand_more';
+        });
+        panel.querySelectorAll('input[type="checkbox"]').forEach(function(chk) {
+            chk.addEventListener('change', updateLabel);
+        });
+        document.addEventListener('click', function closeUserDrop(e) {
+            if (!wrapper.isConnected) { document.removeEventListener('click', closeUserDrop); return; }
+            if (!panel.contains(e.target) && e.target !== btn) {
+                panel.classList.remove('open');
+                caret.textContent = 'expand_more';
+            }
+        });
+    }
+
     var _hseLibraryCachePromise = null;
     function preFetchLibraryData() {
         if (_hseLibraryCachePromise) return _hseLibraryCachePromise;
@@ -2984,12 +3045,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 });
 
                 // User list
-                var userHtml = '';
-                users.forEach(function(u) {
-                    var chk = savedUserIds.indexOf(u.Id) !== -1 ? 'checked' : '';
-                    userHtml += '<div style="margin:4px 0;"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" is="emby-checkbox" class="chkHseUser" value="' + u.Id + '" ' + chk + '/><span>' + u.Name + '</span></label></div>';
-                });
-                tab.querySelector('.hse-user-list-inner').innerHTML = userHtml || '<em style="opacity:0.5">No users found</em>';
+                tab.querySelector('.hse-user-list-inner').innerHTML = buildUserMultiSelectHtml(users, savedUserIds, 'chkHseUser');
+                wireUserMultiSelect(tab.querySelector('.hse-user-list-inner'));
 
                 // Structured section settings form
                 var defaultTagName = row.querySelector('.txtEntryLabel').value || row.querySelector('.txtTagName').value || '';
@@ -4529,13 +4586,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         document.body.appendChild(modal);
 
         getHseUsers().then(function (users) {
-            var usersHtml = users.length > 0
-                ? users.map(function (u) {
-                    return '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:4px 0;">' +
-                        '<input type="checkbox" class="chkTlmUser" value="' + escAttr(u.Id) + '">' +
-                        '<span>' + escHtml(u.Name) + '</span></label>';
-                }).join('')
-                : '<em style="opacity:0.5">No users found</em>';
+            var usersHtml = buildUserMultiSelectHtml(
+                users,
+                existingData ? (existingData.userIds || []) : [],
+                'chkTlmUser'
+            );
 
 
             var html =
@@ -4586,12 +4641,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
             renderBox(html);
             initBadgePicker(modal);
+            wireUserMultiSelect(modal);
 
             if (existingData) {
-                (existingData.userIds || []).forEach(function (uid) {
-                    var cb = modal.querySelector('.chkTlmUser[value="' + uid + '"]');
-                    if (cb) cb.checked = true;
-                });
                 if (existingData.customName) modal.querySelector('.tlm-custom-name').value = existingData.customName;
                 if (existingData.displayMode) modal.querySelector('.tlm-display-mode').value = existingData.displayMode;
                 if (existingData.imageType) modal.querySelector('.tlm-image-type').value = existingData.imageType;
@@ -4689,14 +4741,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
             var presetUserIds = (existingData && existingData.userIds) || [];
 
-            var usersHtml = users.length > 0
-                ? users.map(function (u) {
-                    var checked = presetUserIds.indexOf(u.Id) !== -1 ? ' checked' : '';
-                    return '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:4px 0;">' +
-                        '<input type="checkbox" class="chkMtlUser" value="' + escAttr(u.Id) + '"' + checked + '>' +
-                        '<span>' + escHtml(u.Name) + '</span></label>';
-                }).join('')
-                : '<em style="opacity:0.5">No users found</em>';
+            var usersHtml = buildUserMultiSelectHtml(users, presetUserIds, 'chkMtlUser');
 
 
             var presetName       = (existingData && existingData.listName)    || '';
@@ -4788,6 +4833,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '</div>';
 
             initBadgePicker(modal);
+            wireUserMultiSelect(modal);
 
             // In edit mode, set list name field readonly again (the value= attr trick above may not
             // work if the readonly attr comes after a style attr — set it via JS to be safe)
@@ -5017,14 +5063,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 var colHeaderStyle = 'font-size:0.75em;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#52B54B;padding-bottom:10px;margin-bottom:12px;border-bottom:1px solid rgba(82,181,75,0.3);';
 
-                var usersHtml = users.length > 0
-                    ? users.map(function (u) {
-                        var checked = presetUserIds.indexOf(u.Id) !== -1 ? ' checked' : '';
-                        return '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:4px 0;">' +
-                            '<input type="checkbox" class="chkMtlUser" value="' + escAttr(u.Id) + '"' + checked + '>' +
-                            '<span>' + escHtml(u.Name) + '</span></label>';
-                    }).join('')
-                    : '<em style="opacity:0.5">No users found</em>';
+                var usersHtml = buildUserMultiSelectHtml(users, presetUserIds, 'chkMtlUser');
 
                 var displayOptions = [
                     { val: '',               label: 'Always' },
@@ -5093,6 +5132,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 body.innerHTML = '';
                 body.appendChild(wrapper);
                 initBadgePicker(body);
+                wireUserMultiSelect(wrapper);
 
                 var selectedMovies = presetMovies.slice();
                 var originalManualState;
@@ -5247,20 +5287,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var presetCustomName = editJson.customName  || '';
                 var presetMaxItems   = editJson.maxItems    || '0';
 
-                var usersHtml = users.length > 0
-                    ? users.map(function (u) {
-                        var checked = presetUserIds.indexOf(u.Id) !== -1 ? ' checked' : '';
-                        return '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:4px 0;">' +
-                            '<input type="checkbox" class="chkTlmUser" value="' + escAttr(u.Id) + '"' + checked + '>' +
-                            '<span>' + escHtml(u.Name) + '</span></label>';
-                    }).join('')
-                    : '<em style="opacity:0.5">No users found</em>';
+                var usersHtml = buildUserMultiSelectHtml(users, presetUserIds, 'chkTlmUser');
 
                 var wrapper = document.createElement('div');
                 wrapper.innerHTML =
                     '<div style="' + fieldStyle + '">' +
                     '<span style="' + labelStyle + '">Target Users</span>' +
-                    '<div class="tlm-user-list">' + usersHtml + '</div>' +
+                    '<div>' + usersHtml + '</div>' +
                     '</div>' +
 
                     '<div style="' + fieldStyle + '">' +
@@ -5299,6 +5332,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 body.innerHTML = '';
                 body.appendChild(wrapper);
                 initBadgePicker(body);
+                wireUserMultiSelect(wrapper);
 
                 if (presetCustomName) wrapper.querySelector('.tlm-custom-name').value = presetCustomName;
                 if (presetDisplay)    wrapper.querySelector('.tlm-display-mode').value = presetDisplay;
