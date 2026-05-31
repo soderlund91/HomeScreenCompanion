@@ -4,6 +4,7 @@ using SkiaSharp;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Querying;
 using MediaBrowser.Model.Serialization;
 using MediaBrowser.Model.Services;
@@ -281,8 +282,9 @@ public class HomeScreenCompanionService : IService
         private readonly IUserDataManager _userDataManager;
         private readonly IUserViewManager _userViewManager;
         private readonly ITaskManager _taskManager;
+        private readonly ILogger _logger;
 
-        public HomeScreenCompanionService(IHttpClient httpClient, IJsonSerializer jsonSerializer, IUserManager userManager, ILibraryManager libraryManager, IUserDataManager userDataManager, IUserViewManager userViewManager, ITaskManager taskManager)
+        public HomeScreenCompanionService(IHttpClient httpClient, IJsonSerializer jsonSerializer, IUserManager userManager, ILibraryManager libraryManager, IUserDataManager userDataManager, IUserViewManager userViewManager, ITaskManager taskManager, ILogManager logManager)
         {
             _httpClient = httpClient;
             _jsonSerializer = jsonSerializer;
@@ -291,6 +293,7 @@ public class HomeScreenCompanionService : IService
             _userDataManager = userDataManager;
             _userViewManager = userViewManager;
             _taskManager = taskManager;
+            _logger = logManager.GetLogger("HomeScreenCompanion_Access");
         }
 
         public object Get(VersionRequest request)
@@ -514,7 +517,11 @@ public class HomeScreenCompanionService : IService
                     request.Provider,
                     request.Prompt,
                     config.OpenAiApiKey,
+                    config.OpenAiModel,
                     config.GeminiApiKey,
+                    config.GeminiModel,
+                    config.ClaudeApiKey,
+                    config.ClaudeModel,
                     config.OllamaBaseUrl,
                     config.OllamaModel,
                     config.AiSystemPrompt,
@@ -2178,7 +2185,7 @@ public class HomeScreenCompanionService : IService
         {
             try
             {
-                var (updated, msg) = TopListSyncTask.SyncAll(_libraryManager, _userViewManager, _userManager, _jsonSerializer, CancellationToken.None);
+                var (updated, msg) = TopListSyncTask.SyncAll(_libraryManager, _userViewManager, _userManager, _jsonSerializer, _logger, CancellationToken.None);
                 return new SyncAllTopListSectionsResponse { Success = true, UpdatedSections = updated, Message = msg };
             }
             catch (Exception ex)

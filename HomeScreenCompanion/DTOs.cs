@@ -164,6 +164,17 @@ namespace HomeScreenCompanion
         public string content { get; set; } = "";
     }
 
+    public class ClaudeResponse
+    {
+        public List<ClaudeContent> content { get; set; } = new List<ClaudeContent>();
+    }
+
+    public class ClaudeContent
+    {
+        public string type { get; set; } = "";
+        public string text { get; set; } = "";
+    }
+
     public class AiListItem
     {
         public string title { get; set; } = "";

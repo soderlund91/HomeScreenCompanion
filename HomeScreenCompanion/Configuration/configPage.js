@@ -1509,6 +1509,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <select is="emby-select" class="selAiProvider" style="width:100%;">
                                 <option value="OpenAI" ${(tagConfig.AiProvider || 'OpenAI') === 'OpenAI' ? 'selected' : ''}>OpenAI (ChatGPT)</option>
                                 <option value="Gemini" ${(tagConfig.AiProvider || 'OpenAI') === 'Gemini' ? 'selected' : ''}>Google Gemini</option>
+                                <option value="Claude" ${(tagConfig.AiProvider || 'OpenAI') === 'Claude' ? 'selected' : ''}>Anthropic Claude</option>
                                 <option value="Ollama" ${(tagConfig.AiProvider || 'OpenAI') === 'Ollama' ? 'selected' : ''}>Ollama (Local)</option>
                             </select>
                         </div>
@@ -3238,9 +3239,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             MdblistApiKey: view.querySelector('#txtMdblistApiKey').value,
             TmdbApiKey: view.querySelector('#txtTmdbApiKey').value,
             OpenAiApiKey: (view.querySelector('#txtOpenAiApiKey') || {}).value || '',
+            OpenAiModel: (view.querySelector('#txtOpenAiModel') || {}).value || 'gpt-4o-mini',
             GeminiApiKey: (view.querySelector('#txtGeminiApiKey') || {}).value || '',
+            GeminiModel: (view.querySelector('#txtGeminiModel') || {}).value || 'gemini-2.5-flash-lite',
+            ClaudeApiKey: (view.querySelector('#txtClaudeApiKey') || {}).value || '',
+            ClaudeModel: (view.querySelector('#txtClaudeModel') || {}).value || 'claude-haiku-4-5-20251001',
             OllamaBaseUrl: (view.querySelector('#txtOllamaBaseUrl') || {}).value || 'http://localhost:11434',
-            OllamaModel: (view.querySelector('#txtOllamaModel') || {}).value || 'llama3.2',
+            OllamaModel: (view.querySelector('#txtOllamaModel') || {}).value || '',
             AiSystemPrompt: (view.querySelector('#txtAiSystemPrompt') || {}).value || '',
             ExtendedConsoleOutput: view.querySelector('#chkExtendedConsoleOutput').checked,
             DryRunMode: view.querySelector('#chkDryRunMode').checked,
@@ -4411,6 +4416,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var updates = (users || [])
                     .filter(function (u) {
                         return u && u.Policy && !u.Policy.EnableAllFolders &&
+                            selectedUserIds.some(function (id) { return id.toLowerCase() === (u.Id || '').toLowerCase(); }) &&
                             !(u.Policy.EnabledFolders || []).some(function (f) {
                                 return (f || '').toLowerCase() === libIdLower;
                             });
@@ -6308,9 +6314,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             view.querySelector('#txtMdblistApiKey').value = config.MdblistApiKey || '';
                             view.querySelector('#txtTmdbApiKey').value = config.TmdbApiKey || '';
                             var oaEl = view.querySelector('#txtOpenAiApiKey'); if (oaEl) oaEl.value = config.OpenAiApiKey || '';
+                            var oamEl = view.querySelector('#txtOpenAiModel'); if (oamEl) oamEl.value = config.OpenAiModel || 'gpt-4o-mini';
                             var gmEl = view.querySelector('#txtGeminiApiKey'); if (gmEl) gmEl.value = config.GeminiApiKey || '';
+                            var gmmEl = view.querySelector('#txtGeminiModel'); if (gmmEl) gmmEl.value = config.GeminiModel || 'gemini-2.5-flash-lite';
+                            var clEl = view.querySelector('#txtClaudeApiKey'); if (clEl) clEl.value = config.ClaudeApiKey || '';
+                            var clmEl = view.querySelector('#txtClaudeModel'); if (clmEl) clmEl.value = config.ClaudeModel || 'claude-haiku-4-5-20251001';
                             var olEl = view.querySelector('#txtOllamaBaseUrl'); if (olEl) olEl.value = config.OllamaBaseUrl || 'http://localhost:11434';
-                            var omEl = view.querySelector('#txtOllamaModel'); if (omEl) omEl.value = config.OllamaModel || 'llama3.2';
+                            var omEl = view.querySelector('#txtOllamaModel'); if (omEl) omEl.value = config.OllamaModel || '';
                             var spEl = view.querySelector('#txtAiSystemPrompt'); if (spEl) spEl.value = config.AiSystemPrompt || ''; updateSystemPromptResetBtn(view);
                             view.querySelector('#chkExtendedConsoleOutput').checked = config.ExtendedConsoleOutput || false;
                             view.querySelector('#chkDryRunMode').checked = config.DryRunMode || false;
@@ -6605,9 +6615,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 view.querySelector('#txtMdblistApiKey').value = config.MdblistApiKey || '';
                 view.querySelector('#txtTmdbApiKey').value = config.TmdbApiKey || '';
                 var oaElInit = view.querySelector('#txtOpenAiApiKey'); if (oaElInit) oaElInit.value = config.OpenAiApiKey || '';
+                var oamElInit = view.querySelector('#txtOpenAiModel'); if (oamElInit) oamElInit.value = config.OpenAiModel || 'gpt-4o-mini';
                 var gmElInit = view.querySelector('#txtGeminiApiKey'); if (gmElInit) gmElInit.value = config.GeminiApiKey || '';
+                var gmmElInit = view.querySelector('#txtGeminiModel'); if (gmmElInit) gmmElInit.value = config.GeminiModel || 'gemini-2.5-flash-lite';
+                var clElInit = view.querySelector('#txtClaudeApiKey'); if (clElInit) clElInit.value = config.ClaudeApiKey || '';
+                var clmElInit = view.querySelector('#txtClaudeModel'); if (clmElInit) clmElInit.value = config.ClaudeModel || 'claude-haiku-4-5-20251001';
                 var olElInit = view.querySelector('#txtOllamaBaseUrl'); if (olElInit) olElInit.value = config.OllamaBaseUrl || 'http://localhost:11434';
-                var omElInit = view.querySelector('#txtOllamaModel'); if (omElInit) omElInit.value = config.OllamaModel || 'llama3.2';
+                var omElInit = view.querySelector('#txtOllamaModel'); if (omElInit) omElInit.value = config.OllamaModel || '';
                 var spElInit = view.querySelector('#txtAiSystemPrompt'); if (spElInit) spElInit.value = config.AiSystemPrompt || ''; updateSystemPromptResetBtn(view);
                 view.querySelector('#chkExtendedConsoleOutput').checked = config.ExtendedConsoleOutput || false;
                 view.querySelector('#chkDryRunMode').checked = config.DryRunMode || false;

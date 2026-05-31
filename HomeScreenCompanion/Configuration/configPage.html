@@ -971,36 +971,70 @@
                         <span style="font-size: 1.05em; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: #52B54B;">External list settings</span>
                         <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s;">expand_more</i>
                     </div>
-                    <div class="advanced-body settings-panel-body" style="display:none;">
-                        <div class="inputContainer">
-                            <input is="emby-input" type="password" id="txtTraktClientId" label="Trakt Client ID" />
-                            <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
-                                <input type="checkbox" class="chkShowApiKey" data-target="txtTraktClientId" style="margin:0;" /> Show
-                            </label>
-                            <div class="fieldDescription">
-                                Create app at <a href="https://trakt.tv/oauth/applications" target="_blank" class="help-link">Trakt.tv</a>.
+                    <div class="advanced-body settings-panel-body" style="display:none; padding-top: 4px;">
+
+                        <div style="font-size: 0.75em; font-weight: 700; text-transform: uppercase; letter-spacing: 1.4px; opacity: 0.45; margin-bottom: 8px;">Providers</div>
+
+                        <!-- Trakt -->
+                        <div class="advanced-section settings-panel" style="border: 1px solid rgba(128,128,128,0.2); border-radius: 4px; margin-bottom: 8px;">
+                            <div class="advanced-header settings-panel-toggle" style="padding: 10px 14px; cursor: pointer; user-select: none; display: flex; align-items: center;">
+                                <i class="md-icon" style="margin-right: 8px; font-size: 1.1em; opacity: 0.65;">link</i>
+                                <span style="font-size: 0.9em; font-weight: 600; opacity: 0.85;">Trakt</span>
+                                <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s; font-size: 1.1em; opacity: 0.65;">expand_more</i>
+                            </div>
+                            <div class="settings-panel-body" style="display:none; padding: 0 14px 14px;">
+                                <div class="inputContainer">
+                                    <input is="emby-input" type="password" id="txtTraktClientId" label="Trakt Client ID" />
+                                    <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
+                                        <input type="checkbox" class="chkShowApiKey" data-target="txtTraktClientId" style="margin:0;" /> Show
+                                    </label>
+                                    <div class="fieldDescription">
+                                        Create app at <a href="https://trakt.tv/oauth/applications" target="_blank" class="help-link">Trakt.tv</a>.
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
-                        <div class="inputContainer" style="margin-top: 15px;">
-                            <input is="emby-input" type="password" id="txtMdblistApiKey" label="MDBList API Key" />
-                            <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
-                                <input type="checkbox" class="chkShowApiKey" data-target="txtMdblistApiKey" style="margin:0;" /> Show
-                            </label>
-                            <div class="fieldDescription">
-                                Get key at <a href="https://mdblist.com/preferences/" target="_blank" class="help-link">MDBList Preferences</a>.
+                        <!-- MDBList -->
+                        <div class="advanced-section settings-panel" style="border: 1px solid rgba(128,128,128,0.2); border-radius: 4px; margin-bottom: 8px;">
+                            <div class="advanced-header settings-panel-toggle" style="padding: 10px 14px; cursor: pointer; user-select: none; display: flex; align-items: center;">
+                                <i class="md-icon" style="margin-right: 8px; font-size: 1.1em; opacity: 0.65;">link</i>
+                                <span style="font-size: 0.9em; font-weight: 600; opacity: 0.85;">MDBList</span>
+                                <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s; font-size: 1.1em; opacity: 0.65;">expand_more</i>
+                            </div>
+                            <div class="settings-panel-body" style="display:none; padding: 0 14px 14px;">
+                                <div class="inputContainer">
+                                    <input is="emby-input" type="password" id="txtMdblistApiKey" label="MDBList API Key" />
+                                    <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
+                                        <input type="checkbox" class="chkShowApiKey" data-target="txtMdblistApiKey" style="margin:0;" /> Show
+                                    </label>
+                                    <div class="fieldDescription">
+                                        Get key at <a href="https://mdblist.com/preferences/" target="_blank" class="help-link">MDBList Preferences</a>.
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
-                        <div class="inputContainer" style="margin-top: 15px;">
-                            <input is="emby-input" type="password" id="txtTmdbApiKey" label="TMDb API Read Access Token" />
-                            <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
-                                <input type="checkbox" class="chkShowApiKey" data-target="txtTmdbApiKey" style="margin:0;" /> Show
-                            </label>
-                            <div class="fieldDescription">
-                                Required for TMDb lists. Get key at <a href="https://www.themoviedb.org/settings/api" target="_blank" class="help-link">TMDb Settings</a>.
+                        <!-- TMDb -->
+                        <div class="advanced-section settings-panel" style="border: 1px solid rgba(128,128,128,0.2); border-radius: 4px; margin-bottom: 8px;">
+                            <div class="advanced-header settings-panel-toggle" style="padding: 10px 14px; cursor: pointer; user-select: none; display: flex; align-items: center;">
+                                <i class="md-icon" style="margin-right: 8px; font-size: 1.1em; opacity: 0.65;">link</i>
+                                <span style="font-size: 0.9em; font-weight: 600; opacity: 0.85;">TMDb</span>
+                                <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s; font-size: 1.1em; opacity: 0.65;">expand_more</i>
+                            </div>
+                            <div class="settings-panel-body" style="display:none; padding: 0 14px 14px;">
+                                <div class="inputContainer">
+                                    <input is="emby-input" type="password" id="txtTmdbApiKey" label="TMDb API Read Access Token" />
+                                    <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
+                                        <input type="checkbox" class="chkShowApiKey" data-target="txtTmdbApiKey" style="margin:0;" /> Show
+                                    </label>
+                                    <div class="fieldDescription">
+                                        Required for TMDb lists. Get key at <a href="https://www.themoviedb.org/settings/api" target="_blank" class="help-link">TMDb Settings</a>.
+                                    </div>
+                                </div>
                             </div>
                         </div>
+
                     </div>
                 </div>
 
@@ -1010,73 +1044,131 @@
                         <span style="font-size: 1.05em; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: #52B54B;">AI Settings</span>
                         <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s;">expand_more</i>
                     </div>
-                    <div class="advanced-body settings-panel-body" style="display:none;">
+                    <div class="advanced-body settings-panel-body" style="display:none; padding-top: 4px;">
 
-                        <!-- OpenAI -->
-                        <div style="margin-bottom: 4px;">
-                            <div style="font-size: 1em; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; opacity: 0.75; margin-bottom: 10px;">OpenAI</div>
-                            <div class="inputContainer">
-                                <input is="emby-input" type="password" id="txtOpenAiApiKey" label="API Key" />
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
-                                    <input type="checkbox" class="chkShowApiKey" data-target="txtOpenAiApiKey" style="margin:0;" /> Show
-                                </label>
-                                <div class="fieldDescription">
-                                    Used for AI created lists via ChatGPT (gpt-4o-mini). Get your key at <a href="https://platform.openai.com/api-keys" target="_blank" class="help-link">platform.openai.com</a>.
-                                </div>
-                            </div>
-                        </div>
+                        <div style="font-size: 0.75em; font-weight: 700; text-transform: uppercase; letter-spacing: 1.4px; opacity: 0.45; margin-bottom: 8px;">Providers</div>
 
                         <!-- Google Gemini -->
-                        <div style="border-top: 1px solid rgba(128,128,128,0.15); padding-top: 18px; margin-top: 18px; margin-bottom: 4px;">
-                            <div style="font-size: 1em; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; opacity: 0.75; margin-bottom: 10px;">Google Gemini</div>
-                            <div class="inputContainer">
-                                <input is="emby-input" type="password" id="txtGeminiApiKey" label="API Key" />
-                                <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
-                                    <input type="checkbox" class="chkShowApiKey" data-target="txtGeminiApiKey" style="margin:0;" /> Show
-                                </label>
-                                <div class="fieldDescription">
-                                    Used for AI created lists via Google Gemini (gemini-3-flash-preview). Get your key at <a href="https://aistudio.google.com/app/apikey" target="_blank" class="help-link">Google AI Studio</a>.
+                        <div class="advanced-section settings-panel" style="border: 1px solid rgba(128,128,128,0.2); border-radius: 4px; margin-bottom: 8px;">
+                            <div class="advanced-header settings-panel-toggle" style="padding: 10px 14px; cursor: pointer; user-select: none; display: flex; align-items: center;">
+                                <i class="md-icon" style="margin-right: 8px; font-size: 1.1em; opacity: 0.65;">auto_awesome</i>
+                                <span style="font-size: 0.9em; font-weight: 600; opacity: 0.85;">Google Gemini</span>
+                                <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s; font-size: 1.1em; opacity: 0.65;">expand_more</i>
+                            </div>
+                            <div class="settings-panel-body" style="display:none; padding: 0 14px 14px;">
+                                <div class="inputContainer">
+                                    <input is="emby-input" type="password" id="txtGeminiApiKey" label="API Key" />
+                                    <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
+                                        <input type="checkbox" class="chkShowApiKey" data-target="txtGeminiApiKey" style="margin:0;" /> Show
+                                    </label>
+                                    <div class="fieldDescription">
+                                        Used for AI created lists via Google Gemini. Get your key at <a href="https://aistudio.google.com/app/apikey" target="_blank" class="help-link">Google AI Studio</a>.
+                                    </div>
+                                </div>
+                                <div class="inputContainer" style="margin-top: 12px;">
+                                    <input is="emby-input" type="text" id="txtGeminiModel" label="Model" placeholder="gemini-2.5-flash-lite" />
+                                    <div class="fieldDescription">
+                                        Model to use, e.g. <code>gemini-2.5-flash-lite</code> or <code>gemini-1.5-pro</code>. See current models at <a href="https://ai.google.dev/gemini-api/docs/models" target="_blank" class="help-link">ai.google.dev/gemini-api/docs/models</a>.
+                                    </div>
                                 </div>
                             </div>
                         </div>
 
-                        <!-- Ollama -->
-                        <div style="border-top: 1px solid rgba(128,128,128,0.15); padding-top: 18px; margin-top: 18px; margin-bottom: 4px;">
-                            <div style="font-size: 1em; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; opacity: 0.75; margin-bottom: 10px;">Ollama (Local)</div>
-                            <div class="inputContainer">
-                                <input is="emby-input" type="text" id="txtOllamaBaseUrl" label="URL (including port)" placeholder="http://localhost:11434" />
-                                <div class="fieldDescription">
-                                    Full URL to your local Ollama instance — e.g. <code>http://localhost:11434</code> or <code>http://192.168.1.100:11434</code>. See <a href="https://ollama.com" target="_blank" class="help-link">ollama.com</a>.
-                                </div>
+                        <!-- OpenAI (ChatGPT) -->
+                        <div class="advanced-section settings-panel" style="border: 1px solid rgba(128,128,128,0.2); border-radius: 4px; margin-bottom: 8px;">
+                            <div class="advanced-header settings-panel-toggle" style="padding: 10px 14px; cursor: pointer; user-select: none; display: flex; align-items: center;">
+                                <i class="md-icon" style="margin-right: 8px; font-size: 1.1em; opacity: 0.65;">auto_awesome</i>
+                                <span style="font-size: 0.9em; font-weight: 600; opacity: 0.85;">OpenAI (ChatGPT)</span>
+                                <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s; font-size: 1.1em; opacity: 0.65;">expand_more</i>
                             </div>
-                            <div class="inputContainer" style="margin-top: 12px;">
-                                <input is="emby-input" type="text" id="txtOllamaModel" label="Model" placeholder="llama3.2" />
-                                <div class="fieldDescription">
-                                    The model to use, e.g. <code>llama3.2</code>, <code>mistral</code>, <code>gemma3</code>. Must be pulled first: <code>ollama pull llama3.2</code>.
+                            <div class="settings-panel-body" style="display:none; padding: 0 14px 14px;">
+                                <div class="inputContainer">
+                                    <input is="emby-input" type="password" id="txtOpenAiApiKey" label="API Key" />
+                                    <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
+                                        <input type="checkbox" class="chkShowApiKey" data-target="txtOpenAiApiKey" style="margin:0;" /> Show
+                                    </label>
+                                    <div class="fieldDescription">
+                                        Used for AI created lists via ChatGPT. Get your key at <a href="https://platform.openai.com/api-keys" target="_blank" class="help-link">platform.openai.com</a>.
+                                    </div>
+                                </div>
+                                <div class="inputContainer" style="margin-top: 12px;">
+                                    <input is="emby-input" type="text" id="txtOpenAiModel" label="Model" placeholder="gpt-4o-mini" />
+                                    <div class="fieldDescription">
+                                        Model to use, e.g. <code>gpt-4o-mini</code> or <code>gpt-4o</code>. See current models at <a href="https://platform.openai.com/docs/models" target="_blank" class="help-link">platform.openai.com/docs/models</a>.
+                                    </div>
                                 </div>
                             </div>
                         </div>
 
-                        <!-- System prompt -->
-                        <div style="border-top: 1px solid rgba(128,128,128,0.15); padding-top: 18px; margin-top: 18px;">
-                            <div class="advanced-section settings-panel" style="border: 1px solid rgba(128,128,128,0.2); border-radius: 4px;">
-                                <div class="advanced-header settings-panel-toggle" style="padding: 10px 14px; cursor: pointer; user-select: none; display: flex; align-items: center;">
-                                    <i class="md-icon" style="margin-right: 8px; font-size: 1.1em; opacity: 0.65;">tune</i>
-                                    <span style="font-size: 0.9em; font-weight: 600; opacity: 0.85;">Edit system prompt</span>
-                                    <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s; font-size: 1.1em; opacity: 0.65;">expand_more</i>
+                        <!-- Anthropic Claude -->
+                        <div class="advanced-section settings-panel" style="border: 1px solid rgba(128,128,128,0.2); border-radius: 4px; margin-bottom: 8px;">
+                            <div class="advanced-header settings-panel-toggle" style="padding: 10px 14px; cursor: pointer; user-select: none; display: flex; align-items: center;">
+                                <i class="md-icon" style="margin-right: 8px; font-size: 1.1em; opacity: 0.65;">auto_awesome</i>
+                                <span style="font-size: 0.9em; font-weight: 600; opacity: 0.85;">Anthropic Claude</span>
+                                <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s; font-size: 1.1em; opacity: 0.65;">expand_more</i>
+                            </div>
+                            <div class="settings-panel-body" style="display:none; padding: 0 14px 14px;">
+                                <div class="inputContainer">
+                                    <input is="emby-input" type="password" id="txtClaudeApiKey" label="API Key" />
+                                    <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
+                                        <input type="checkbox" class="chkShowApiKey" data-target="txtClaudeApiKey" style="margin:0;" /> Show
+                                    </label>
+                                    <div class="fieldDescription">
+                                        Used for AI created lists via Anthropic Claude. Get your key at <a href="https://console.anthropic.com/settings/keys" target="_blank" class="help-link">console.anthropic.com</a>.
+                                    </div>
                                 </div>
-                                <div class="settings-panel-body" style="display:none; padding: 0 14px 14px;">
-                                    <div style="font-size: 0.9em; opacity: 0.75; margin-bottom: 14px; line-height: 1.6;">
-                                        <p style="margin: 0 0 8px;">The <strong>system prompt</strong> is a hidden instruction sent to the AI before every request. It tells the model what role to play and — critically — that it must respond with a specific JSON format that the plugin can parse.</p>
-                                        <p style="margin: 0 0 8px;">This is different from what you write in a <strong>source's prompt</strong> (e.g. "Best sci-fi movies from the 90s"). That text is your actual question. The system prompt is the ruleset the AI must follow when answering it.</p>
-                                        <p style="margin: 0; color: #e8a838;">Only edit this if you know what you're doing. If the JSON format instruction is removed or changed, the plugin will not be able to read the AI's response and the list will appear empty.</p>
+                                <div class="inputContainer" style="margin-top: 12px;">
+                                    <input is="emby-input" type="text" id="txtClaudeModel" label="Model" placeholder="claude-haiku-4-5-20251001" />
+                                    <div class="fieldDescription">
+                                        Model to use, e.g. <code>claude-haiku-4-5-20251001</code> or <code>claude-sonnet-4-6</code>. See current models at <a href="https://docs.anthropic.com/en/docs/about-claude/models" target="_blank" class="help-link">docs.anthropic.com/en/docs/about-claude/models</a>.
                                     </div>
-                                    <textarea is="emby-textarea" id="txtAiSystemPrompt" rows="7" style="width:100%; resize:vertical; box-sizing:border-box; font-family: monospace; font-size: 1em;"></textarea>
-                                    <div style="margin-top: 8px;">
-                                        <button is="emby-button" id="btnResetAiSystemPrompt" type="button" class="raised btn-neutral" style="display:none; font-size: 0.85em;">
-                                            <i class="md-icon" style="margin-right: 5px;">restart_alt</i>Reset to default
-                                        </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Ollama (Local) -->
+                        <div class="advanced-section settings-panel" style="border: 1px solid rgba(128,128,128,0.2); border-radius: 4px; margin-bottom: 8px;">
+                            <div class="advanced-header settings-panel-toggle" style="padding: 10px 14px; cursor: pointer; user-select: none; display: flex; align-items: center;">
+                                <i class="md-icon" style="margin-right: 8px; font-size: 1.1em; opacity: 0.65;">computer</i>
+                                <span style="font-size: 0.9em; font-weight: 600; opacity: 0.85;">Ollama (Local)</span>
+                                <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s; font-size: 1.1em; opacity: 0.65;">expand_more</i>
+                            </div>
+                            <div class="settings-panel-body" style="display:none; padding: 0 14px 14px;">
+                                <div class="inputContainer">
+                                    <input is="emby-input" type="text" id="txtOllamaBaseUrl" label="URL (including port)" placeholder="http://localhost:11434" />
+                                    <div class="fieldDescription">
+                                        Full URL to your local Ollama instance — e.g. <code>http://localhost:11434</code> or <code>http://192.168.1.100:11434</code>. See <a href="https://ollama.com" target="_blank" class="help-link">ollama.com</a>.
                                     </div>
+                                </div>
+                                <div class="inputContainer" style="margin-top: 12px;">
+                                    <input is="emby-input" type="text" id="txtOllamaModel" label="Model" placeholder="llama3.2" />
+                                    <div class="fieldDescription">
+                                        The model to use, e.g. <code>llama3.2</code>, <code>mistral</code>, <code>gemma3</code>. Must be pulled first: <code>ollama pull llama3.2</code>.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="font-size: 0.75em; font-weight: 700; text-transform: uppercase; letter-spacing: 1.4px; opacity: 0.45; margin-top: 18px; margin-bottom: 8px;">Advanced AI Settings</div>
+
+                        <!-- Edit system prompt -->
+                        <div class="advanced-section settings-panel" style="border: 1px solid rgba(128,128,128,0.2); border-radius: 4px; margin-bottom: 8px;">
+                            <div class="advanced-header settings-panel-toggle" style="padding: 10px 14px; cursor: pointer; user-select: none; display: flex; align-items: center;">
+                                <i class="md-icon" style="margin-right: 8px; font-size: 1.1em; opacity: 0.65;">tune</i>
+                                <span style="font-size: 0.9em; font-weight: 600; opacity: 0.85;">Edit system prompt</span>
+                                <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s; font-size: 1.1em; opacity: 0.65;">expand_more</i>
+                            </div>
+                            <div class="settings-panel-body" style="display:none; padding: 0 14px 14px;">
+                                <div style="font-size: 0.9em; opacity: 0.75; margin-bottom: 14px; line-height: 1.6;">
+                                    <p style="margin: 0 0 8px;">The <strong>system prompt</strong> is a hidden instruction sent to the AI before every request. It tells the model what role to play and — critically — that it must respond with a specific JSON format that the plugin can parse.</p>
+                                    <p style="margin: 0 0 8px;">This is different from what you write in a <strong>source's prompt</strong> (e.g. "Best sci-fi movies from the 90s"). That text is your actual question. The system prompt is the ruleset the AI must follow when answering it.</p>
+                                    <p style="margin: 0; color: #e8a838;">Only edit this if you know what you're doing. If the JSON format instruction is removed or changed, the plugin will not be able to read the AI's response and the list will appear empty.</p>
+                                </div>
+                                <textarea is="emby-textarea" id="txtAiSystemPrompt" rows="7" style="width:100%; resize:vertical; box-sizing:border-box; font-family: monospace; font-size: 1em;"></textarea>
+                                <div style="margin-top: 8px;">
+                                    <button is="emby-button" id="btnResetAiSystemPrompt" type="button" class="raised btn-neutral" style="display:none; font-size: 0.85em;">
+                                        <i class="md-icon" style="margin-right: 5px;">restart_alt</i>Reset to default
+                                    </button>
                                 </div>
                             </div>
                         </div>

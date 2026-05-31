@@ -10,9 +10,13 @@ namespace HomeScreenCompanion
         public string MdblistApiKey { get; set; } = "";
         public string TmdbApiKey { get; set; } = "";
         public string OpenAiApiKey { get; set; } = "";
+        public string OpenAiModel { get; set; } = "gpt-4o-mini";
         public string GeminiApiKey { get; set; } = "";
+        public string GeminiModel { get; set; } = "gemini-2.5-flash-lite";
+        public string ClaudeApiKey { get; set; } = "";
+        public string ClaudeModel { get; set; } = "claude-haiku-4-5-20251001";
         public string OllamaBaseUrl { get; set; } = "http://localhost:11434";
-        public string OllamaModel { get; set; } = "llama3.2";
+        public string OllamaModel { get; set; } = "";
         public string AiSystemPrompt { get; set; } =
             "You are a movie and TV show recommendation assistant. " +
             "Respond ONLY with a valid JSON array. No explanation, no markdown, no code fences. " +

@@ -1,14 +1,14 @@
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Entities;
-using MediaBrowser.Model.Serialization;
+using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Querying;
+using MediaBrowser.Model.Serialization;
 using MediaBrowser.Model.Tasks;
 using MediaBrowser.Model.Users;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -20,17 +20,19 @@ namespace HomeScreenCompanion
         private readonly IUserViewManager _userViewManager;
         private readonly IUserManager _userManager;
         private readonly IJsonSerializer _jsonSerializer;
+        private readonly ILogger _logger;
 
         public static List<string> ExecutionLog { get; } = new List<string>();
         public static bool IsRunning { get; private set; } = false;
         public static string LastRunStatus { get; private set; } = "Never";
 
-        public TopListSyncTask(ILibraryManager libraryManager, IUserViewManager userViewManager, IUserManager userManager, IJsonSerializer jsonSerializer)
+        public TopListSyncTask(ILibraryManager libraryManager, IUserViewManager userViewManager, IUserManager userManager, IJsonSerializer jsonSerializer, ILogManager logManager)
         {
             _libraryManager = libraryManager;
             _userViewManager = userViewManager;
             _userManager = userManager;
             _jsonSerializer = jsonSerializer;
+            _logger = logManager.GetLogger("HomeScreenCompanion_Access");
         }
 
         public string Key => "TopListSyncTask";
@@ -46,7 +48,7 @@ namespace HomeScreenCompanion
             lock (ExecutionLog) { ExecutionLog.Clear(); }
             try
             {
-                var (_, msg) = SyncAll(_libraryManager, _userViewManager, _userManager, _jsonSerializer, cancellationToken);
+                var (_, msg) = SyncAll(_libraryManager, _userViewManager, _userManager, _jsonSerializer, _logger, cancellationToken);
                 LastRunStatus = msg;
             }
             catch (Exception ex)
@@ -72,6 +74,7 @@ namespace HomeScreenCompanion
             IUserViewManager userViewManager,
             IUserManager userManager,
             IJsonSerializer jsonSerializer,
+            ILogger logger,
             CancellationToken cancellationToken)
         {
             var config = Plugin.Instance?.Configuration;
@@ -98,6 +101,31 @@ namespace HomeScreenCompanion
                 var ownId = tl.HomeSectionLibraryId.Trim().ToLowerInvariant();
                 var safeTag = new string((tl.TagName ?? "").Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
                 var sectionMarker = "hsc__tl__" + safeTag;
+
+                // Remove home sections for users no longer assigned to this top-list
+                if (tl.HomeSectionTracked != null)
+                {
+                    var assignedNorm = new HashSet<string>(
+                        (tl.HomeSectionUserIds ?? new List<string>()).Select(id => id.Replace("-", "").ToLowerInvariant()),
+                        StringComparer.OrdinalIgnoreCase);
+
+                    var unassignedTracked = tl.HomeSectionTracked
+                        .Where(t => !string.IsNullOrEmpty(t.UserId) && !string.IsNullOrEmpty(t.SectionId))
+                        .Where(t => !assignedNorm.Contains(t.UserId.Replace("-", "").ToLowerInvariant()))
+                        .ToList();
+
+                    foreach (var t in unassignedTracked)
+                    {
+                        try
+                        {
+                            var uid = userManager.GetInternalId(t.UserId);
+                            userManager.DeleteHomeSections(uid, new[] { t.SectionId }, cancellationToken);
+                            tl.HomeSectionTracked.Remove(t);
+                            Log($"    Removed home section for unassigned user {t.UserId}");
+                        }
+                        catch (Exception ex) { Log($"    Error removing section for {t.UserId}: {ex.Message}"); }
+                    }
+                }
 
                 foreach (var tracking in tl.HomeSectionTracked ?? new List<HomeSectionTracking>())
                 {
@@ -281,162 +309,7 @@ namespace HomeScreenCompanion
             totalUpdated += HomeScreenCompanionTask.UpdateUntrackedSections(
                 jsonSerializer, userManager, config, allTopListLibIds, cancellationToken);
 
-            // Ensure all users have access to all top-list libraries.
-            // This re-grants access even if Emby's async library setup overwrote it
-            // during the initial creation flow.
-            if (allTopListLibIds.Count > 0)
-            {
-                try
-                {
-                    var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
-                    var mgrType = userManager.GetType();
-
-                    var getPolicyMethod = mgrType.GetMethods(bf)
-                        .Where(m => m.Name == "GetUserPolicy")
-                        .OrderBy(m => m.GetParameters().Length)
-                        .FirstOrDefault()
-                        ?? typeof(IUserManager).GetMethods().FirstOrDefault(m => m.Name == "GetUserPolicy");
-
-                    var updateMethod = mgrType.GetMethods(bf)
-                        .Where(m => m.Name == "UpdateUserPolicy")
-                        .OrderBy(m => m.GetParameters().Length)
-                        .FirstOrDefault()
-                        ?? typeof(IUserManager).GetMethods().FirstOrDefault(m => m.Name == "UpdateUserPolicy");
-
-                    if (updateMethod != null)
-                    {
-                        var users = userManager.GetUserList(new UserQuery { IsDisabled = false });
-                        foreach (var user in users)
-                        {
-                            try
-                            {
-                                object policy = null;
-                                if (getPolicyMethod != null)
-                                {
-                                    try
-                                    {
-                                        var gp = getPolicyMethod.GetParameters();
-                                        policy = getPolicyMethod.Invoke(userManager, MakeArgArray(gp, MakeUserIdArg(userManager, gp[0].ParameterType, user), null));
-                                    }
-                                    catch { }
-                                }
-                                if (policy == null)
-                                    policy = user.GetType().GetProperty("Policy")?.GetValue(user);
-                                if (policy == null) continue;
-
-                                var enableAllProp = policy.GetType().GetProperty("EnableAllFolders");
-                                if (enableAllProp?.GetValue(policy) is true) continue;
-
-                                var foldersProp = policy.GetType().GetProperty("EnabledFolders");
-                                var folders = foldersProp?.GetValue(policy) as string[] ?? Array.Empty<string>();
-
-                                var userIdStr = user.Id.ToString();
-                                var userTopListLibIds = topLists
-                                    .Where(t => !string.IsNullOrEmpty(t.HomeSectionLibraryId) && t.HomeSectionLibraryId != "auto")
-                                    .Where(t => t.HomeSectionUserIds != null && t.HomeSectionUserIds.Any(uid =>
-                                        string.Equals(uid, userIdStr, StringComparison.OrdinalIgnoreCase) ||
-                                        string.Equals(uid.Replace("-", ""), userIdStr.Replace("-", ""), StringComparison.OrdinalIgnoreCase)))
-                                    .Select(t => t.HomeSectionLibraryId.Trim().ToLowerInvariant())
-                                    .Distinct().ToList();
-
-                                var missing = userTopListLibIds
-                                    .Where(id => !folders.Any(f => string.Equals(f, id, StringComparison.OrdinalIgnoreCase)))
-                                    .ToList();
-                                if (missing.Count == 0) continue;
-
-                                foldersProp?.SetValue(policy, folders.Concat(missing).ToArray());
-
-                                var up = updateMethod.GetParameters();
-                                updateMethod.Invoke(userManager, MakeArgArray(up, MakeUserIdArg(userManager, up[0].ParameterType, user), policy));
-                            }
-                            catch { }
-                        }
-                    }
-                }
-                catch { }
-            }
-
-            // Revoke top-list library access from users not assigned to those top-lists.
-            // Build map: normalizedLibId → set of assigned user IDs (no dashes).
-            var tlLibToAssignedUsers = topLists
-                .Where(t => !string.IsNullOrEmpty(t.HomeSectionLibraryId) && t.HomeSectionLibraryId != "auto")
-                .ToDictionary(
-                    t => t.HomeSectionLibraryId.Trim().Replace("-", "").ToLowerInvariant(),
-                    t => new HashSet<string>(
-                        (t.HomeSectionUserIds ?? new List<string>())
-                            .Select(id => id.Replace("-", "").ToLowerInvariant()),
-                        StringComparer.OrdinalIgnoreCase));
-
-            if (tlLibToAssignedUsers.Count > 0)
-            {
-                try
-                {
-                    var bf = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
-                    var mgrType = userManager.GetType();
-
-                    var getPolicyMethod = mgrType.GetMethods(bf)
-                        .Where(m => m.Name == "GetUserPolicy")
-                        .OrderBy(m => m.GetParameters().Length)
-                        .FirstOrDefault()
-                        ?? typeof(IUserManager).GetMethods().FirstOrDefault(m => m.Name == "GetUserPolicy");
-
-                    var updateMethod = mgrType.GetMethods(bf)
-                        .Where(m => m.Name == "UpdateUserPolicy")
-                        .OrderBy(m => m.GetParameters().Length)
-                        .FirstOrDefault()
-                        ?? typeof(IUserManager).GetMethods().FirstOrDefault(m => m.Name == "UpdateUserPolicy");
-
-                    if (updateMethod != null)
-                    {
-                        var users = userManager.GetUserList(new UserQuery { IsDisabled = false });
-                        foreach (var user in users)
-                        {
-                            try
-                            {
-                                object policy = null;
-                                if (getPolicyMethod != null)
-                                {
-                                    try
-                                    {
-                                        var gp = getPolicyMethod.GetParameters();
-                                        policy = getPolicyMethod.Invoke(userManager, MakeArgArray(gp, MakeUserIdArg(userManager, gp[0].ParameterType, user), null));
-                                    }
-                                    catch { }
-                                }
-                                if (policy == null)
-                                    policy = user.GetType().GetProperty("Policy")?.GetValue(user);
-                                if (policy == null) continue;
-
-                                var enableAllProp = policy.GetType().GetProperty("EnableAllFolders");
-                                if (enableAllProp?.GetValue(policy) is true) continue;
-
-                                var foldersProp = policy.GetType().GetProperty("EnabledFolders");
-                                var folders = foldersProp?.GetValue(policy) as string[] ?? Array.Empty<string>();
-
-                                var userNormId = user.Id.ToString().Replace("-", "").ToLowerInvariant();
-                                // Normalize folder IDs for comparison (Emby may store with or without dashes).
-                                var toRemove = tlLibToAssignedUsers
-                                    .Where(kvp => !kvp.Value.Contains(userNormId))
-                                    .Select(kvp => kvp.Key)
-                                    .Where(id => folders.Any(f => string.Equals(f.Replace("-", ""), id, StringComparison.OrdinalIgnoreCase)))
-                                    .ToList();
-
-                                if (toRemove.Count == 0) continue;
-
-                                foldersProp?.SetValue(policy, folders
-                                    .Where(f => !toRemove.Contains(f.Replace("-", "").ToLowerInvariant()))
-                                    .ToArray());
-
-                                var up = updateMethod.GetParameters();
-                                updateMethod.Invoke(userManager, MakeArgArray(up, MakeUserIdArg(userManager, up[0].ParameterType, user), policy));
-                                Log($"    Revoked top-list library access from '{user.Name}' ({toRemove.Count} lib(s)).");
-                            }
-                            catch { }
-                        }
-                    }
-                }
-                catch { }
-            }
+            GrantTopListLibraryAccess(topLists, userManager, libraryManager, logger);
 
             Plugin.Instance?.SaveConfiguration();
             var summary = $"Updated {totalUpdated} section(s) across {topLists.Count} top-list(s).";
@@ -444,27 +317,150 @@ namespace HomeScreenCompanion
             return (totalUpdated, summary);
         }
 
-        private static object MakeUserIdArg(IUserManager userManager, Type paramType, BaseItem user)
+        internal static void GrantTopListLibraryAccess(List<TopListHomeSection> topLists, IUserManager userManager, ILibraryManager libraryManager, ILogger logger)
         {
-            if (paramType == typeof(long) || paramType == typeof(Int64))
-                return userManager.GetInternalId(user.Id.ToString());
-            if (paramType == typeof(Guid)) return user.Id;
-            if (paramType == typeof(string)) return user.Id.ToString();
-            return user;
+            dynamic mgr = userManager;
+
+            foreach (var tl in topLists)
+            {
+                if (string.IsNullOrEmpty(tl.HomeSectionLibraryId) || tl.HomeSectionLibraryId == "auto") continue;
+                if (tl.HomeSectionUserIds == null || tl.HomeSectionUserIds.Count == 0) continue;
+
+                var rawLibId = tl.HomeSectionLibraryId.Trim();
+
+                // HomeSectionLibraryId may be stored as InternalId (numeric) rather than GUID.
+                // EnabledFolders in Emby user policy requires the GUID (32 hex chars, no dashes).
+                // If numeric, look up the GUID via the library manager.
+                var libGuid = ResolveLibraryGuid(rawLibId, libraryManager);
+                if (string.IsNullOrEmpty(libGuid))
+                {
+                    logger.Warn($"[Access] Could not resolve GUID for library '{rawLibId}' — skipping.");
+                    continue;
+                }
+
+                var assignedNormIds = new HashSet<string>(
+                    tl.HomeSectionUserIds.Select(id => id.Replace("-", "").ToLowerInvariant()),
+                    StringComparer.OrdinalIgnoreCase);
+
+                var allUsers = userManager.GetUserList(new UserQuery { IsDisabled = false }).ToList();
+                var matchedUsers = allUsers
+                    .Where(u => assignedNormIds.Contains(u.Id.ToString().Replace("-", "").ToLowerInvariant()))
+                    .ToList();
+
+                // Grant: ensure assigned users have access
+                foreach (var user in matchedUsers)
+                {
+                    try
+                    {
+                        var uid = userManager.GetInternalId(user.Id.ToString());
+                        dynamic policy = GetPolicy(mgr, user, uid);
+                        if (policy == null) continue;
+
+                        bool enableAll;
+                        try { enableAll = (bool)policy.EnableAllFolders; } catch { enableAll = false; }
+                        if (enableAll) continue;
+
+                        string[] folders;
+                        try { folders = (string[])policy.EnabledFolders ?? Array.Empty<string>(); } catch { folders = Array.Empty<string>(); }
+
+                        if (folders.Any(f => string.Equals(f.Replace("-", ""), libGuid, StringComparison.OrdinalIgnoreCase)))
+                            continue;
+
+                        // Remove any stale InternalId entry and add the GUID
+                        var cleanedFolders = folders
+                            .Where(f => !string.Equals(f.Replace("-", ""), rawLibId.Replace("-", ""), StringComparison.OrdinalIgnoreCase))
+                            .ToArray();
+                        policy.EnabledFolders = cleanedFolders.Concat(new[] { libGuid }).ToArray();
+                        UpdatePolicy(mgr, user, uid, policy);
+                        logger.Info($"[Access] Granted library '{tl.TagName}' to '{user.Name}'.");
+                    }
+                    catch (Exception ex) { logger.Error($"[Access] Grant error for '{user.Name}': {ex.GetBaseException().Message}"); }
+                }
+
+                // Revoke: remove access from users NOT assigned to this top-list
+                var rawNorm = rawLibId.Replace("-", "").ToLowerInvariant();
+                foreach (var user in allUsers.Where(u => !assignedNormIds.Contains(u.Id.ToString().Replace("-", "").ToLowerInvariant())))
+                {
+                    try
+                    {
+                        var uid = userManager.GetInternalId(user.Id.ToString());
+                        dynamic policy = GetPolicy(mgr, user, uid);
+                        if (policy == null) continue;
+
+                        bool enableAll;
+                        try { enableAll = (bool)policy.EnableAllFolders; } catch { enableAll = false; }
+                        if (enableAll) continue;
+
+                        string[] folders;
+                        try { folders = (string[])policy.EnabledFolders ?? Array.Empty<string>(); } catch { folders = Array.Empty<string>(); }
+
+                        var hasEntry = folders.Any(f =>
+                            string.Equals(f.Replace("-", ""), libGuid, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(f.Replace("-", ""), rawNorm, StringComparison.OrdinalIgnoreCase));
+                        if (!hasEntry) continue;
+
+                        policy.EnabledFolders = folders
+                            .Where(f =>
+                                !string.Equals(f.Replace("-", ""), libGuid, StringComparison.OrdinalIgnoreCase) &&
+                                !string.Equals(f.Replace("-", ""), rawNorm, StringComparison.OrdinalIgnoreCase))
+                            .ToArray();
+
+                        UpdatePolicy(mgr, user, uid, policy);
+                        logger.Info($"[Access] Revoked library '{tl.TagName}' from '{user.Name}'.");
+                    }
+                    catch (Exception ex) { logger.Error($"[Access] Revoke error for '{user.Name}': {ex.GetBaseException().Message}"); }
+                }
+            }
         }
 
-        private static object[] MakeArgArray(ParameterInfo[] parms, object arg0, object arg1)
+        private static string ResolveLibraryGuid(string libId, ILibraryManager libraryManager)
         {
-            var args = new object[parms.Length];
-            args[0] = arg0;
-            for (int i = 1; i < parms.Length; i++)
+            if (string.IsNullOrEmpty(libId)) return null;
+            var norm = libId.Replace("-", "").ToLowerInvariant();
+
+            // If it's already a 32-char hex string → it's a GUID
+            if (norm.Length == 32 && norm.All(c => "0123456789abcdef".IndexOf(c) >= 0))
+                return norm;
+
+            // Otherwise treat as InternalId — find the matching CollectionFolder
+            if (long.TryParse(libId.Trim(), out long internalId))
             {
-                if (i == 1 && arg1 != null) args[i] = arg1;
-                else if (parms[i].ParameterType == typeof(CancellationToken)) args[i] = CancellationToken.None;
-                else if (parms[i].HasDefaultValue) args[i] = parms[i].DefaultValue;
-                else args[i] = null;
+                try
+                {
+                    var items = libraryManager.GetItemList(new InternalItemsQuery
+                    {
+                        IncludeItemTypes = new[] { "CollectionFolder" }
+                    });
+                    var match = items.FirstOrDefault(it => it.InternalId == internalId);
+                    if (match != null)
+                        return match.Id.ToString("N").ToLowerInvariant();
+                }
+                catch { }
             }
-            return args;
+
+            return null;
         }
+
+        internal static object GetPolicy(dynamic mgr, BaseItem user, long uid)
+        {
+            dynamic policy = null;
+            try { policy = mgr.GetUserPolicy(user); return policy; }
+            catch { }
+            try { policy = mgr.GetUserPolicy(user.Id); return policy; }
+            catch { }
+            try { policy = mgr.GetUserPolicy(uid); return policy; }
+            catch { }
+            return user.GetType().GetProperty("Policy")?.GetValue(user);
+        }
+
+        internal static void UpdatePolicy(dynamic mgr, BaseItem user, long uid, dynamic policy)
+        {
+            try { mgr.UpdateUserPolicy(uid, policy); return; }
+            catch { }
+            try { mgr.UpdateUserPolicy(user.Id, policy); return; }
+            catch { }
+            mgr.UpdateUserPolicy(user, policy);
+        }
+
     }
 }

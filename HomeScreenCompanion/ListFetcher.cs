@@ -415,7 +415,11 @@ namespace HomeScreenCompanion
             string provider,
             string prompt,
             string openAiApiKey,
+            string openAiModel,
             string geminiApiKey,
+            string geminiModel,
+            string claudeApiKey,
+            string claudeModel,
             string ollamaBaseUrl,
             string ollamaModel,
             string systemPrompt,
@@ -437,19 +441,27 @@ namespace HomeScreenCompanion
                 {
                     if (string.IsNullOrWhiteSpace(geminiApiKey))
                         throw new InvalidOperationException("Gemini API key is not configured.");
-                    rawJson = await CallGemini(geminiApiKey, systemPrompt, userMessage, cancellationToken);
+                    rawJson = await CallGemini(geminiApiKey, geminiModel ?? "gemini-2.0-flash", systemPrompt, userMessage, cancellationToken);
+                }
+                else if (string.Equals(provider, "Claude", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (string.IsNullOrWhiteSpace(claudeApiKey))
+                        throw new InvalidOperationException("Claude API key is not configured.");
+                    rawJson = await CallClaude(claudeApiKey, claudeModel ?? "claude-haiku-4-5-20251001", systemPrompt, userMessage, cancellationToken);
                 }
                 else if (string.Equals(provider, "Ollama", StringComparison.OrdinalIgnoreCase))
                 {
                     if (string.IsNullOrWhiteSpace(ollamaBaseUrl))
                         throw new InvalidOperationException("Ollama base URL is not configured.");
-                    rawJson = await CallOllama(ollamaBaseUrl, ollamaModel ?? "llama3.2", systemPrompt, userMessage, cancellationToken);
+                    if (string.IsNullOrWhiteSpace(ollamaModel))
+                        throw new InvalidOperationException("Ollama model is not configured.");
+                    rawJson = await CallOllama(ollamaBaseUrl, ollamaModel, systemPrompt, userMessage, cancellationToken);
                 }
                 else
                 {
                     if (string.IsNullOrWhiteSpace(openAiApiKey))
                         throw new InvalidOperationException("OpenAI API key is not configured.");
-                    rawJson = await CallOpenAi(openAiApiKey, systemPrompt, userMessage, cancellationToken);
+                    rawJson = await CallOpenAi(openAiApiKey, openAiModel ?? "gpt-4o-mini", systemPrompt, userMessage, cancellationToken);
                 }
 
                 var cleaned = CleanAiJsonOutput(rawJson);
@@ -462,10 +474,10 @@ namespace HomeScreenCompanion
             }
         }
 
-        private async Task<string> CallOpenAi(string apiKey, string systemPrompt, string userMessage, CancellationToken cancellationToken)
+        private async Task<string> CallOpenAi(string apiKey, string model, string systemPrompt, string userMessage, CancellationToken cancellationToken)
         {
             var requestBody = $"{{" +
-                $"\"model\":\"gpt-4o-mini\"," +
+                $"\"model\":{EscapeJsonString(model)}," +
                 $"\"messages\":[" +
                 $"{{\"role\":\"system\",\"content\":{EscapeJsonString(systemPrompt)}}}," +
                 $"{{\"role\":\"user\",\"content\":{EscapeJsonString(userMessage)}}}" +
@@ -488,9 +500,9 @@ namespace HomeScreenCompanion
             return parsed?.choices?.FirstOrDefault()?.message?.content ?? "";
         }
 
-        private async Task<string> CallGemini(string apiKey, string systemPrompt, string userMessage, CancellationToken cancellationToken)
+        private async Task<string> CallGemini(string apiKey, string model, string systemPrompt, string userMessage, CancellationToken cancellationToken)
         {
-            var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}";
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
             var requestBody = $"{{" +
                 $"\"systemInstruction\":{{\"parts\":[{{\"text\":{EscapeJsonString(systemPrompt)}}}]}}," +
                 $"\"contents\":[{{\"role\":\"user\",\"parts\":[{{\"text\":{EscapeJsonString(userMessage)}}}]}}]" +
@@ -510,6 +522,33 @@ namespace HomeScreenCompanion
 
             var parsed = _jsonSerializer.DeserializeFromString<GeminiResponse>(responseBody);
             return parsed?.candidates?.FirstOrDefault()?.content?.parts?.FirstOrDefault()?.text ?? "";
+        }
+
+        private async Task<string> CallClaude(string apiKey, string model, string systemPrompt, string userMessage, CancellationToken cancellationToken)
+        {
+            var requestBody = $"{{" +
+                $"\"model\":{EscapeJsonString(model)}," +
+                $"\"max_tokens\":1024," +
+                $"\"system\":{EscapeJsonString(systemPrompt)}," +
+                $"\"messages\":[{{\"role\":\"user\",\"content\":{EscapeJsonString(userMessage)}}}]" +
+                $"}}";
+
+            var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, "https://api.anthropic.com/v1/messages");
+            request.Headers.Add("x-api-key", apiKey);
+            request.Headers.Add("anthropic-version", "2023-06-01");
+            request.Content = new System.Net.Http.StringContent(requestBody, Encoding.UTF8, "application/json");
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(30));
+
+            var response = await _netHttpClient.SendAsync(request, cts.Token);
+            var responseBody = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException($"Claude API error {(int)response.StatusCode}: {responseBody}");
+
+            var parsed = _jsonSerializer.DeserializeFromString<ClaudeResponse>(responseBody);
+            return parsed?.content?.FirstOrDefault(c => c.type == "text")?.text ?? "";
         }
 
         private async Task<string> CallOllama(string baseUrl, string model, string systemPrompt, string userMessage, CancellationToken cancellationToken)

@@ -775,7 +775,11 @@ namespace HomeScreenCompanion
                                 tagConfig.AiProvider,
                                 tagConfig.AiPrompt,
                                 config.OpenAiApiKey,
+                                config.OpenAiModel,
                                 config.GeminiApiKey,
+                                config.GeminiModel,
+                                config.ClaudeApiKey,
+                                config.ClaudeModel,
                                 config.OllamaBaseUrl,
                                 config.OllamaModel,
                                 config.AiSystemPrompt,
@@ -1230,7 +1234,7 @@ namespace HomeScreenCompanion
                 if (!dryRun) ManageHomeSections(config, cancellationToken, debug, statsList);
                 CleanupDisabledPlaylists(config, dryRun);
                 SyncTopListFolders(config, dryRun);
-                if (!dryRun) TopListSyncTask.SyncAll(_libraryManager, _userViewManager, _userManager, _jsonSerializer, cancellationToken);
+                if (!dryRun) TopListSyncTask.SyncAll(_libraryManager, _userViewManager, _userManager, _jsonSerializer, _logger, cancellationToken);
 
                 progress.Report(100);
                 var elapsed = DateTime.Now - startTime;
@@ -1800,7 +1804,11 @@ namespace HomeScreenCompanion
                         tagConfig.AiProvider,
                         tagConfig.AiPrompt,
                         config.OpenAiApiKey,
+                        config.OpenAiModel,
                         config.GeminiApiKey,
+                        config.GeminiModel,
+                        config.ClaudeApiKey,
+                        config.ClaudeModel,
                         config.OllamaBaseUrl,
                         config.OllamaModel,
                         config.AiSystemPrompt,
