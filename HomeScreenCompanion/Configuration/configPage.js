@@ -2648,20 +2648,25 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var sel = selectedIds || [];
         var rows = users.map(function(u) {
             var chk = sel.indexOf(u.Id) !== -1 ? ' checked' : '';
-            return '<label class="filter-chk-row">' +
-                '<input type="checkbox" class="' + escAttr(checkboxClass) + '" value="' + escAttr(u.Id) + '"' + chk + '>' +
-                '<span>' + escHtml(u.Name) + '</span></label>';
+            return '<div class="checkboxContainer" style="margin:2px 0;">' +
+                '<label><input type="checkbox" is="emby-checkbox" class="' + escAttr(checkboxClass) + '" value="' + escAttr(u.Id) + '" data-name="' + escAttr(u.Name) + '"' + chk + '>' +
+                '<span>' + escHtml(u.Name) + '</span></label></div>';
         }).join('');
         var checkedNames = users.filter(function(u) { return sel.indexOf(u.Id) !== -1; }).map(function(u) { return u.Name; });
         var lbl = checkedNames.length === 0 ? 'No users selected'
             : checkedNames.length === users.length ? 'All users'
             : checkedNames.join(', ');
-        return '<div class="filter-dropdown-wrapper hsc-user-dropdown">' +
-            '<button type="button" class="filter-dropdown-btn hsc-user-dropdown-btn">' +
-            '<span class="hsc-user-dropdown-label">' + escHtml(lbl) + '</span>' +
-            '<i class="md-icon hsc-user-dropdown-caret" style="font-size:1em;margin-left:4px;">expand_more</i>' +
+        var btnStyle = 'display:flex;align-items:center;width:100%;padding:6px 10px;' +
+            'background:var(--plugin-input-bg,rgba(128,128,128,0.08));' +
+            'border:1px solid var(--plugin-input-border,var(--line-color));' +
+            'border-radius:4px;font-size:0.9em;color:inherit;cursor:pointer;' +
+            'box-sizing:border-box;text-align:left;';
+        return '<div class="filter-dropdown-wrapper hsc-user-dropdown" style="width:100%;">' +
+            '<button type="button" class="hsc-user-dropdown-btn" style="' + btnStyle + '">' +
+            '<span class="hsc-user-dropdown-label" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escHtml(lbl) + '</span>' +
+            '<i class="md-icon hsc-user-dropdown-caret" style="font-size:1em;margin-left:6px;flex-shrink:0;">expand_more</i>' +
             '</button>' +
-            '<div class="filter-dropdown-panel" style="min-width:220px;">' + rows + '</div>' +
+            '<div class="filter-dropdown-panel" style="min-width:220px;width:100%;box-sizing:border-box;">' + rows + '</div>' +
             '</div>';
     }
 
@@ -2681,7 +2686,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 lbl.textContent = 'All users';
             } else {
                 lbl.textContent = Array.from(checkedBoxes).map(function(cb) {
-                    return cb.closest('label').querySelector('span').textContent;
+                    return cb.dataset.name || '';
                 }).join(', ');
             }
         }
@@ -4606,7 +4611,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 '<div style="' + fieldStyle + '">' +
                 '<label style="' + labelStyle + '">Show this section</label>' +
-                '<select class="tlm-display-mode" style="' + inputStyle + '">' +
+                '<select is="emby-select" class="tlm-display-mode" style="width:100%;">' +
                 '<option value="">Always</option>' +
                 '<option value="tv">When TV Display Mode is on</option>' +
                 '<option value="mobile,desktop">When TV Display Mode is off</option>' +
@@ -4619,7 +4624,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 '<div style="' + fieldStyle + '">' +
                 '<label style="' + labelStyle + '">Image Type</label>' +
-                '<select class="tlm-image-type" style="' + inputStyle + '">' +
+                '<select is="emby-select" class="tlm-image-type" style="width:100%;">' +
                 '<option value="">Auto</option>' +
                 '<option value="Primary">Primary</option>' +
                 '<option value="Thumb">Thumb</option>' +
@@ -4797,11 +4802,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 '<div style="' + fieldStyle + '">' +
                 '<label style="' + labelStyle + '">Show this section</label>' +
-                '<select class="mtlDisplayMode" style="' + inputStyle + '">' + displayOptions + '</select></div>' +
+                '<select is="emby-select" class="mtlDisplayMode" style="width:100%;">' + displayOptions + '</select></div>' +
 
                 '<div style="' + fieldStyle + '">' +
                 '<label style="' + labelStyle + '">Image Type</label>' +
-                '<select class="mtlImageType" style="' + inputStyle + '">' + imageOptions + '</select></div>' +
+                '<select is="emby-select" class="mtlImageType" style="width:100%;">' + imageOptions + '</select></div>' +
 
                 '</div>' +
 
@@ -5097,11 +5102,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                     '<div style="' + fieldStyle + '">' +
                     '<label style="' + labelStyle + '">Show this section</label>' +
-                    '<select class="mtlDisplayMode" style="' + inputStyle + '">' + displayOptions + '</select></div>' +
+                    '<select is="emby-select" class="mtlDisplayMode" style="width:100%;">' + displayOptions + '</select></div>' +
 
                     '<div style="' + fieldStyle + '">' +
                     '<label style="' + labelStyle + '">Image Type</label>' +
-                    '<select class="mtlImageType" style="' + inputStyle + '">' + imageOptions + '</select></div>' +
+                    '<select is="emby-select" class="mtlImageType" style="width:100%;">' + imageOptions + '</select></div>' +
 
                     '</div>' +
 
@@ -5298,7 +5303,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                     '<div style="' + fieldStyle + '">' +
                     '<label style="' + labelStyle + '">Show this section</label>' +
-                    '<select class="tlm-display-mode" style="' + inputStyle + '">' +
+                    '<select is="emby-select" class="tlm-display-mode" style="width:100%;">' +
                     '<option value="">Always</option>' +
                     '<option value="tv">When TV Display Mode is on</option>' +
                     '<option value="mobile,desktop">When TV Display Mode is off</option>' +
@@ -5311,7 +5316,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                     '<div style="' + fieldStyle + '">' +
                     '<label style="' + labelStyle + '">Image Type</label>' +
-                    '<select class="tlm-image-type" style="' + inputStyle + '">' +
+                    '<select is="emby-select" class="tlm-image-type" style="width:100%;">' +
                     '<option value="">Auto</option>' +
                     '<option value="Primary">Primary</option>' +
                     '<option value="Thumb">Thumb</option>' +
