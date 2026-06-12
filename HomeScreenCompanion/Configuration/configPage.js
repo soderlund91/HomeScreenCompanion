@@ -439,6 +439,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             display: block;
         }
 
+        .hsc-user-dropdown .filter-dropdown-panel {
+            max-height: 260px;
+            overflow-y: auto;
+        }
+
         .filter-dropdown-section {
             margin-bottom: 10px;
         }
