@@ -943,6 +943,10 @@ namespace HomeScreenCompanion
                                 desiredCollectionsMap[cName].Add(localItem.InternalId);
                         }
 
+                        // Sync this entry's playlists now (same per-entry logic as a single-group run).
+                        // Placed here so it inherits the loop's skip/preserve/override guards above.
+                        await SyncPlaylistsForEntryAsync(tagConfig, collectionOutputItems, dryRun);
+
                         gs.BoxSetFound = ApplyTagToSourceBoxSet(tagConfig, tagName, dryRun, cancellationToken);
                         gs.BoxSetTaggedCount = gs.BoxSetFound ? 1 : 0;
                     }
@@ -2131,6 +2135,119 @@ namespace HomeScreenCompanion
                 }
             }
 
+            await SyncPlaylistsForEntryAsync(tagConfig, collectionOutputItems, dryRun);
+
+            if (!dryRun)
+            {
+                TagCacheManager.Instance.Save();
+                // Add this tag to the history file so a future full run can clean it up
+                // if the group is later deleted or disabled.
+                if (!string.IsNullOrEmpty(tagName))
+                {
+                    var _hist = LoadFileHistory("homescreencompanion_history.txt");
+                    if (!_hist.Any(t => string.Equals(t, tagName, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        _hist.Add(tagName);
+                        SaveFileHistory("homescreencompanion_history.txt", _hist);
+                    }
+                }
+
+                Plugin.Instance.SaveConfiguration();
+            }
+
+            var _boxSetFound = ApplyTagToSourceBoxSet(tagConfig, tagName, dryRun, cancellationToken);
+
+            // For BoxSet HSE groups, also tag sibling flat entries (same Name+Tag) that
+            // were not reached by FirstOrDefault — so the count matches the full-run behaviour.
+            int _boxSetTaggedCount = _boxSetFound ? 1 : 0;
+            if (_isBoxSetHse)
+            {
+                var siblings = config.Tags.Where(t =>
+                    t != tagConfig &&
+                    string.Equals((t.Name ?? "").Trim(), (tagConfig.Name ?? "").Trim(), StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals((t.Tag  ?? "").Trim(), tagName, StringComparison.OrdinalIgnoreCase) &&
+                    IsBoxSetHomeSectionEntry(t)).ToList();
+                foreach (var sib in siblings)
+                    if (ApplyTagToSourceBoxSet(sib, tagName, dryRun, cancellationToken))
+                        _boxSetTaggedCount++;
+            }
+
+            tagsRemoved += CleanupBoxSetTags(config, dryRun, cancellationToken);
+
+            // Manage home sections for this entry
+            var _singleGs = new GroupRunStats
+            {
+                TagName = tagName,
+                EnableHomeSection = tagConfig.EnableHomeSection
+            };
+            if (!dryRun && tagConfig.EnableHomeSection)
+                ManageHomeSections(config, cancellationToken, debug, new List<GroupRunStats> { _singleGs }, tagName);
+            CleanupDisabledPlaylists(config, dryRun);
+            SyncTopListFolders(config, dryRun);
+
+            var elapsed = DateTime.Now - startTime;
+            string elapsedStr = elapsed.TotalMinutes >= 1
+                ? $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds}s"
+                : $"{(int)elapsed.TotalSeconds}s";
+            string finalStatus = dryRun ? "Dry Run" : "Success";
+
+            LogSummary("");
+            LogSummary($"[1/1] {_displayName}  ({_srcLabel})");
+            if (_srcLabel == "MediaInfo")
+                LogSummary($"  Scanned: {_listCount} items · {matchedLocalItems.Count} matched");
+            else if (_isBoxSetHse)
+                LogSummary($"  Collections tagged: {_boxSetTaggedCount}");
+            else if (_srcLabel == "LocalCollection" || _srcLabel == "LocalPlaylist")
+                LogSummary($"  Source: {_listCount} items · {matchedLocalItems.Count} matched");
+            else
+                LogSummary($"  List: {_listCount} objects · {matchedLocalItems.Count} matched in library");
+            if (!_isBoxSetHse && tagConfig.EnableTag && !tagConfig.OnlyCollection)
+                LogSummary($"  Tag: +{tagsAdded} added, -{tagsRemoved} removed");
+            if (tagConfig.EnableCollection)
+                LogSummary(_collCreated
+                    ? $"  Collection: created ({_collItemsAdded} items)"
+                    : $"  Collection: updated (+{_collItemsAdded}, -{_collItemsRemoved})");
+            if (tagConfig.EnableHomeSection)
+                LogSummary(_singleGs.HomeSectionSynced
+                    ? $"  Home section: synced for {_singleGs.HomeSectionUserCount} user(s)"
+                    : "  Home section: not synced");
+            LogSummary("");
+
+            LogSummary("══════════════════════════════════════════════════");
+            LogSummary("Summary");
+            if (tagConfig.EnableTag && !tagConfig.OnlyCollection && !_isBoxSetHse)
+                LogSummary($"  Tags:          +{tagsAdded} added,  -{tagsRemoved} removed");
+            if (_isBoxSetHse)
+                LogSummary($"  Collections tagged: {_boxSetTaggedCount}");
+            if (tagConfig.EnableCollection)
+                LogSummary($"  Collections:   {(_collCreated ? 1 : 0)} created,   {(!_collCreated && collResult > 0 ? 1 : 0)} updated");
+            if (tagConfig.EnableHomeSection)
+                LogSummary($"  Home sections: {(_singleGs.HomeSectionSynced ? 1 : 0)} synced");
+            LogSummary($"  Done in {elapsedStr}  ·  {finalStatus}");
+            LogSummary("══════════════════════════════════════════════════");
+
+            List<string> parts;
+            if (_isBoxSetHse)
+            {
+                parts = new List<string> { $"{_boxSetTaggedCount} collection{(_boxSetTaggedCount == 1 ? "" : "s")} tagged" };
+            }
+            else
+            {
+                parts = new List<string> { $"{matchedLocalItems.Count} matched" };
+                if (tagsAdded > 0 || tagsRemoved > 0) parts.Add($"{tagsAdded}↑ {tagsRemoved}↓ tags");
+            }
+            if (collResult > 0) parts.Add("collection updated");
+            if (dryRun) parts.Add("(dry run)");
+            var summary = string.Join(", ", parts);
+            LastRunStatus = $"Success ({DateTime.Now:HH:mm})";
+            return (true, summary);
+        }
+
+        // Playlist sync for a single entry — one individual playlist per user in PlaylistUserIds.
+        // Shared by both the full sync (Execute) and the single-group run (RunSingleEntryInternalAsync)
+        // so both paths create/update playlists identically.
+        private async Task SyncPlaylistsForEntryAsync(TagConfig tagConfig, List<BaseItem> collectionOutputItems, bool dryRun)
+        {
             // Playlist sync — one individual playlist per user in PlaylistUserIds
             if (tagConfig.EnablePlaylist && !dryRun)
             {
@@ -2321,111 +2438,6 @@ namespace HomeScreenCompanion
                     LogSummary($"  ! Playlist error: {ex.Message}", "Warn");
                 }
             }
-
-            if (!dryRun)
-            {
-                TagCacheManager.Instance.Save();
-                // Add this tag to the history file so a future full run can clean it up
-                // if the group is later deleted or disabled.
-                if (!string.IsNullOrEmpty(tagName))
-                {
-                    var _hist = LoadFileHistory("homescreencompanion_history.txt");
-                    if (!_hist.Any(t => string.Equals(t, tagName, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        _hist.Add(tagName);
-                        SaveFileHistory("homescreencompanion_history.txt", _hist);
-                    }
-                }
-
-                Plugin.Instance.SaveConfiguration();
-            }
-
-            var _boxSetFound = ApplyTagToSourceBoxSet(tagConfig, tagName, dryRun, cancellationToken);
-
-            // For BoxSet HSE groups, also tag sibling flat entries (same Name+Tag) that
-            // were not reached by FirstOrDefault — so the count matches the full-run behaviour.
-            int _boxSetTaggedCount = _boxSetFound ? 1 : 0;
-            if (_isBoxSetHse)
-            {
-                var siblings = config.Tags.Where(t =>
-                    t != tagConfig &&
-                    string.Equals((t.Name ?? "").Trim(), (tagConfig.Name ?? "").Trim(), StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals((t.Tag  ?? "").Trim(), tagName, StringComparison.OrdinalIgnoreCase) &&
-                    IsBoxSetHomeSectionEntry(t)).ToList();
-                foreach (var sib in siblings)
-                    if (ApplyTagToSourceBoxSet(sib, tagName, dryRun, cancellationToken))
-                        _boxSetTaggedCount++;
-            }
-
-            tagsRemoved += CleanupBoxSetTags(config, dryRun, cancellationToken);
-
-            // Manage home sections for this entry
-            var _singleGs = new GroupRunStats
-            {
-                TagName = tagName,
-                EnableHomeSection = tagConfig.EnableHomeSection
-            };
-            if (!dryRun && tagConfig.EnableHomeSection)
-                ManageHomeSections(config, cancellationToken, debug, new List<GroupRunStats> { _singleGs }, tagName);
-            CleanupDisabledPlaylists(config, dryRun);
-            SyncTopListFolders(config, dryRun);
-
-            var elapsed = DateTime.Now - startTime;
-            string elapsedStr = elapsed.TotalMinutes >= 1
-                ? $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds}s"
-                : $"{(int)elapsed.TotalSeconds}s";
-            string finalStatus = dryRun ? "Dry Run" : "Success";
-
-            LogSummary("");
-            LogSummary($"[1/1] {_displayName}  ({_srcLabel})");
-            if (_srcLabel == "MediaInfo")
-                LogSummary($"  Scanned: {_listCount} items · {matchedLocalItems.Count} matched");
-            else if (_isBoxSetHse)
-                LogSummary($"  Collections tagged: {_boxSetTaggedCount}");
-            else if (_srcLabel == "LocalCollection" || _srcLabel == "LocalPlaylist")
-                LogSummary($"  Source: {_listCount} items · {matchedLocalItems.Count} matched");
-            else
-                LogSummary($"  List: {_listCount} objects · {matchedLocalItems.Count} matched in library");
-            if (!_isBoxSetHse && tagConfig.EnableTag && !tagConfig.OnlyCollection)
-                LogSummary($"  Tag: +{tagsAdded} added, -{tagsRemoved} removed");
-            if (tagConfig.EnableCollection)
-                LogSummary(_collCreated
-                    ? $"  Collection: created ({_collItemsAdded} items)"
-                    : $"  Collection: updated (+{_collItemsAdded}, -{_collItemsRemoved})");
-            if (tagConfig.EnableHomeSection)
-                LogSummary(_singleGs.HomeSectionSynced
-                    ? $"  Home section: synced for {_singleGs.HomeSectionUserCount} user(s)"
-                    : "  Home section: not synced");
-            LogSummary("");
-
-            LogSummary("══════════════════════════════════════════════════");
-            LogSummary("Summary");
-            if (tagConfig.EnableTag && !tagConfig.OnlyCollection && !_isBoxSetHse)
-                LogSummary($"  Tags:          +{tagsAdded} added,  -{tagsRemoved} removed");
-            if (_isBoxSetHse)
-                LogSummary($"  Collections tagged: {_boxSetTaggedCount}");
-            if (tagConfig.EnableCollection)
-                LogSummary($"  Collections:   {(_collCreated ? 1 : 0)} created,   {(!_collCreated && collResult > 0 ? 1 : 0)} updated");
-            if (tagConfig.EnableHomeSection)
-                LogSummary($"  Home sections: {(_singleGs.HomeSectionSynced ? 1 : 0)} synced");
-            LogSummary($"  Done in {elapsedStr}  ·  {finalStatus}");
-            LogSummary("══════════════════════════════════════════════════");
-
-            List<string> parts;
-            if (_isBoxSetHse)
-            {
-                parts = new List<string> { $"{_boxSetTaggedCount} collection{(_boxSetTaggedCount == 1 ? "" : "s")} tagged" };
-            }
-            else
-            {
-                parts = new List<string> { $"{matchedLocalItems.Count} matched" };
-                if (tagsAdded > 0 || tagsRemoved > 0) parts.Add($"{tagsAdded}↑ {tagsRemoved}↓ tags");
-            }
-            if (collResult > 0) parts.Add("collection updated");
-            if (dryRun) parts.Add("(dry run)");
-            var summary = string.Join(", ", parts);
-            LastRunStatus = $"Success ({DateTime.Now:HH:mm})";
-            return (true, summary);
         }
 
         private void ManageHomeSections(PluginConfiguration config, CancellationToken cancellationToken, bool debug = false, List<GroupRunStats>? statsList = null, string? filterTagName = null)
