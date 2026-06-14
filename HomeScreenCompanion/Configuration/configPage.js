@@ -1761,7 +1761,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         </div>
                         <div style="margin-top:12px;">
                             <p style="margin:0 0 8px 0; font-size:0.9em; font-weight:bold; opacity:0.7;">Target Users</p>
-                            <div class="playlist-user-list"></div>
+                            <div class="playlist-user-list"><em style="opacity:0.5">Loading users...</em></div>
                         </div>
                     </div>
                 </div>
@@ -3005,13 +3005,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var savedUserIds = [];
         try { savedUserIds = JSON.parse(decodeURIComponent(tab.dataset.plUserids || '%5B%5D')); } catch {}
         getHseUsers().then(function(users) {
-            var userHtml = '';
-            (users || []).forEach(function(u) {
-                var chk = savedUserIds.indexOf(u.Id) !== -1 ? 'checked' : '';
-                userHtml += '<div style="margin:4px 0;"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" is="emby-checkbox" class="chkPlaylistUser" value="' + u.Id + '" ' + chk + '/><span>' + u.Name + '</span></label></div>';
-            });
             var listEl = tab.querySelector('.playlist-user-list');
-            if (listEl) listEl.innerHTML = userHtml;
+            if (!listEl) return;
+            listEl.innerHTML = buildUserMultiSelectHtml(users, savedUserIds, 'chkPlaylistUser');
+            wireUserMultiSelect(listEl);
         });
     }
 
