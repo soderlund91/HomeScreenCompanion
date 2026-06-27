@@ -2695,10 +2695,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 }).join(', ');
             }
         }
+        var row = wrapper.closest('.tag-row');
         btn.addEventListener('click', function(e) {
             e.stopPropagation();
             var open = panel.classList.toggle('open');
             caret.textContent = open ? 'expand_less' : 'expand_more';
+            if (row) row.style.overflow = open ? 'visible' : '';
         });
         panel.querySelectorAll('input[type="checkbox"]').forEach(function(chk) {
             chk.addEventListener('change', updateLabel);
@@ -2708,6 +2710,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             if (!panel.contains(e.target) && e.target !== btn) {
                 panel.classList.remove('open');
                 caret.textContent = 'expand_more';
+                if (row) row.style.overflow = '';
             }
         });
     }
