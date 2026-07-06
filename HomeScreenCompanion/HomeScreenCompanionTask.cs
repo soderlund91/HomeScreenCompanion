@@ -285,7 +285,7 @@ namespace HomeScreenCompanion
                         var sourceNamesRaw = crit.Substring(colonIdx + 1).Trim();
                         string[] folderTypes = sourceKind.Equals("Playlist", StringComparison.OrdinalIgnoreCase)
                             ? new[] { "Playlist" } : new[] { "BoxSet" };
-                        foreach (var singleName in sourceNamesRaw.Split(new[] { ',', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries).Select(n => n.Trim()).Where(n => n.Length > 0))
+                        foreach (var singleName in SplitCommaValues(sourceNamesRaw))
                         {
                             var indivKey = sourceKind + ":" + singleName;
                             if (collectionMembershipCache.ContainsKey(indivKey)) continue;
@@ -1546,7 +1546,7 @@ namespace HomeScreenCompanion
                     var sourceNamesRaw = crit.Substring(colonIdx + 1).Trim();
                     string[] folderTypes = sourceKind.Equals("Playlist", StringComparison.OrdinalIgnoreCase)
                         ? new[] { "Playlist" } : new[] { "BoxSet" };
-                    foreach (var singleName in sourceNamesRaw.Split(new[] { ',', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries).Select(n => n.Trim()).Where(n => n.Length > 0))
+                    foreach (var singleName in SplitCommaValues(sourceNamesRaw))
                     {
                         var indivKey = sourceKind + ":" + singleName;
                         if (collectionMembershipCache.ContainsKey(indivKey)) continue;
@@ -2253,16 +2253,21 @@ namespace HomeScreenCompanion
             {
                 try
                 {
-                    // Deduplicate — pick one physical version per logical movie (IMDb > TMDb > InternalId)
+                    // Deduplicate — pick one physical version per logical movie (IMDb > TMDb > InternalId).
+                    // Keep an ordered list mirroring the source order plus a set for fast membership checks.
                     var seenPlKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    var desiredPlIds = new HashSet<long>();
+                    var desiredPlIdList = new List<long>();   // ordered, mirrors source
+                    var desiredPlIdSet = new HashSet<long>();  // fast Contains
                     foreach (var item in collectionOutputItems)
                     {
                         var key = item.GetProviderId("Imdb")
                                ?? item.GetProviderId("Tmdb")
                                ?? item.InternalId.ToString();
                         if (seenPlKeys.Add(key))
-                            desiredPlIds.Add(item.InternalId);
+                        {
+                            desiredPlIdList.Add(item.InternalId);
+                            desiredPlIdSet.Add(item.InternalId);
+                        }
                     }
                     bool plMappingChanged = false;
                     foreach (var userId in tagConfig.PlaylistUserIds)
@@ -2319,7 +2324,7 @@ namespace HomeScreenCompanion
                             await _playlistManager.CreatePlaylist(new PlaylistCreationRequest
                             {
                                 Name = plName,
-                                ItemIdList = desiredPlIds.ToArray(),
+                                ItemIdList = desiredPlIdList.ToArray(),
                                 User = plUser
                             });
 
@@ -2404,11 +2409,11 @@ namespace HomeScreenCompanion
                             var currentItemIds = currentEntryMap.Keys.ToHashSet();
 
                             var entryIdsToRemove = currentItemIds
-                                .Where(id => !desiredPlIds.Contains(id))
+                                .Where(id => !desiredPlIdSet.Contains(id))
                                 .Select(id => currentEntryMap[id])
                                 .ToList();
 
-                            var toAdd = desiredPlIds.Where(id => !currentItemIds.Contains(id)).ToArray();
+                            var toAdd = desiredPlIdList.Where(id => !currentItemIds.Contains(id)).ToArray();
 
                             if (entryIdsToRemove.Count > 0)
                             {
@@ -2426,7 +2431,61 @@ namespace HomeScreenCompanion
                                 LogSummary($"  ! Added {toAdd.Length} item(s) to playlist '{plName}'", "Info");
                             }
 
-                            if (entryIdsToRemove.Count > 0 || toAdd.Length > 0)
+                            // Reorder the playlist so it mirrors the source order. AddToPlaylist appends new
+                            // items at the end, so re-read the actual contents (to pick up entry IDs of the
+                            // items just added) and move each item into its source position. Only issue a
+                            // MoveItem when an item is actually out of place — no needless writes when the
+                            // order already matches.
+                            var afterItems = _libraryManager.GetItemList(
+                                new InternalItemsQuery { ListIds = new[] { existingPlaylist.InternalId } });
+
+                            var entryByInner = new Dictionary<long, long>();   // inner media item id -> playlist entry id
+                            var currentOrder = new List<long>();               // inner media item id in current order
+                            foreach (var pItem in afterItems)
+                            {
+                                long entryId = 0;
+                                try { entryId = pItem.ListItemEntryId; } catch { }
+                                if (entryId == 0) entryId = pItem.InternalId;
+
+                                long innerItemId = pItem.InternalId;
+                                if (pItem.GetType().Name.Contains("PlaylistItem"))
+                                {
+                                    try { var temp = ((dynamic)pItem).Item; if (temp != null) innerItemId = ((BaseItem)temp).InternalId; } catch { }
+                                }
+                                if (entryByInner.TryAdd(innerItemId, entryId))
+                                    currentOrder.Add(innerItemId);
+                            }
+
+                            // Target order = source order, restricted to items actually present in the playlist.
+                            var desiredOrder = desiredPlIdList.Where(entryByInner.ContainsKey).ToList();
+
+                            bool reordered = false;
+                            for (int targetIndex = 0; targetIndex < desiredOrder.Count; targetIndex++)
+                            {
+                                long wanted = desiredOrder[targetIndex];
+                                if (currentOrder[targetIndex] == wanted) continue;   // already in place
+
+                                try
+                                {
+                                    await _playlistManager.MoveItem(
+                                        existingPlaylist.InternalId, entryByInner[wanted], targetIndex);
+
+                                    // Mirror the same move locally so our model matches the server.
+                                    currentOrder.Remove(wanted);
+                                    currentOrder.Insert(targetIndex, wanted);
+                                    reordered = true;
+                                }
+                                catch (Exception ex)
+                                {
+                                    LogSummary($"  ! Error reordering playlist '{plName}': {ex.Message}", "Warn");
+                                    break;
+                                }
+                            }
+
+                            if (reordered)
+                                LogSummary($"  ! Reordered playlist '{plName}' to match source order", "Info");
+
+                            if (entryIdsToRemove.Count > 0 || toAdd.Length > 0 || reordered)
                                 plMappingChanged = true;
                         }
                     }
