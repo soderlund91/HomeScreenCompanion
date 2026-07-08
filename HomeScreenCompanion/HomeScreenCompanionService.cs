@@ -3,7 +3,9 @@ using HttpRequestOptions = MediaBrowser.Common.Net.HttpRequestOptions;
 using SkiaSharp;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.IO;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Querying;
 using MediaBrowser.Model.Serialization;
@@ -201,6 +203,19 @@ namespace HomeScreenCompanion
         public string Message { get; set; } = "";
     }
 
+    [Route("/HomeScreenCompanion/TopList/MergeVersions", "POST")]
+    public class MergeTopListVersionsRequest : IReturn<MergeTopListVersionsResponse>
+    {
+        public string TagName { get; set; } = "";
+    }
+    public class MergeTopListVersionsResponse
+    {
+        public bool Success { get; set; }
+        public int Indexed { get; set; }
+        public int Merged { get; set; }
+        public string Message { get; set; } = "";
+    }
+
     [Route("/HomeScreenCompanion/TopList/AllMovies", "GET")]
     public class GetAllMoviesRequest : IReturn<GetAllMoviesResponse> { }
     public class MovieItem
@@ -282,9 +297,11 @@ public class HomeScreenCompanionService : IService
         private readonly IUserDataManager _userDataManager;
         private readonly IUserViewManager _userViewManager;
         private readonly ITaskManager _taskManager;
+        private readonly IProviderManager _providerManager;
+        private readonly IFileSystem _fileSystem;
         private readonly ILogger _logger;
 
-        public HomeScreenCompanionService(IHttpClient httpClient, IJsonSerializer jsonSerializer, IUserManager userManager, ILibraryManager libraryManager, IUserDataManager userDataManager, IUserViewManager userViewManager, ITaskManager taskManager, ILogManager logManager)
+        public HomeScreenCompanionService(IHttpClient httpClient, IJsonSerializer jsonSerializer, IUserManager userManager, ILibraryManager libraryManager, IUserDataManager userDataManager, IUserViewManager userViewManager, ITaskManager taskManager, IProviderManager providerManager, IFileSystem fileSystem, ILogManager logManager)
         {
             _httpClient = httpClient;
             _jsonSerializer = jsonSerializer;
@@ -293,6 +310,8 @@ public class HomeScreenCompanionService : IService
             _userDataManager = userDataManager;
             _userViewManager = userViewManager;
             _taskManager = taskManager;
+            _providerManager = providerManager;
+            _fileSystem = fileSystem;
             _logger = logManager.GetLogger("HomeScreenCompanion_Access");
         }
 
@@ -1070,6 +1089,28 @@ public class HomeScreenCompanionService : IService
             }
         }
 
+        public object Post(MergeTopListVersionsRequest request)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(request.TagName))
+                    return new MergeTopListVersionsResponse { Success = false, Message = "TagName is required." };
+
+                var dataPath = Plugin.Instance.DataFolderPath;
+                var sanitized = SanitizeFolderName(request.TagName);
+                var folderPath = Path.Combine(dataPath, "toplists", sanitized);
+
+                var (indexed, merged) = MergeTopListVersionsTask.MergeAndProbeFolder(
+                    _libraryManager, _providerManager, _fileSystem, folderPath, CancellationToken.None);
+
+                return new MergeTopListVersionsResponse { Success = true, Indexed = indexed, Merged = merged };
+            }
+            catch (Exception ex)
+            {
+                return new MergeTopListVersionsResponse { Success = false, Message = ex.Message };
+            }
+        }
+
         public object Post(PrepareTopListFolderRequest request)
         {
             try
@@ -1618,7 +1659,10 @@ public class HomeScreenCompanionService : IService
                         try
                         {
                             if (strmToOriginal.TryGetValue(li.Path, out var origItem) && li.Id != origItem.Id)
+                            {
                                 _libraryManager.MergeItems(new[] { origItem, li });
+                                MergeTopListVersionsTask.QueueStrmProbe(_providerManager, _fileSystem, li);
+                            }
                         }
                         catch { }
 

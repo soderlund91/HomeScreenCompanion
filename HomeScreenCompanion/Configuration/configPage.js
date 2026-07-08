@@ -4445,6 +4445,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             return ctx2.prepareResult;
         })
         .then(function (prepareResult) {
+            // NOTE: Linking each .strm as an alternate version of its original movie AND probing it
+            // for a real RunTimeTicks (so resume works instead of marking the film fully-watched) is
+            // handled automatically server-side by the ItemAdded/ItemUpdated hook in ServerEntryPoint,
+            // which fires as Emby indexes each .strm. No UI step is needed here — hence the
+            // "finishing touches will continue in the background" note on the success screen.
             // Step 7: Sync all top-list home sections so exclusion lists are up to date
             var tok7 = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
             return fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/SyncAllSections'), {
@@ -4509,6 +4514,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<i class="md-icon" style="font-size:2.5em;color:#52B54B;display:block;margin-bottom:12px;">check_circle</i>' +
                 '<p style="margin:0 0 6px;font-size:1.05em;font-weight:500;">Top-list created!</p>' +
                 '<p style="margin:0;opacity:0.65;font-size:0.9em;">' + prepareResult.FilesCreated + ' movie' + (prepareResult.FilesCreated !== 1 ? 's' : '') + ' included.</p>' +
+                '<p style="margin:8px 0 0;opacity:0.5;font-size:0.82em;font-style:italic;">Finishing touches will continue in the background.</p>' +
                 '</div>' +
                 '<div style="display:flex;justify-content:center;padding-top:16px;border-top:1px solid var(--line-color);margin-top:20px;">' +
                 '<button type="button" class="btnTlmDone" style="cursor:pointer;border:none;background:#52B54B;color:#fff;border-radius:3px;padding:8px 22px;font-size:0.9em;font-weight:500;">Close</button>' +

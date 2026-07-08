@@ -1,6 +1,8 @@
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.IO;
 using MediaBrowser.Model.Querying;
 using MediaBrowser.Model.Tasks;
 using System;
@@ -15,14 +17,44 @@ namespace HomeScreenCompanion
     public class MergeTopListVersionsTask : IScheduledTask
     {
         private readonly ILibraryManager _libraryManager;
+        private readonly IProviderManager _providerManager;
+        private readonly IFileSystem _fileSystem;
 
         public static List<string> ExecutionLog { get; } = new List<string>();
         public static bool IsRunning { get; private set; } = false;
         public static string LastRunStatus { get; private set; } = "Never";
 
-        public MergeTopListVersionsTask(ILibraryManager libraryManager)
+        public MergeTopListVersionsTask(ILibraryManager libraryManager, IProviderManager providerManager, IFileSystem fileSystem)
         {
             _libraryManager = libraryManager;
+            _providerManager = providerManager;
+            _fileSystem = fileSystem;
+        }
+
+        // Forces Emby to ffprobe a top-list .strm item so it gets a real RunTimeTicks and
+        // MediaStreams. Without this, freshly indexed .strm items have RunTimeTicks = 0, which
+        // makes Emby mark the movie fully played (instead of saving a resume point) when stopped
+        // mid-playback from the top-list. EnableRemoteContentProbe is the flag that makes the
+        // server probe .strm targets (they are skipped during a normal library scan).
+        internal static void QueueStrmProbe(IProviderManager providerManager, IFileSystem fileSystem, BaseItem li)
+        {
+            if (providerManager == null || fileSystem == null || li == null) return;
+            // Already has a real runtime → nothing to fix. Makes this safe to call repeatedly
+            // (e.g. from the post-creation poll loop) without re-probing healthy items.
+            if ((li.RunTimeTicks ?? 0) > 0) return;
+            try
+            {
+                var opts = new MetadataRefreshOptions(fileSystem)
+                {
+                    MetadataRefreshMode      = MetadataRefreshMode.FullRefresh,
+                    EnableRemoteContentProbe = true,
+                    ImageRefreshMode         = MetadataRefreshMode.ValidationOnly, // keep our ranked posters
+                    ReplaceAllImages         = false,
+                    ForceSave                = true
+                };
+                providerManager.QueueRefresh(li.InternalId, opts, RefreshPriority.High);
+            }
+            catch { }
         }
 
         public string Key => "MergeTopListVersionsTask";
@@ -38,7 +70,7 @@ namespace HomeScreenCompanion
             lock (ExecutionLog) { ExecutionLog.Clear(); }
             try
             {
-                var merged = MergeAll(_libraryManager, cancellationToken);
+                var merged = MergeAll(_libraryManager, _providerManager, _fileSystem, cancellationToken);
                 LastRunStatus = $"Done — {merged} item(s) linked.";
                 Log(LastRunStatus);
             }
@@ -60,7 +92,7 @@ namespace HomeScreenCompanion
             lock (ExecutionLog) { ExecutionLog.Add(msg); }
         }
 
-        internal static int MergeAll(ILibraryManager libraryManager, CancellationToken cancellationToken)
+        internal static int MergeAll(ILibraryManager libraryManager, IProviderManager providerManager, IFileSystem fileSystem, CancellationToken cancellationToken)
         {
             var dataPath = Plugin.Instance?.DataFolderPath;
             if (string.IsNullOrEmpty(dataPath)) return 0;
@@ -113,6 +145,7 @@ namespace HomeScreenCompanion
                 try
                 {
                     libraryManager.MergeItems(new[] { primary, li });
+                    QueueStrmProbe(providerManager, fileSystem, li);
                     merged++;
                     Log($"Merged '{li.Name}' with '{primary.Name}'");
                 }
@@ -123,6 +156,66 @@ namespace HomeScreenCompanion
             }
 
             return merged;
+        }
+
+        // Merges + probes only the STRM items living under a single top-list folder.
+        // Used right after a top-list is created (post library-scan) so RunTimeTicks is filled in
+        // automatically without waiting for the daily task. Returns how many STRM items are indexed
+        // under the folder and how many were mergeable, so the caller can poll until the async scan
+        // has fully indexed the new items.
+        internal static (int indexed, int merged) MergeAndProbeFolder(
+            ILibraryManager libraryManager, IProviderManager providerManager, IFileSystem fileSystem,
+            string folderPath, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrEmpty(folderPath)) return (0, 0);
+            var folderPrefix = folderPath.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+
+            var dataPath = Plugin.Instance?.DataFolderPath;
+            var topListsFolder = string.IsNullOrEmpty(dataPath)
+                ? null
+                : Path.Combine(dataPath, "toplists") + Path.DirectorySeparatorChar;
+
+            var allMovies = libraryManager.GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = new[] { "Movie" },
+                Recursive = true,
+                IsVirtualItem = false
+            });
+
+            // IMDb → original (non-strm) movie lookup
+            var origLookup = new Dictionary<string, BaseItem>(StringComparer.OrdinalIgnoreCase);
+            foreach (var m in allMovies)
+            {
+                if (string.IsNullOrEmpty(m.Path)) continue;
+                if (topListsFolder != null && m.Path.StartsWith(topListsFolder, StringComparison.OrdinalIgnoreCase)) continue;
+                var imdb = m.GetProviderId("Imdb");
+                if (!string.IsNullOrEmpty(imdb) && !origLookup.ContainsKey(imdb))
+                    origLookup[imdb] = m;
+            }
+
+            var strmItems = allMovies
+                .Where(i => !string.IsNullOrEmpty(i.Path)
+                         && i.Path.StartsWith(folderPrefix, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            int merged = 0;
+            foreach (var li in strmItems)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var imdb = li.GetProviderId("Imdb");
+                if (string.IsNullOrEmpty(imdb)) continue;
+                if (!origLookup.TryGetValue(imdb, out var primary)) continue;
+                if (li.Id == primary.Id) continue;
+                try
+                {
+                    libraryManager.MergeItems(new[] { primary, li });
+                    QueueStrmProbe(providerManager, fileSystem, li);
+                    merged++;
+                }
+                catch { }
+            }
+
+            return (strmItems.Count, merged);
         }
     }
 }

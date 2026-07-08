@@ -3,7 +3,9 @@ using MediaBrowser.Controller.Collections;
 using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.IO;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Querying;
 using MediaBrowser.Model.Serialization;
@@ -31,6 +33,8 @@ namespace HomeScreenCompanion
         private readonly ILogger _logger;
         private readonly ILibraryMonitor _libraryMonitor;
         private readonly IPlaylistManager _playlistManager;
+        private readonly IProviderManager _providerManager;
+        private readonly IFileSystem _fileSystem;
 
         public static HomeScreenCompanionTask? Instance { get; private set; }
         public static string LastRunStatus { get; private set; } = "Unknown (resets at server restart)";
@@ -91,7 +95,7 @@ namespace HomeScreenCompanion
             public int GroupTotal;
         }
 
-        public HomeScreenCompanionTask(ILibraryManager libraryManager, ICollectionManager collectionManager, IPlaylistManager playlistManager, IUserManager userManager, IUserViewManager userViewManager, IUserDataManager userDataManager, IHttpClient httpClient, IJsonSerializer jsonSerializer, ILogManager logManager, ILibraryMonitor libraryMonitor)
+        public HomeScreenCompanionTask(ILibraryManager libraryManager, ICollectionManager collectionManager, IPlaylistManager playlistManager, IUserManager userManager, IUserViewManager userViewManager, IUserDataManager userDataManager, IHttpClient httpClient, IJsonSerializer jsonSerializer, ILogManager logManager, ILibraryMonitor libraryMonitor, IProviderManager providerManager, IFileSystem fileSystem)
         {
             _libraryManager = libraryManager;
             _collectionManager = collectionManager;
@@ -103,6 +107,8 @@ namespace HomeScreenCompanion
             _logger = logManager.GetLogger("HomeScreenCompanion");
             _libraryMonitor = libraryMonitor;
             _playlistManager = playlistManager;
+            _providerManager = providerManager;
+            _fileSystem = fileSystem;
             Instance = this;
         }
 
@@ -4433,6 +4439,7 @@ namespace HomeScreenCompanion
                                 && li.Id != primary.Id)
                             {
                                 _libraryManager.MergeItems(new[] { primary, li });
+                                MergeTopListVersionsTask.QueueStrmProbe(_providerManager, _fileSystem, li);
                             }
                         }
                         catch { }

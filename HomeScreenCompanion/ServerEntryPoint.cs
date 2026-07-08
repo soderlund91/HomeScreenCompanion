@@ -1,12 +1,16 @@
 ﻿using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Plugins;
+using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.IO;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Serialization;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace HomeScreenCompanion
 {
@@ -15,12 +19,19 @@ namespace HomeScreenCompanion
         private readonly ILibraryManager _libraryManager;
         private readonly ILogger _logger;
         private readonly IJsonSerializer _jsonSerializer;
+        private readonly IProviderManager _providerManager;
+        private readonly IFileSystem _fileSystem;
 
-        public ServerEntryPoint(ILibraryManager libraryManager, ILogManager logManager, IJsonSerializer jsonSerializer)
+        private readonly object _strmLock = new object();
+        private readonly HashSet<Guid> _processedStrmIds = new HashSet<Guid>();
+
+        public ServerEntryPoint(ILibraryManager libraryManager, ILogManager logManager, IJsonSerializer jsonSerializer, IProviderManager providerManager, IFileSystem fileSystem)
         {
             _libraryManager = libraryManager;
             _logger = logManager.GetLogger("HomeScreenCompanion_RealTime");
             _jsonSerializer = jsonSerializer;
+            _providerManager = providerManager;
+            _fileSystem = fileSystem;
         }
 
         public void Run()
@@ -113,12 +124,18 @@ namespace HomeScreenCompanion
 
             if (item.IsVirtualItem) return;
 
-            // Never tag .strm files that belong to a top-list virtual library
+            // Items under the top-list folder are .strm virtual copies. Never tag them, but DO
+            // link each one to its original movie (as an alternate version) and force a media
+            // probe so it gets a real RunTimeTicks — otherwise resume breaks and the movie is
+            // marked fully-watched on stop. This fires as soon as Emby indexes the .strm.
             if (Plugin.Instance != null && !string.IsNullOrEmpty(item.Path))
             {
                 var topListsFolder = Path.Combine(Plugin.Instance.DataFolderPath, "toplists") + Path.DirectorySeparatorChar;
                 if (item.Path.StartsWith(topListsFolder, StringComparison.OrdinalIgnoreCase))
+                {
+                    ProcessTopListStrmItem(item);
                     return;
+                }
             }
 
             var ids = item.ProviderIds;
@@ -143,6 +160,73 @@ namespace HomeScreenCompanion
                 {
                     _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null);
                 }
+            }
+        }
+
+        // Links a freshly indexed top-list .strm item to its original movie (alternate version)
+        // and queues a real ffprobe so it gets a valid RunTimeTicks + MediaStreams. Runs at most
+        // once per item per server session, on the first event where its IMDb id is resolved.
+        private void ProcessTopListStrmItem(BaseItem item)
+        {
+            try
+            {
+                if (!(item is MediaBrowser.Controller.Entities.Movies.Movie)) return;
+
+                var imdb = item.GetProviderId("Imdb");
+                if (string.IsNullOrEmpty(imdb)) return; // metadata not resolved yet — a later ItemUpdated will carry it
+
+                // Process each .strm item once (guards against re-entrancy from our own MergeItems/probe events).
+                lock (_strmLock)
+                {
+                    if (!_processedStrmIds.Add(item.Id)) return;
+                }
+
+                var itemId   = item.Id;
+                var itemName = item.Name;
+
+                // Run the library mutations OFF the event thread. Emby raises ItemAdded/ItemUpdated
+                // synchronously during a library scan, so calling MergeItems here directly would
+                // re-enter the library mid-scan and can hang. A background task keeps this a true
+                // "finishing touches in the background" operation.
+                Task.Run(() =>
+                {
+                    try
+                    {
+                        var current = _libraryManager.GetItemById(itemId);
+                        if (current == null) return;
+
+                        var topListsFolder = Path.Combine(Plugin.Instance.DataFolderPath, "toplists") + Path.DirectorySeparatorChar;
+
+                        // Find the original (non-top-list) movie that shares this IMDb id.
+                        var primary = _libraryManager.GetItemList(new InternalItemsQuery
+                        {
+                            IncludeItemTypes = new[] { "Movie" },
+                            Recursive = true,
+                            IsVirtualItem = false
+                        }).FirstOrDefault(m => m.Id != itemId
+                            && !string.IsNullOrEmpty(m.Path)
+                            && !m.Path.StartsWith(topListsFolder, StringComparison.OrdinalIgnoreCase)
+                            && string.Equals(m.GetProviderId("Imdb"), imdb, StringComparison.OrdinalIgnoreCase));
+
+                        if (primary != null)
+                        {
+                            try { _libraryManager.MergeItems(new[] { primary, current }); }
+                            catch (Exception ex) { _logger.Warn("[TopList] Merge failed for '" + itemName + "': " + ex.Message); }
+                        }
+
+                        // Idempotent — skips if the item already has a runtime.
+                        MergeTopListVersionsTask.QueueStrmProbe(_providerManager, _fileSystem, current);
+                        _logger.Info("[TopList] Linked + probed '" + itemName + "'");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Error("[TopList] ProcessTopListStrmItem(bg) error: " + ex.Message);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.Error("[TopList] ProcessTopListStrmItem error: " + ex.Message);
             }
         }
 
