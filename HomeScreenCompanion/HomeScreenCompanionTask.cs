@@ -223,6 +223,8 @@ namespace HomeScreenCompanion
                 var desiredCollectionsMap = new Dictionary<string, HashSet<long>>(StringComparer.OrdinalIgnoreCase);
                 var collectionDescriptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 var collectionPosters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var collectionThumbs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var collectionBackdrops = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 var managedTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var activeCollections = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var failedFetches = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -571,6 +573,10 @@ namespace HomeScreenCompanion
                             collectionDescriptions[cName] = tagConfig.CollectionDescription;
                         if (!string.IsNullOrWhiteSpace(tagConfig.CollectionPosterPath) && File.Exists(tagConfig.CollectionPosterPath))
                             collectionPosters[cName] = tagConfig.CollectionPosterPath;
+                        if (!string.IsNullOrWhiteSpace(tagConfig.CollectionThumbPath) && File.Exists(tagConfig.CollectionThumbPath))
+                            collectionThumbs[cName] = tagConfig.CollectionThumbPath;
+                        if (!string.IsNullOrWhiteSpace(tagConfig.CollectionBackdropPath) && File.Exists(tagConfig.CollectionBackdropPath))
+                            collectionBackdrops[cName] = tagConfig.CollectionBackdropPath;
                     }
 
                     var groupTimer = System.Diagnostics.Stopwatch.StartNew();
@@ -1274,8 +1280,9 @@ namespace HomeScreenCompanion
                                 collCreatedSet.Add(cName);
                                 collItemsAdded[cName] = desiredIds.Count;
                                 _log.Debug($"  {cName}  →  created ({desiredIds.Count} items)");
-                                if (collectionDescriptions.ContainsKey(cName) || collectionPosters.ContainsKey(cName))
-                                    ApplyCollectionMeta(createdRef, cName, collectionDescriptions, collectionPosters, debug);
+                                if (collectionDescriptions.ContainsKey(cName) || collectionPosters.ContainsKey(cName)
+                                    || collectionThumbs.ContainsKey(cName) || collectionBackdrops.ContainsKey(cName))
+                                    ApplyCollectionMeta(createdRef, cName, collectionDescriptions, collectionPosters, collectionThumbs, collectionBackdrops, debug);
                             }
                         }
                         else
@@ -1311,8 +1318,9 @@ namespace HomeScreenCompanion
                             {
                                 _log.Debug($"  {cName}  →  up to date ({currentMembers.Count} items)");
                             }
-                            if (!dryRun && (collectionDescriptions.ContainsKey(cName) || collectionPosters.ContainsKey(cName)))
-                                ApplyCollectionMeta(existingColl, cName, collectionDescriptions, collectionPosters, debug);
+                            if (!dryRun && (collectionDescriptions.ContainsKey(cName) || collectionPosters.ContainsKey(cName)
+                                || collectionThumbs.ContainsKey(cName) || collectionBackdrops.ContainsKey(cName)))
+                                ApplyCollectionMeta(existingColl, cName, collectionDescriptions, collectionPosters, collectionThumbs, collectionBackdrops, debug);
                         }
                     }
                     catch (Exception ex)
@@ -4758,7 +4766,8 @@ namespace HomeScreenCompanion
         }
 
         private void ApplyCollectionMeta(BaseItem item, string cName,
-            Dictionary<string, string> descriptions, Dictionary<string, string> posters, bool debug)
+            Dictionary<string, string> descriptions, Dictionary<string, string> posters,
+            Dictionary<string, string> thumbs, Dictionary<string, string> backdrops, bool debug)
         {
             bool metaChanged = false;
 
@@ -4768,20 +4777,31 @@ namespace HomeScreenCompanion
                 metaChanged = true;
             }
 
+            var imageUpdates = new List<(string Path, ImageType Type, string Label)>();
             if (posters.TryGetValue(cName, out var posterPath) && File.Exists(posterPath))
+                imageUpdates.Add((posterPath, ImageType.Primary, "poster"));
+            if (thumbs.TryGetValue(cName, out var thumbPath) && File.Exists(thumbPath))
+                imageUpdates.Add((thumbPath, ImageType.Thumb, "thumb"));
+            if (backdrops.TryGetValue(cName, out var backdropPath) && File.Exists(backdropPath))
+                imageUpdates.Add((backdropPath, ImageType.Backdrop, "backdrop"));
+
+            if (imageUpdates.Count > 0)
             {
-                var imageInfo = new ItemImageInfo
-                {
-                    Path = posterPath,
-                    Type = ImageType.Primary,
-                    DateModified = File.GetLastWriteTimeUtc(posterPath)
-                };
+                var updatedTypes = new HashSet<ImageType>(imageUpdates.Select(u => u.Type));
                 var otherImages = (item.ImageInfos ?? Array.Empty<ItemImageInfo>())
-                    .Where(i => i.Type != ImageType.Primary).ToList();
-                otherImages.Add(imageInfo);
+                    .Where(i => !updatedTypes.Contains(i.Type)).ToList();
+                foreach (var (path, type, _) in imageUpdates)
+                {
+                    otherImages.Add(new ItemImageInfo
+                    {
+                        Path = path,
+                        Type = type,
+                        DateModified = File.GetLastWriteTimeUtc(path)
+                    });
+                }
                 item.ImageInfos = otherImages.ToArray();
                 _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.ImageUpdate, null);
-                _log.Debug($"  {cName}  →  poster applied");
+                _log.Debug($"  {cName}  →  {string.Join(", ", imageUpdates.Select(u => u.Label))} applied");
             }
 
             if (metaChanged)

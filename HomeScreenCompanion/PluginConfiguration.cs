@@ -81,6 +81,8 @@ namespace HomeScreenCompanion
         public string CollectionName { get; set; } = "";
         public string CollectionDescription { get; set; } = "";
         public string CollectionPosterPath { get; set; } = "";
+        public string CollectionThumbPath { get; set; } = "";
+        public string CollectionBackdropPath { get; set; } = "";
         public bool OnlyCollection { get; set; } = false;
         // Legacy fields — kept for backwards compat, never written by new code
         public bool MediaInfoSeasonMode { get; set; } = false;

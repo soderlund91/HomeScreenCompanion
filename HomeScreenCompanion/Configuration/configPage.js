@@ -706,6 +706,39 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }, { offset: Number.NEGATIVE_INFINITY }).element;
     }
 
+    function collImgBlockHtml(type, path) {
+        var fileName = path ? path.split(/[\\/]/).pop() : '';
+        return `
+        <div class="coll-img-block" data-imgtype="${type}" style="margin-bottom:18px;">
+            <p style="margin:0 0 8px 0; font-size:0.9em; font-weight:bold; opacity:0.7;">Collection ${type}</p>
+            <div class="coll-img-preview-container" style="margin-bottom:8px; display:${path ? 'block' : 'none'};">
+                <span class="coll-img-filename" style="font-size:0.85em; opacity:0.7;">${fileName}</span>
+                <button type="button" class="btnRemoveCollImg" style="margin-left:10px; font-size:0.8em; background:transparent; border:none; color:#e55; cursor:pointer; vertical-align:middle;">✕ Remove</button>
+            </div>
+            <img class="coll-img-preview-img" src="" alt="" style="max-width:120px; max-height:180px; border-radius:4px; display:none; margin-bottom:8px;" />
+            <input type="file" class="inputCollImgFile" accept="image/*" style="display:none;" />
+            <input type="hidden" class="hiddenCollImgPath" value="${path}" />
+            <button type="button" is="emby-button" class="btnChooseCollImg raised" style="width:100%; background:transparent; border:2px dashed rgba(128,128,128,0.4); color:var(--theme-text-secondary);">
+                <i class="md-icon" style="margin-right:5px;">image</i>Choose ${type} Image
+            </button>
+            <div style="display:flex; align-items:center; gap:6px; margin-top:8px; opacity:0.45;">
+                <div style="flex:1; height:1px; background:currentColor;"></div>
+                <span style="font-size:0.75em;">or</span>
+                <div style="flex:1; height:1px; background:currentColor;"></div>
+            </div>
+            <div style="display:flex; gap:6px; margin-top:6px;">
+                <input class="txtCollImgUrl" is="emby-input" type="url" placeholder="https://example.com/${type.toLowerCase()}.jpg" style="flex:1;" />
+                <button type="button" is="emby-button" class="btnLoadCollImgUrl raised btn-neutral">Load</button>
+            </div>
+        </div>`;
+    }
+
+    function readCollImgPath(row, type) {
+        var block = row.querySelector('.coll-img-block[data-imgtype="' + type + '"]');
+        var input = block ? block.querySelector('.hiddenCollImgPath') : null;
+        return input ? input.value : '';
+    }
+
     function readRowAsConfig(row) {
         var entryLabel = row.querySelector('.txtEntryLabel').value;
         var tagName = row.querySelector('.txtTagName').value || entryLabel;
@@ -721,7 +754,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             : (function() { try { return JSON.parse(decodeURIComponent((_plTab && _plTab.dataset.plUserids) || '%5B%5D')); } catch { return []; } })();
         var collName = row.querySelector('.txtCollectionName').value;
         var collDesc = row.querySelector('.txtCollectionDescription') ? row.querySelector('.txtCollectionDescription').value : '';
-        var collPoster = row.querySelector('.hiddenPosterPath') ? row.querySelector('.hiddenPosterPath').value : '';
+        var collPoster = readCollImgPath(row, 'Poster');
+        var collThumb = readCollImgPath(row, 'Thumb');
+        var collBackdrop = readCollImgPath(row, 'Backdrop');
         var st = row.querySelector('.selSourceType').value;
 
         var intervals = [];
@@ -832,6 +867,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             Name: entryLabel, Tag: tagName, Active: active, Blacklist: bl, ActiveIntervals: intervals,
             EnableTag: enableTag, EnableCollection: enableColl, CollectionName: collName,
             CollectionDescription: collDesc, CollectionPosterPath: collPoster,
+            CollectionThumbPath: collThumb, CollectionBackdropPath: collBackdrop,
             OverrideWhenActive: overrideWhenActive, SourceType: st,
             Urls: urls, LocalSources: localSources, Limit: miLimit,
             MediaInfoFilters: miFilters, MediaInfoConditions: [],
@@ -1367,6 +1403,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var collName = tagConfig.CollectionName || '';
         var collDescription = tagConfig.CollectionDescription || '';
         var collPosterPath = tagConfig.CollectionPosterPath || '';
+        var collThumbPath = tagConfig.CollectionThumbPath || '';
+        var collBackdropPath = tagConfig.CollectionBackdropPath || '';
 
         var sourceType = tagConfig.SourceType || "";
         var localSources = tagConfig.LocalSources || [];
@@ -1723,26 +1761,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         </div>
 
                         <div style="margin-top:15px;">
-                            <p style="margin:0 0 8px 0; font-size:0.9em; font-weight:bold; opacity:0.7;">Collection Poster</p>
-                            <div class="poster-preview-container" style="margin-bottom:8px; display:${collPosterPath ? 'block' : 'none'};">
-                                <span class="poster-filename" style="font-size:0.85em; opacity:0.7;">${collPosterPath ? collPosterPath.split(/[\\\\/]/).pop() : ''}</span>
-                                <button type="button" class="btnRemovePoster" style="margin-left:10px; font-size:0.8em; background:transparent; border:none; color:#e55; cursor:pointer; vertical-align:middle;">✕ Remove</button>
-                            </div>
-                            <img class="poster-preview-img" src="" alt="" style="max-width:120px; max-height:180px; border-radius:4px; display:none; margin-bottom:8px;" />
-                            <input type="file" class="inputPosterFile" accept="image/*" style="display:none;" />
-                            <input type="hidden" class="hiddenPosterPath" value="${collPosterPath}" />
-                            <button type="button" is="emby-button" class="btnChoosePoster raised" style="width:100%; background:transparent; border:2px dashed rgba(128,128,128,0.4); color:var(--theme-text-secondary);">
-                                <i class="md-icon" style="margin-right:5px;">image</i>Choose Poster Image
-                            </button>
-                            <div style="display:flex; align-items:center; gap:6px; margin-top:8px; opacity:0.45;">
-                                <div style="flex:1; height:1px; background:currentColor;"></div>
-                                <span style="font-size:0.75em;">or</span>
-                                <div style="flex:1; height:1px; background:currentColor;"></div>
-                            </div>
-                            <div style="display:flex; gap:6px; margin-top:6px;">
-                                <input class="txtPosterUrl" is="emby-input" type="url" placeholder="https://example.com/poster.jpg" style="flex:1;" />
-                                <button type="button" is="emby-button" class="btnLoadPosterUrl raised btn-neutral">Load</button>
-                            </div>
+                            ${collImgBlockHtml('Poster', collPosterPath)}
+                            ${collImgBlockHtml('Thumb', collThumbPath)}
+                            ${collImgBlockHtml('Backdrop', collBackdropPath)}
                         </div>
                     </div>
                     </div>
@@ -2476,81 +2497,88 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             setTimeout(checkFormState, 0);
         });
 
-        row.querySelector('.btnChoosePoster').addEventListener('click', function () {
-            row.querySelector('.inputPosterFile').click();
-        });
+        row.querySelectorAll('.coll-img-block').forEach(function (block) {
+            var hiddenPath = block.querySelector('.hiddenCollImgPath');
+            var previewImg = block.querySelector('.coll-img-preview-img');
+            var previewContainer = block.querySelector('.coll-img-preview-container');
+            var fileNameEl = block.querySelector('.coll-img-filename');
+            var fileInput = block.querySelector('.inputCollImgFile');
+            var urlInput = block.querySelector('.txtCollImgUrl');
 
-        row.querySelector('.inputPosterFile').addEventListener('change', function () {
-            var file = this.files[0];
-            if (!file) return;
-            var reader = new FileReader();
-            reader.onload = function (e) {
-                var dataUrl = e.target.result;
-                var base64 = dataUrl.split(',')[1];
-                var img = row.querySelector('.poster-preview-img');
-                img.src = dataUrl;
-                img.style.display = 'block';
+            block.querySelector('.btnChooseCollImg').addEventListener('click', function () {
+                fileInput.click();
+            });
+
+            fileInput.addEventListener('change', function () {
+                var file = this.files[0];
+                if (!file) return;
+                var reader = new FileReader();
+                reader.onload = function (e) {
+                    var dataUrl = e.target.result;
+                    var base64 = dataUrl.split(',')[1];
+                    previewImg.src = dataUrl;
+                    previewImg.style.display = 'block';
+
+                    var headers = { 'Content-Type': 'application/json' };
+                    var token = window.ApiClient.accessToken();
+                    if (token) headers['X-Emby-Token'] = token;
+                    fetch(window.ApiClient.getUrl('HomeScreenCompanion/UploadCollectionImage'), {
+                        method: 'POST',
+                        headers: headers,
+                        body: JSON.stringify({ FileName: file.name, Base64Data: base64, OldFilePath: hiddenPath.value })
+                    }).then(function (r) { return r.json(); })
+                    .then(function (result) {
+                        if (result.Success) {
+                            hiddenPath.value = result.FilePath;
+                            fileNameEl.textContent = file.name;
+                            previewContainer.style.display = 'block';
+                        } else {
+                            window.Dashboard.alert('Upload failed: ' + (result.Message || 'Unknown error'));
+                            previewImg.style.display = 'none';
+                        }
+                    }).catch(function () {
+                        window.Dashboard.alert('Upload error. Check server logs.');
+                        previewImg.style.display = 'none';
+                    });
+                };
+                reader.readAsDataURL(file);
+            });
+
+            block.querySelector('.btnRemoveCollImg').addEventListener('click', function () {
+                hiddenPath.value = '';
+                fileNameEl.textContent = '';
+                previewContainer.style.display = 'none';
+                previewImg.style.display = 'none';
+                fileInput.value = '';
+            });
+
+            block.querySelector('.btnLoadCollImgUrl').addEventListener('click', function () {
+                var url = urlInput.value.trim();
+                if (!url) return;
 
                 var headers = { 'Content-Type': 'application/json' };
                 var token = window.ApiClient.accessToken();
                 if (token) headers['X-Emby-Token'] = token;
-                fetch(window.ApiClient.getUrl('HomeScreenCompanion/UploadCollectionImage'), {
+
+                fetch(window.ApiClient.getUrl('HomeScreenCompanion/FetchCollectionImageFromUrl'), {
                     method: 'POST',
                     headers: headers,
-                    body: JSON.stringify({ FileName: file.name, Base64Data: base64, OldFilePath: row.querySelector('.hiddenPosterPath').value })
+                    body: JSON.stringify({ Url: url, OldFilePath: hiddenPath.value })
                 }).then(function (r) { return r.json(); })
                 .then(function (result) {
                     if (result.Success) {
-                        row.querySelector('.hiddenPosterPath').value = result.FilePath;
-                        row.querySelector('.poster-filename').textContent = file.name;
-                        row.querySelector('.poster-preview-container').style.display = 'block';
+                        hiddenPath.value = result.FilePath;
+                        fileNameEl.textContent = url.split('/').pop().split('?')[0];
+                        previewContainer.style.display = 'block';
+                        previewImg.src = url;
+                        previewImg.style.display = 'block';
+                        urlInput.value = '';
                     } else {
-                        window.Dashboard.alert('Upload failed: ' + (result.Message || 'Unknown error'));
-                        img.style.display = 'none';
+                        window.Dashboard.alert('Failed to load image: ' + (result.Message || 'Unknown error'));
                     }
                 }).catch(function () {
-                    window.Dashboard.alert('Upload error. Check server logs.');
-                    img.style.display = 'none';
+                    window.Dashboard.alert('Error fetching image. Check the URL and server logs.');
                 });
-            };
-            reader.readAsDataURL(file);
-        });
-
-        row.querySelector('.btnRemovePoster').addEventListener('click', function () {
-            row.querySelector('.hiddenPosterPath').value = '';
-            row.querySelector('.poster-filename').textContent = '';
-            row.querySelector('.poster-preview-container').style.display = 'none';
-            row.querySelector('.poster-preview-img').style.display = 'none';
-            row.querySelector('.inputPosterFile').value = '';
-        });
-
-        row.querySelector('.btnLoadPosterUrl').addEventListener('click', function () {
-            var url = row.querySelector('.txtPosterUrl').value.trim();
-            if (!url) return;
-
-            var headers = { 'Content-Type': 'application/json' };
-            var token = window.ApiClient.accessToken();
-            if (token) headers['X-Emby-Token'] = token;
-
-            fetch(window.ApiClient.getUrl('HomeScreenCompanion/FetchCollectionImageFromUrl'), {
-                method: 'POST',
-                headers: headers,
-                body: JSON.stringify({ Url: url, OldFilePath: row.querySelector('.hiddenPosterPath').value })
-            }).then(function (r) { return r.json(); })
-            .then(function (result) {
-                if (result.Success) {
-                    row.querySelector('.hiddenPosterPath').value = result.FilePath;
-                    row.querySelector('.poster-filename').textContent = url.split('/').pop().split('?')[0];
-                    row.querySelector('.poster-preview-container').style.display = 'block';
-                    var img = row.querySelector('.poster-preview-img');
-                    img.src = url;
-                    img.style.display = 'block';
-                    row.querySelector('.txtPosterUrl').value = '';
-                } else {
-                    window.Dashboard.alert('Failed to load image: ' + (result.Message || 'Unknown error'));
-                }
-            }).catch(function () {
-                window.Dashboard.alert('Error fetching image. Check the URL and server logs.');
             });
         });
 
@@ -3225,7 +3253,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
             var collName = row.querySelector('.txtCollectionName').value;
             var collDescription = row.querySelector('.txtCollectionDescription') ? row.querySelector('.txtCollectionDescription').value : '';
-            var collPoster = row.querySelector('.hiddenPosterPath') ? row.querySelector('.hiddenPosterPath').value : '';
+            var collPoster = readCollImgPath(row, 'Poster');
+            var collThumb = readCollImgPath(row, 'Thumb');
+            var collBackdrop = readCollImgPath(row, 'Backdrop');
 
             var intervals = [];
             row.querySelectorAll('.date-row').forEach(dr => {
@@ -3322,7 +3352,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
             var baseTag = {
                 Name: entryLabel, Tag: name, Active: active, Blacklist: bl, ActiveIntervals: intervals,
-                EnableTag: enableTagChk, EnableCollection: enableColl, CollectionName: collName, CollectionDescription: collDescription, CollectionPosterPath: collPoster, OnlyCollection: false, OverrideWhenActive: overrideWhenActive, LastModified: currentLastMod,
+                EnableTag: enableTagChk, EnableCollection: enableColl, CollectionName: collName, CollectionDescription: collDescription, CollectionPosterPath: collPoster, CollectionThumbPath: collThumb, CollectionBackdropPath: collBackdrop, OnlyCollection: false, OverrideWhenActive: overrideWhenActive, LastModified: currentLastMod,
                 SourceType: st, MediaInfoFilters: miFilters, MediaInfoConditions: [],
                 TagTargetEpisode:        !!(row.querySelector('.chkTagTargetEpisode')  || {}).checked,
                 TagTargetSeason:         !!(row.querySelector('.chkTagTargetSeason')   || {}).checked,
@@ -3590,7 +3620,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             if (!grouped[key]) {
                 grouped[key] = {
                     Tag: t.Tag, Name: t.Name || '', Urls: [], LocalSources: [], Active: t.Active !== false, Blacklist: t.Blacklist, ActiveIntervals: t.ActiveIntervals,
-                    EnableTag: t.EnableTag !== false, EnableCollection: t.EnableCollection, CollectionName: t.CollectionName, CollectionDescription: t.CollectionDescription || '', CollectionPosterPath: t.CollectionPosterPath || '', OnlyCollection: t.OnlyCollection, OverrideWhenActive: t.OverrideWhenActive || false, LastModified: t.LastModified,
+                    EnableTag: t.EnableTag !== false, EnableCollection: t.EnableCollection, CollectionName: t.CollectionName, CollectionDescription: t.CollectionDescription || '', CollectionPosterPath: t.CollectionPosterPath || '', CollectionThumbPath: t.CollectionThumbPath || '', CollectionBackdropPath: t.CollectionBackdropPath || '', OnlyCollection: t.OnlyCollection, OverrideWhenActive: t.OverrideWhenActive || false, LastModified: t.LastModified,
                     SourceType: t.SourceType || "External", MediaInfoConditions: t.MediaInfoConditions || [], MediaInfoFilters: t.MediaInfoFilters || [],
                     Limit: t.Limit || 0,
                     EnableHomeSection: t.EnableHomeSection || false, HomeSectionLibraryId: t.HomeSectionLibraryId || 'auto',
@@ -6672,7 +6702,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             form.addEventListener('click', (e) => {
                 var dayBtn = e.target.closest('.day-toggle');
                 if (dayBtn) dayBtn.classList.toggle('active');
-                if (e.target.closest('.btnRemoveUrl, .btnAddUrl, .btnRemoveLocal, .btnAddLocal, .btnRemoveDate, .btnAddDate, .btnRemoveFilterGroup, .btnAddMediaInfoFilter, .btnClearAllFilters, .btnGroupOpChoice, .btnGroupInnerOpChoice, .btnAddMiRule, .btnRemoveMiRule, .btnRemoveGroup, .day-toggle, .btnRemovePoster, .btnApplyMiPreset')) {
+                if (e.target.closest('.btnRemoveUrl, .btnAddUrl, .btnRemoveLocal, .btnAddLocal, .btnRemoveDate, .btnAddDate, .btnRemoveFilterGroup, .btnAddMediaInfoFilter, .btnClearAllFilters, .btnGroupOpChoice, .btnGroupInnerOpChoice, .btnAddMiRule, .btnRemoveMiRule, .btnRemoveGroup, .day-toggle, .btnRemoveCollImg, .btnApplyMiPreset')) {
                     changeHandler();
                 }
             }, { signal: _signal });
