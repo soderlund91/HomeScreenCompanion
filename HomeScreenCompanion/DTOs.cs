@@ -8,6 +8,8 @@ namespace HomeScreenCompanion
         public string Name { get; set; } = null!;
         public string Imdb { get; set; } = null!;
         public string? Tmdb { get; set; }
+        // "movie" or "tv" when the list says which it is (Sonarr / Radarr), else null.
+        public string? MediaType { get; set; }
     }
 
     public class MdbListItem

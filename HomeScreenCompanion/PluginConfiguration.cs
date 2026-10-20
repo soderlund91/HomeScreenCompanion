@@ -17,6 +17,14 @@ namespace HomeScreenCompanion
         public string ClaudeModel { get; set; } = "claude-haiku-4-5-20251001";
         public string OllamaBaseUrl { get; set; } = "http://localhost:11434";
         public string OllamaModel { get; set; } = "";
+        // Sonarr / Radarr: the "Add" button on titles that are not in the library.
+        public string SonarrUrl { get; set; } = "";
+        public string SonarrApiKey { get; set; } = "";
+        public string RadarrUrl { get; set; } = "";
+        public string RadarrApiKey { get; set; } = "";
+        // Root folder last chosen in the Add dialog, pre-selected next time.
+        public string SonarrLastRootFolderPath { get; set; } = "";
+        public string RadarrLastRootFolderPath { get; set; } = "";
         public string AiSystemPrompt { get; set; } =
             "You are a movie and TV show recommendation assistant. " +
             "Respond ONLY with a valid JSON array. No explanation, no markdown, no code fences. " +

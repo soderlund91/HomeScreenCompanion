@@ -530,10 +530,51 @@
         .stm-status .md-icon { font-size: 18px; }
         .stm-status.in { background: rgba(82,181,75,0.15); color: var(--hsc-primary-text); }
         .stm-status.out { background: rgba(229,115,115,0.15); color: var(--hsc-danger-text); }
+        .stm-arr { flex-shrink: 0; height: 30px; padding: 0 11px 0 8px; border-radius: 15px; display: inline-flex; align-items: center; gap: 4px; font-size: 0.8em; font-family: inherit; color: inherit; background: transparent; border: 1px solid var(--plugin-popup-border, var(--hsc-hairline-strong)); cursor: pointer; }
+        .stm-arr .md-icon { font-size: 16px; }
+        .stm-arr.add:hover { background: var(--plugin-popup-hover, var(--hsc-tint-2)); border-color: var(--hsc-primary); }
+        .stm-arr.add .md-icon { color: var(--hsc-primary-text); }
+        .stm-arr.in { background: rgba(82,181,75,0.15); color: var(--hsc-primary-text); border-color: transparent; cursor: default; }
+        .stm-arr[disabled]:not(.in) { opacity: 0.5; cursor: default; padding: 0 6px; }
         .stm-empty { text-align: center; padding: 30px; color: var(--plugin-popup-muted, #aaa); }
         .stm-footer { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--plugin-popup-border, rgba(255,255,255,0.12)); font-size: 0.82em; color: var(--plugin-popup-muted, #aaa); }
         .stm-footer button { margin-left: auto; cursor: pointer; border: 1px solid var(--plugin-popup-border, var(--hsc-hairline-strong)); background: var(--hsc-tint-1); color: inherit; border-radius: 8px; padding: 8px 16px; font-family: inherit; font-size: 1.05em; font-weight: 500; }
         .stm-footer button:hover { background: var(--plugin-popup-hover, var(--hsc-tint-2)); }
+        /* Missing tab */
+        .mt-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 2em 0 1em; }
+        .mt-head h2 { margin: 0; }
+        .mt-count { color: var(--theme-text-secondary); font-size: 0.9em; }
+        .mt-checked { margin-left: auto; color: var(--theme-text-secondary); font-size: 0.8em; }
+        .mt-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+        .mt-controls input, .mt-controls select { padding: 7px 10px; font-size: 0.9em; font-family: inherit; color: inherit; background: var(--hsc-tint-1); border: 1px solid var(--line-color); border-radius: 8px; }
+        .mt-controls select option { color: #000; }
+        .mt-search { flex: 1; min-width: 180px; }
+        .mt-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+        .mt-bar .stm-chip { border-color: var(--line-color); }
+        .mt-bar .stm-chip.active { background: var(--hsc-tint-3); border-color: var(--theme-text-secondary); }
+        .mt-view { margin-left: auto; display: inline-flex; border: 1px solid var(--line-color); border-radius: 8px; padding: 2px; background: var(--hsc-tint-1); }
+        .mt-view button { background: transparent; border: none; color: var(--theme-text-secondary); cursor: pointer; padding: 4px 8px; border-radius: 6px; line-height: 0; }
+        .mt-view button.active { background: var(--theme-background-level3, var(--hsc-tint-3)); color: var(--theme-text-primary); }
+        .mt-list { border: 1px solid var(--line-color); border-radius: 8px; background: var(--theme-background-level2, transparent); padding: 4px; }
+        .mt-list .stm-row { animation: none; }
+        .mt-list .stm-row + .stm-row { border-top: 1px solid var(--line-color); border-radius: 0; }
+        .mt-list .stm-row:hover { background: var(--hsc-tint-2); }
+        .mt-list .stm-rank, .mt-list .stm-meta { color: var(--theme-text-secondary); }
+        .mt-list .stm-poster { width: 40px; height: 60px; background-color: var(--hsc-tint-3); color: var(--theme-text-secondary); }
+        .mt-list .stm-title { white-space: normal; }
+        .mt-lists { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+        .mt-src { font-size: 0.75em; padding: 1px 7px; border-radius: 4px; background: var(--hsc-tint-3); color: var(--theme-text-secondary); white-space: nowrap; }
+        .mt-src b { font-weight: 600; color: var(--theme-text-primary); }
+        .mt-list .stm-arr { border-color: var(--hsc-hairline-strong); }
+        .mt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 16px; }
+        .mt-card { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+        .mt-card .mt-cover { position: relative; aspect-ratio: 2 / 3; border-radius: 8px; background: var(--hsc-tint-3) center/cover no-repeat; display: flex; align-items: center; justify-content: center; color: var(--theme-text-secondary); text-decoration: none; }
+        .mt-card .mt-cover .md-icon { font-size: 2em; opacity: 0.6; }
+        .mt-card .mt-rank { position: absolute; top: 6px; left: 6px; font-size: 0.75em; font-weight: 600; padding: 1px 6px; border-radius: 4px; background: rgba(0,0,0,0.65); color: #fff; }
+        .mt-card .mt-ctitle { font-size: 0.85em; font-weight: 500; line-height: 1.3; overflow-wrap: anywhere; }
+        .mt-card .mt-cmeta { font-size: 0.75em; color: var(--theme-text-secondary); }
+        .mt-card .stm-arr, .mt-card .stm-status { align-self: flex-start; }
+        .mt-empty { text-align: center; padding: 30px; color: var(--theme-text-secondary); }
         @keyframes stmIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
         /* Customise popup (generated art) */
         .artc-wrap { display:flex; gap:22px; align-items:flex-start; flex-wrap:wrap; }
@@ -1433,6 +1474,9 @@
                 <button class="page-tab-btn" data-page-tab="Cleanup">
                     <i class="md-icon tab-icon">auto_delete</i>Cleanup
                 </button>
+                <button class="page-tab-btn" data-page-tab="Missing" id="btnTabMissing" style="display:none;">
+                    <i class="md-icon tab-icon">manage_search</i>Missing
+                </button>
                 <button class="page-tab-btn" data-page-tab="Settings">
                     <i class="md-icon tab-icon">settings</i>Settings
                 </button>
@@ -1506,6 +1550,65 @@
                                     <div class="fieldDescription">
                                         Required for TMDb lists. Get key at <a href="https://www.themoviedb.org/settings/api" target="_blank" class="help-link">TMDb Settings</a>.
                                     </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+                <div class="advanced-section settings-panel" style="margin-bottom: 15px;">
+                    <div class="advanced-header settings-panel-toggle">
+                        <i class="md-icon hsc-panel-icon">download</i>
+                        <span class="hsc-title">Sonarr &amp; Radarr</span>
+                        <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s;">expand_more</i>
+                    </div>
+                    <div class="advanced-body settings-panel-body" style="display:none; padding-top: 4px;">
+
+                        <!-- Sonarr -->
+                        <div class="advanced-section settings-panel" style="margin-bottom: 8px;">
+                            <div class="advanced-header settings-panel-toggle" style="padding: 10px 14px;">
+                                <i class="md-icon" style="margin-right: 8px; font-size: 1.1em; opacity: 0.65;">tv</i>
+                                <span style="font-size: 0.95em; font-weight: 600;">Sonarr</span>
+                                <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s; font-size: 1.1em; opacity: 0.65;">expand_more</i>
+                            </div>
+                            <div class="settings-panel-body" style="display:none; padding: 0 14px 14px;">
+                                <div class="inputContainer">
+                                    <input is="emby-input" type="text" id="txtSonarrUrl" label="Sonarr Server URL" placeholder="http://localhost:8989" />
+                                </div>
+                                <div class="inputContainer" style="margin-top: 12px;">
+                                    <input is="emby-input" type="text" class="api-key-field" autocomplete="off" spellcheck="false" data-lpignore="true" data-1p-ignore id="txtSonarrApiKey" label="Sonarr API Key" />
+                                    <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
+                                        <input type="checkbox" class="chkShowApiKey" data-target="txtSonarrApiKey" style="margin:0;" /> Show
+                                    </label>
+                                </div>
+                                <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                                    <button type="button" is="emby-button" class="raised btn-neutral btnTestArr" data-kind="sonarr"><i class="md-icon" style="margin-right:5px;">wifi_tethering</i><span>Test Connection</span></button>
+                                    <span class="arr-test-result" data-kind="sonarr" style="font-size:0.85em;"></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Radarr -->
+                        <div class="advanced-section settings-panel" style="margin-bottom: 8px;">
+                            <div class="advanced-header settings-panel-toggle" style="padding: 10px 14px;">
+                                <i class="md-icon" style="margin-right: 8px; font-size: 1.1em; opacity: 0.65;">movie</i>
+                                <span style="font-size: 0.95em; font-weight: 600;">Radarr</span>
+                                <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s; font-size: 1.1em; opacity: 0.65;">expand_more</i>
+                            </div>
+                            <div class="settings-panel-body" style="display:none; padding: 0 14px 14px;">
+                                <div class="inputContainer">
+                                    <input is="emby-input" type="text" id="txtRadarrUrl" label="Radarr Server URL" placeholder="http://localhost:7878" />
+                                </div>
+                                <div class="inputContainer" style="margin-top: 12px;">
+                                    <input is="emby-input" type="text" class="api-key-field" autocomplete="off" spellcheck="false" data-lpignore="true" data-1p-ignore id="txtRadarrApiKey" label="Radarr API Key" />
+                                    <label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">
+                                        <input type="checkbox" class="chkShowApiKey" data-target="txtRadarrApiKey" style="margin:0;" /> Show
+                                    </label>
+                                </div>
+                                <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                                    <button type="button" is="emby-button" class="raised btn-neutral btnTestArr" data-kind="radarr"><i class="md-icon" style="margin-right:5px;">wifi_tethering</i><span>Test Connection</span></button>
+                                    <span class="arr-test-result" data-kind="radarr" style="font-size:0.85em;"></span>
                                 </div>
                             </div>
                         </div>
@@ -1796,6 +1899,10 @@
 
             <div id="tabCleanup" class="page-tab-content" style="display:none;">
                 <div id="tcManageContainer" style="max-width:900px;"></div>
+            </div>
+
+            <div id="tabMissing" class="page-tab-content" style="display:none;">
+                <div id="missingContainer" style="max-width:900px;"></div>
             </div>
 
             <div id="tabTopLists" class="page-tab-content" style="display:none;">
@@ -2635,7 +2742,7 @@
                     <i class="md-icon help-section-icon">settings</i>
                     <span>Settings &amp; Utilities</span>
                 </div>
-                <div class="step-text" style="margin-bottom:10px;font-size:0.92em;">The <strong>Settings</strong> tab has four panels: <em>External list settings</em>, <em>AI Settings</em>, <em>Advanced Settings</em> and <em>Backup &amp; Restore</em>. Click <strong>Save Settings</strong> after a change.</div>
+                <div class="step-text" style="margin-bottom:10px;font-size:0.92em;">The <strong>Settings</strong> tab has five panels: <em>External list settings</em>, <em>Sonarr &amp; Radarr</em>, <em>AI Settings</em>, <em>Advanced Settings</em> and <em>Backup &amp; Restore</em>. Click <strong>Save Settings</strong> after a change.</div>
                 <div class="hsc-eyebrow" style="margin:14px 0 8px;">External list settings</div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">key</i>
@@ -2648,6 +2755,15 @@
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">movie</i>
                     <div><strong>TMDb API Read Access Token</strong> — Needed for every TMDb source: your own lists (public or private) and TMDb API endpoints (e.g. popular movies, top-rated, now-playing). Get your token at <a href="https://www.themoviedb.org/settings/api" target="_blank" class="help-link">themoviedb.org/settings/api</a> — scroll to <em>API Read Access Token</em> and copy the long token (not the short API Key).</div>
+                </div>
+                <div class="hsc-eyebrow" style="margin:14px 0 8px;">Sonarr &amp; Radarr</div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">download</i>
+                    <div><strong>Sonarr / Radarr</strong> — Server URL and API key (in Sonarr / Radarr under Settings → General). <em>Test Connection</em> shows the version. With them set, the titles a <strong>Test</strong> of an External or AI source lists as missing show <em>✓ Sonarr</em> / <em>✓ Radarr</em> when they are already there, or a <em>+ Sonarr</em> / <em>+ Radarr</em> button. That button picks root folder and quality profile (Radarr also minimum availability and Monitored) and adds the title, monitored, with a search for it. Shows go to Sonarr, movies to Radarr; a <em>?</em> means the list does not say which it is.</div>
+                </div>
+                <div id="help-missing" class="help-feature-row">
+                    <i class="md-icon help-feat-icon">manage_search</i>
+                    <div><strong>Missing tab</strong> — appears when Sonarr or Radarr is set. Lists every title your External and AI sources want that the library does not have, once, with the sources and their rank on each list, and the same <em>✓</em> / <em>+ Sonarr</em> / <em>+ Radarr</em> buttons. Filter by source, movies or shows, search, sort, and switch between list and posters. Each sync updates it; <em>Refresh</em> reads the External lists again (AI sources keep their last sync). Posters, years and types come from TMDb when a TMDb key is set.</div>
                 </div>
                 <div class="hsc-eyebrow" style="margin:14px 0 8px;">AI Settings</div>
                 <div class="step-text" style="margin-bottom:10px;font-size:0.92em;">Fill in only the AI you use in your <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-more-ai').scrollIntoView({behavior:'smooth'});return false;">AI sources</a>. Each has a <strong>Model</strong> field (which model to ask) with a link to that provider's current models. A cloud AI is paid per call; a cheaper, fast model is usually enough for lists.</div>

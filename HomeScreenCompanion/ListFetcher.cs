@@ -189,9 +189,9 @@ namespace HomeScreenCompanion
                         int pageCount = movies.Count + shows.Count;
                         if (pageCount == 0) break;
 
-                        var page = movies.Concat(shows)
-                            .Where(x => !string.IsNullOrEmpty(x.imdb_id))
-                            .Select(x => new ExternalItemDto { Name = x.title!, Imdb = x.imdb_id!, Tmdb = null });
+                        var page = movies.Select(x => (x, "movie")).Concat(shows.Select(x => (x, "tv")))
+                            .Where(p => !string.IsNullOrEmpty(p.x.imdb_id))
+                            .Select(p => new ExternalItemDto { Name = p.x.title!, Imdb = p.x.imdb_id!, Tmdb = null, MediaType = p.Item2 });
                         all.AddRange(page);
 
                         if (pageCount < pageSize) break;
@@ -231,7 +231,7 @@ namespace HomeScreenCompanion
 
                         var page = result
                             .Where(x => !string.IsNullOrEmpty(x.imdb_id))
-                            .Select(x => new ExternalItemDto { Name = x.title!, Imdb = x.imdb_id!, Tmdb = null });
+                            .Select(x => new ExternalItemDto { Name = x.title!, Imdb = x.imdb_id!, Tmdb = null, MediaType = MdbMediaType(x.mediatype) });
                         all.AddRange(page);
 
                         if (result.Count < pageSize) break;
@@ -417,7 +417,8 @@ namespace HomeScreenCompanion
                     {
                         Name = (item.title ?? item.name)!,
                         Tmdb = item.id.ToString(),
-                        Imdb = imdbIds[k]!
+                        Imdb = imdbIds[k]!,
+                        MediaType = target.MediaType ?? (item.media_type == "tv" ? "tv" : "movie")
                     };
 
                     all.Add(dto);
@@ -513,7 +514,7 @@ namespace HomeScreenCompanion
                                 string? imdb = item.movie?.ids?.imdb ?? item.show?.ids?.imdb;
 
                                 if (!string.IsNullOrEmpty(title) && !string.IsNullOrEmpty(imdb))
-                                    list.Add(new ExternalItemDto { Name = title!, Imdb = imdb!, Tmdb = null });
+                                    list.Add(new ExternalItemDto { Name = title!, Imdb = imdb!, Tmdb = null, MediaType = item.movie != null ? "movie" : "tv" });
                             }
                             if (list.Count > 0) return list;
                         }
@@ -735,7 +736,15 @@ namespace HomeScreenCompanion
             return trimmed;
         }
 
-        private static string EscapeJsonString(string value)
+        // MDBList's mediatype ("movie" / "show") as Sonarr / Radarr's "movie" / "tv".
+        private static string? MdbMediaType(string? mediatype)
+        {
+            if (string.Equals(mediatype, "movie", StringComparison.OrdinalIgnoreCase)) return "movie";
+            if (string.Equals(mediatype, "show", StringComparison.OrdinalIgnoreCase)) return "tv";
+            return null;
+        }
+
+        internal static string EscapeJsonString(string value)
         {
             var sb = new StringBuilder("\"");
             foreach (var c in value)
