@@ -142,12 +142,12 @@ namespace HomeScreenCompanion
                 foreach (var s in sourceSections.Sections)
                     _log.Debug($"  [{s.SectionType}] \"{s.CustomName ?? s.Name}\"");
 
-                var managed = ManagedRows.Build(config, _libraryManager);
+                var managed = ManagedRows.Build(config, _libraryManager, _jsonSerializer);
                 string sourceKey = NormId(config.HomeSyncSourceUserId);
 
                 progress.Report(20);
                 int totalCopied = 0, failedUsers = 0, skippedUsers = 0;
-                bool topListsChanged = false;
+                bool configChanged = false;
                 int targetCount = config.HomeSyncTargetUserIds.Count;
                 var userStatus = UserStatus.Read(_userManager);
                 _log.Blank();
@@ -195,19 +195,30 @@ namespace HomeScreenCompanion
                         // Top-list rows: only for the list's own users. A row of a list the master
                         // is not on is kept (put back below at its place); one copied here earlier
                         // for a list this user is not on goes.
-                        var keptTopListRows = new Dictionary<TopListHomeSection, ContentSection>();
-                        foreach (var s in existing?.Sections ?? Array.Empty<ContentSection>())
+                        // A source's row (tag / collection / playlist row) the same way: a user of the
+                        // source keeps it when the master is not one of its users.
+                        var kept = new List<KeptRow>();
+                        var existingSections = existing?.Sections ?? Array.Empty<ContentSection>();
+                        for (int idx = 0; idx < existingSections.Length; idx++)
                         {
+                            var s = existingSections[idx];
                             var tl = managed.TopListRow(s);
-                            if (tl == null) continue;
-                            if (!managed.IsTopListUser(tl, targetKey))
-                                _log.Skip($"{targetName}: removed copied '{s.CustomName ?? s.Name}' row (top-list for other users)");
-                            else if (!managed.MasterHasRow(tl, sourceSections.Sections) && !keptTopListRows.ContainsKey(tl))
+                            if (tl != null)
                             {
-                                keptTopListRows[tl] = s;
-                                HomeScreenCompanionTask.RememberRowPosition(_userManager, _jsonSerializer, TopListRowKey(tl), targetIdStr, targetInternalId, s.Id, cancellationToken);
+                                if (!managed.IsTopListUser(tl, targetKey))
+                                    _log.Skip($"{targetName}: removed copied '{s.CustomName ?? s.Name}' row (top-list for other users)");
+                                else if (!managed.MasterHasRow(tl, sourceSections.Sections) && !kept.Any(k => k.TopList == tl))
+                                    kept.Add(new KeptRow { Index = idx, Row = s, TopList = tl, PositionKey = TopListRowKey(tl) });
+                                continue;
                             }
+                            // (Not a copied playlist row that shows another user's playlist.)
+                            if (managed.PlaylistRow(s) != null && managed.PlaylistOwners.TryGetValue(s.ParentId, out var plOwner) && plOwner != targetKey) continue;
+                            var tc = managed.SourceRow(config, s, targetKey);
+                            if (tc != null && !managed.MasterHasSourceRow(config, tc, sourceKey, sourceSections.Sections) && !kept.Any(k => k.Source == tc))
+                                kept.Add(new KeptRow { Index = idx, Row = s, Source = tc, PositionKey = SourceRowKey(tc) });
                         }
+                        foreach (var k in kept)
+                            HomeScreenCompanionTask.RememberRowPosition(_userManager, _jsonSerializer, k.PositionKey, targetIdStr, targetInternalId, k.Row.Id, cancellationToken);
 
                         if (existing?.Sections?.Length > 0)
                         {
@@ -253,8 +264,36 @@ namespace HomeScreenCompanion
                             copiedHere++;
                         }
 
+                        // The kept rows back at their places, top to bottom (each lands at its old
+                        // index). A source's row is tracked again, so the next sync updates it and
+                        // never adds a second one.
+                        foreach (var k in kept.OrderBy(k => k.Index))
+                        {
+                            var before = _userManager.GetHomeSections(targetInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>();
+                            ContentSection? row = k.Source != null
+                                ? before.FirstOrDefault(s => HomeScreenCompanionTask.SameTitle(s.CustomName, k.Row.CustomName) && managed.TopListRow(s) == null)
+                                : null;
+                            if (row == null)
+                            {
+                                _userManager.AddHomeSection(targetInternalId, CopySection(k.Row), cancellationToken);
+                                row = (_userManager.GetHomeSections(targetInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>())
+                                    .FirstOrDefault(s => !string.IsNullOrEmpty(s.Id) && !before.Any(b => b.Id == s.Id));
+                                if (row == null) continue;
+                                HomeScreenCompanionTask.RestoreRowPosition(_userManager, _jsonSerializer, k.PositionKey, targetIdStr, targetInternalId, row.Id, cancellationToken);
+                                copiedHere++;
+                            }
+                            if (k.Source != null)
+                            {
+                                var tracked = (k.Source.HomeSectionTracked ??= new List<HomeSectionTracking>()).FirstOrDefault(t => NormId(t.UserId) == targetKey);
+                                if (tracked != null) tracked.SectionId = row.Id;
+                                else k.Source.HomeSectionTracked.Add(new HomeSectionTracking { UserId = managed.SourceUserId(k.Source, targetKey) ?? targetIdStr, SectionId = row.Id });
+                                configChanged = true;
+                            }
+                            _log.Debug($"  {targetName}: = '{row.CustomName ?? row.Name}' kept ({(k.Source != null ? "source row; the master is not one of its users" : "top-list row")})");
+                        }
+
                         // This user's top-list rows: the one copied from the master, else their
-                        // own put back at its place (a new one at the bottom). Tracked, so the
+                        // own (put back above), else a new one at the list's Position. Tracked, so the
                         // top-list sync keeps updating it and never adds a second one.
                         foreach (var tl in managed.TopLists)
                         {
@@ -263,25 +302,21 @@ namespace HomeScreenCompanion
                             var row = before.FirstOrDefault(s => managed.TopListRow(s) == tl);
                             if (row == null)
                             {
-                                bool ownKept = keptTopListRows.TryGetValue(tl, out var kept);
-                                var add = ownKept ? CopySection(kept) : managed.NewTopListRow(tl, _jsonSerializer);
-                                _userManager.AddHomeSection(targetInternalId, add, cancellationToken);
+                                _userManager.AddHomeSection(targetInternalId, managed.NewTopListRow(tl, _jsonSerializer), cancellationToken);
                                 row = (_userManager.GetHomeSections(targetInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>())
                                     .FirstOrDefault(s => !string.IsNullOrEmpty(s.Id) && !before.Any(b => b.Id == s.Id));
                                 if (row == null) continue;
                                 // Back where it was, else (a new one) at the list's Position.
-                                if (!HomeScreenCompanionTask.RestoreRowPosition(_userManager, _jsonSerializer, TopListRowKey(tl), targetIdStr, targetInternalId, row.Id, cancellationToken) && !ownKept)
+                                if (!HomeScreenCompanionTask.RestoreRowPosition(_userManager, _jsonSerializer, TopListRowKey(tl), targetIdStr, targetInternalId, row.Id, cancellationToken))
                                     HomeScreenCompanionTask.PlaceNewRow(_userManager, targetInternalId, row.Id, RowPlacement.PositionIn(tl.HomeSectionSettings), cancellationToken,
                                         TopListSyncTask.OtherUsers(tl, targetIdStr), row.CustomName);
-                                _log.Debug(ownKept
-                                    ? $"  {targetName}: = '{row.CustomName ?? row.Name}' kept (top-list row)"
-                                    : $"  {targetName}: + '{row.CustomName ?? row.Name}' added (top-list row; they had none)");
+                                _log.Debug($"  {targetName}: + '{row.CustomName ?? row.Name}' added (top-list row; they had none)");
                                 copiedHere++;
                             }
                             var tracked = (tl.HomeSectionTracked ??= new List<HomeSectionTracking>()).FirstOrDefault(t => NormId(t.UserId) == targetKey);
                             if (tracked == null) tl.HomeSectionTracked.Add(new HomeSectionTracking { UserId = targetIdStr, SectionId = row.Id });
                             else tracked.SectionId = row.Id;
-                            topListsChanged = true;
+                            configChanged = true;
                         }
 
                         _log.Ok($"{targetName}: {RunLog.Plural(copiedHere, "section")} copied"
@@ -295,7 +330,7 @@ namespace HomeScreenCompanion
 
                     progress.Report(20 + (int)(80.0 * (i + 1) / targetCount));
                 }
-                if (topListsChanged) Plugin.Instance?.SaveConfiguration();
+                if (configChanged) Plugin.Instance?.SaveConfiguration();
 
                 if (config.HomeSyncLibraryOrder)
                 {
@@ -398,7 +433,7 @@ namespace HomeScreenCompanion
             public readonly Dictionary<string, string> PlaylistOwners = new Dictionary<string, string>(); // playlist InternalId -> user
             private readonly Dictionary<string, ManagedRow> _byPlaylist = new Dictionary<string, ManagedRow>();
 
-            public static ManagedRows Build(PluginConfiguration config, ILibraryManager libraryManager)
+            public static ManagedRows Build(PluginConfiguration config, ILibraryManager libraryManager, IJsonSerializer json)
             {
                 var m = new ManagedRows();
                 foreach (var tc in config.Tags ?? new List<TagConfig>())
@@ -415,6 +450,20 @@ namespace HomeScreenCompanion
                         m.PlaylistOwners[iid] = NormId(pm.UserId);
                         m._byPlaylist[iid] = row;
                     }
+                }
+                foreach (var tc in config.Tags ?? new List<TagConfig>())
+                {
+                    if (!SourceTopLists.PlainRow(tc) || (tc.HomeSectionUserIds?.Count ?? 0) == 0) continue;
+                    var settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    try
+                    {
+                        if (!string.IsNullOrEmpty(tc.HomeSectionSettings) && tc.HomeSectionSettings != "{}")
+                            settings = json.DeserializeFromString<Dictionary<string, string>>(tc.HomeSectionSettings) ?? settings;
+                    }
+                    catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                    HomeScreenCompanionTask.FillDefaultCustomName(settings, tc);
+                    m._sources.Add(tc);
+                    m._sourceTitles[tc] = settings.TryGetValue("CustomName", out var cn) ? cn : "";
                 }
                 foreach (var tl in config.TopLists ?? new List<TopListHomeSection>())
                 {
@@ -445,6 +494,28 @@ namespace HomeScreenCompanion
 
             public bool MasterHasRow(TopListHomeSection tl, ContentSection[] masterSections) => masterSections.Any(s => TopListRow(s) == tl);
 
+            // A source's row (tag / collection / playlist row) of this user, when they are one of the
+            // source's users: by the section id the full sync tracks, else by its title as the full
+            // sync finds it (never a row another source or a top-list owns).
+            public TagConfig? SourceRow(PluginConfiguration config, ContentSection s, string user)
+            {
+                if (string.IsNullOrEmpty(s.Id)) return null;
+                var users = _sources.Where(tc => SourceUserId(tc, user) != null).ToList();
+                return users.FirstOrDefault(tc => (tc.HomeSectionTracked ?? new List<HomeSectionTracking>()).Any(t => NormId(t.UserId) == user && t.SectionId == s.Id))
+                    ?? users.FirstOrDefault(tc => HomeScreenCompanionTask.SameTitle(s.CustomName, _sourceTitles[tc])
+                        && !HomeScreenCompanionTask.SectionOwnedElsewhere(config, tc, SourceUserId(tc, user)!, s.Id));
+            }
+
+            // The user's id as the source's home-row users list has it (null: not one of them).
+            public string? SourceUserId(TagConfig tc, string user)
+                => (tc.HomeSectionUserIds ?? new List<string>()).FirstOrDefault(u => NormId(u) == user);
+
+            public bool MasterHasSourceRow(PluginConfiguration config, TagConfig tc, string master, ContentSection[] masterSections)
+                => SourceUserId(tc, master) != null && masterSections.Any(s => TopListRow(s) == null && SourceRow(config, s, master) == tc);
+
+            private readonly List<TagConfig> _sources = new List<TagConfig>();
+            private readonly Dictionary<TagConfig, string> _sourceTitles = new Dictionary<TagConfig, string>();
+
             // A new row for a list user without one, as the top-list's own setup makes it.
             public ContentSection NewTopListRow(TopListHomeSection tl, IJsonSerializer json)
             {
@@ -459,6 +530,19 @@ namespace HomeScreenCompanion
                 return HomeScreenCompanionTask.BuildContentSection(json, settings, tl.HomeSectionLibraryId);
             }
         }
+
+        // A row the target keeps through the copy, and put back at its place.
+        private sealed class KeptRow
+        {
+            public int Index;
+            public ContentSection Row = new ContentSection();
+            public TopListHomeSection? TopList;
+            public TagConfig? Source;
+            public string PositionKey = "";
+        }
+
+        // Row-position memory key of a source's row: the full sync's own (its group).
+        private static string SourceRowKey(TagConfig tc) => GroupIssues.Key(tc.Name, tc.Tag);
 
         // Row-position memory key of a top-list row (kept apart from the tag rows' keys).
         private static string TopListRowKey(TopListHomeSection tl) => TopListSyncTask.RowPositionKey(tl);
