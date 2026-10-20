@@ -1,3 +1,4 @@
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Configuration;
@@ -30,6 +31,9 @@ namespace HomeScreenCompanion
     {
         internal const string Movies = "Movies";
         internal const string Shows = "Shows";
+        // Content "Auto (from the source)": the list is movies or TV shows by the source's own
+        // titles, worked out by each run (ResolveAutoTypes).
+        internal const string Auto = "Auto";
 
         // Set at startup (ServerEntryPoint): settings saves come in through Plugin.UpdateConfiguration.
         internal static IJsonSerializer? Json;
@@ -46,7 +50,22 @@ namespace HomeScreenCompanion
         /// <summary>Create as top-list is on (never for Your Next Watch: its row is each user's own playlist).</summary>
         internal static bool IsOn(TagConfig tc) => tc.EnableTopList && !string.Equals(tc.SourceType, "NextWatch", StringComparison.OrdinalIgnoreCase);
 
-        internal static bool IsShows(TagConfig tc) => string.Equals(tc.TopListContentType, Shows, StringComparison.OrdinalIgnoreCase);
+        /// <summary>Content is Auto (also anything that is not Movies or TV Shows).</summary>
+        internal static bool IsAuto(TagConfig tc) =>
+            !string.Equals(tc.TopListContentType, Shows, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(tc.TopListContentType, Movies, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// The content type the source's list should have: Movies or TV Shows as set; for Auto the
+        /// list's current type (what the last run found), else what an earlier list of the tag had,
+        /// else Movies until the first run has the source's titles.
+        /// </summary>
+        internal static string TypeFor(TagConfig tc, TopListHomeSection? current)
+        {
+            if (string.Equals(tc.TopListContentType, Shows, StringComparison.OrdinalIgnoreCase)) return Shows;
+            if (string.Equals(tc.TopListContentType, Movies, StringComparison.OrdinalIgnoreCase)) return Movies;
+            return current != null ? ContentTypeOf(current) : Movies;
+        }
 
         internal static string Sanitize(string? name)
         {
@@ -99,7 +118,7 @@ namespace HomeScreenCompanion
                 // unless their source still has Top-List on (same content type): made again below
                 // with the old entry's library and rows.
                 QueueVanished(old?.TopLists, cfg.TopLists, old?.Tags, "left out of the saved settings", onlyFromSource: true,
-                    keep: t => owners.TryGetValue((t.TagName ?? "").Trim(), out var o) && string.Equals(ContentTypeOf(t), IsShows(o) ? Shows : Movies, StringComparison.OrdinalIgnoreCase));
+                    keep: t => owners.TryGetValue((t.TagName ?? "").Trim(), out var o) && string.Equals(ContentTypeOf(t), TypeFor(o, t), StringComparison.OrdinalIgnoreCase));
 
                 // Lists whose source no longer has one (Top-List off, source deleted, tag renamed) or
                 // whose content type changed: queued for the next run, which removes what they made.
@@ -107,12 +126,12 @@ namespace HomeScreenCompanion
                 foreach (var tl in cfg.TopLists.Where(t => t.FromSource).ToList())
                 {
                     bool hasOwner = owners.TryGetValue((tl.TagName ?? "").Trim(), out var owner);
-                    if (hasOwner && string.Equals(ContentTypeOf(tl), IsShows(owner!) ? Shows : Movies, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (hasOwner && string.Equals(ContentTypeOf(tl), TypeFor(owner!, tl), StringComparison.OrdinalIgnoreCase)) continue;
                     cfg.TopLists.Remove(tl);
                     // The source it came from (also when its tag was renamed): its Run Group removes it.
                     var source = hasOwner ? owner!.Name : (old?.Tags ?? new List<TagConfig>())
                         .FirstOrDefault(t => IsOn(t) && string.Equals(TagOf(t), (tl.TagName ?? "").Trim(), StringComparison.OrdinalIgnoreCase))?.Name;
-                    gone.Add((tl, hasOwner ? $"made again as {(IsShows(owner!) ? "TV shows" : "movies")} in its source"
+                    gone.Add((tl, hasOwner ? $"made again as {(TypeFor(owner!, tl) == Shows ? "TV shows" : "movies")} in its source"
                                            : "switched off, renamed or deleted in its source", source ?? ""));
                 }
                 if (gone.Count > 0) Queue(gone);
@@ -123,7 +142,14 @@ namespace HomeScreenCompanion
                     if (tl == null)
                     {
                         tl = new TopListHomeSection { TagName = kv.Key, FromSource = true, HomeSectionLibraryId = "auto" };
-                        var type = IsShows(kv.Value) ? Shows : Movies;
+                        // Auto: the type an earlier list of the tag had (left out of the saved
+                        // settings, or switched off and on again before the run removed it).
+                        var type = IsAuto(kv.Value)
+                            ? ((old?.TopLists ?? new List<TopListHomeSection>()).Where(t => t.FromSource
+                                    && string.Equals((t.TagName ?? "").Trim(), kv.Key, StringComparison.OrdinalIgnoreCase)).Select(ContentTypeOf).FirstOrDefault()
+                                ?? QueuedType(kv.Key) ?? Movies)
+                            : TypeFor(kv.Value, null);
+                        tl.ContentType = type;
                         // Left out of the saved settings while its source still has it: the old entry's
                         // library and rows.
                         var prev = (old?.TopLists ?? new List<TopListHomeSection>()).FirstOrDefault(t => t.FromSource
@@ -145,7 +171,7 @@ namespace HomeScreenCompanion
                         }
                         cfg.TopLists.Add(tl);
                     }
-                    Fill(tl, kv.Value);
+                    Fill(tl, kv.Value, TypeFor(kv.Value, tl));
                 }
             }
             catch (Exception ex) { PluginLog.Write("WRN", "Settings", "Top-lists of sources could not be updated — " + PluginLog.Describe(ex)); }
@@ -155,11 +181,11 @@ namespace HomeScreenCompanion
 
         // The source's settings into its list (the engine's fixed ones too). Kept from the list: its
         // library, tracked rows and the library exclusions the sync has collected.
-        private static void Fill(TopListHomeSection tl, TagConfig src)
+        private static void Fill(TopListHomeSection tl, TagConfig src, string type)
         {
             var s = Parse(src.HomeSectionSettings);
             var old = Parse(tl.HomeSectionSettings);
-            bool shows = IsShows(src);
+            bool shows = type == Shows;
             var name = Get(s, "CustomName").Trim();
             if (name.Length == 0) name = HomeScreenCompanionTask.DefaultRowTitle(src);
             int max = Math.Max(0, src.TopListMaxItems);
@@ -239,7 +265,8 @@ namespace HomeScreenCompanion
                     // The list no longer needs the tag (TopListMembers): switched off as when
                     // Create as top-list is ticked; the next run takes it off the titles.
                     e.EnableTag = false;
-                    e.TopListContentType = ContentTypeOf(tl);
+                    // Auto: the list keeps its type until a run finds the source's titles are the other kind.
+                    e.TopListContentType = Auto;
                     e.TopListMaxItems = max;
                     var badge = Get(ls, "BadgeStyle");
                     e.TopListBadgeStyle = badge.Length > 0 ? badge : "neutral";
@@ -333,6 +360,12 @@ namespace HomeScreenCompanion
                 if (gone.Count > 0) Queue(gone);
             }
             catch (Exception ex) { PluginLog.Write("WRN", "Settings", "Removed top-lists could not be queued for removal — " + PluginLog.Describe(ex)); }
+        }
+
+        private static string? QueuedType(string tag)
+        {
+            lock (_queueLock)
+                return LoadQueue().Items.LastOrDefault(r => string.Equals(r.TagName, tag, StringComparison.OrdinalIgnoreCase))?.ContentType;
         }
 
         private static RemovedTopList? Unqueue(string tag, string contentType)
@@ -437,6 +470,70 @@ namespace HomeScreenCompanion
                     && d.LibraryId == x.LibraryId));
                 SaveQueue(now);
             }
+        }
+
+        // ── Content Auto ─────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Run, before the lists are written (SyncTopListFolders, after the sources saved their
+        /// titles): a list with Content Auto becomes movies or TV shows by its source's titles (an
+        /// episode or season counts as its show). Only one kind: that kind. Both kinds: a list that
+        /// has nothing made yet takes the larger kind (movies on a tie); a list that has its library
+        /// keeps its type, so a mixed source never switches back and forth. No titles (source off,
+        /// failed fetch): the list stays as it is. A list that changes type is queued like a list
+        /// switched in its source: the run removes its rows, library and copies, then makes it again
+        /// as the right kind. True when a list changed (the config needs saving).
+        /// </summary>
+        internal static bool ResolveAutoTypes(PluginConfiguration config, ILibraryManager libraryManager, RunLog log, string? onlyTag = null)
+        {
+            if (Json == null || Plugin.Instance == null) return false;
+            bool changed = false;
+            var owners = Owners(config);
+            foreach (var tl in (config.TopLists ?? new List<TopListHomeSection>()).Where(t => t.FromSource).ToList())
+            {
+                var tag = (tl.TagName ?? "").Trim();
+                if (onlyTag != null && !string.Equals(tag, onlyTag.Trim(), StringComparison.OrdinalIgnoreCase)) continue;
+                if (!owners.TryGetValue(tag, out var owner) || !IsAuto(owner)) continue;
+                var ids = TopListMembers.LoadIds(tag, Json);
+                if (ids == null || ids.Count == 0) continue;
+
+                int movies = 0;
+                var shows = new HashSet<long>();
+                foreach (var id in ids)
+                {
+                    if (!Guid.TryParse(id, out var g)) continue;
+                    var item = libraryManager.GetItemById(g);
+                    if (item is MediaBrowser.Controller.Entities.Movies.Movie) movies++;
+                    else if ((item as MediaBrowser.Controller.Entities.TV.Series
+                        ?? (item as MediaBrowser.Controller.Entities.TV.Season)?.Series
+                        ?? (item as MediaBrowser.Controller.Entities.TV.Episode)?.Series) is BaseItem series) shows.Add(series.InternalId);
+                }
+                if (movies == 0 && shows.Count == 0) continue;
+
+                var current = ContentTypeOf(tl);
+                bool made = (!string.IsNullOrEmpty(tl.HomeSectionLibraryId) && tl.HomeSectionLibraryId != "auto")
+                    || (tl.HomeSectionTracked?.Count ?? 0) > 0;
+                string wanted;
+                if (shows.Count == 0) wanted = Movies;
+                else if (movies == 0) wanted = Shows;
+                else
+                {
+                    wanted = made ? current : (shows.Count > movies ? Shows : Movies);
+                    log.Skip($"Top-list '{tag}': its source has {RunLog.Plural(movies, "movie")} and {RunLog.Plural(shows.Count, "show")} — made as {(wanted == Shows ? "TV shows" : "movies")}{(made ? " (as before)" : "")}, the other titles are left out");
+                }
+                if (string.Equals(wanted, current, StringComparison.OrdinalIgnoreCase)) continue;
+
+                var what = wanted == Shows ? "TV shows" : "movies";
+                var why = movies > 0 && shows.Count > 0 ? $"most of its source's titles are {what}" : $"its source's titles are {what}";
+                if (made) Queue(new List<(TopListHomeSection, string, string)> { (tl, $"made again as {what}: {why}", owner.Name ?? "") });
+                tl.ContentType = wanted;
+                tl.HomeSectionLibraryId = "auto";
+                tl.HomeSectionTracked = new List<HomeSectionTracking>();
+                Fill(tl, owner, wanted);
+                log.Info($"    Top-list '{tag}': Content Auto — {why}, so the list is made as {what}");
+                changed = true;
+            }
+            return changed;
         }
 
         // ── Library of a new list ────────────────────────────────────────────────────────

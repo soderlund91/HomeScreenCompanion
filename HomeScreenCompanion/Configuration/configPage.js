@@ -185,6 +185,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     var currentManageSections = [];
     var savedFilters = [];
     var _topListTagNames = new Set();
+    // Tag (lower case) → the server's top-list content type ('Movies' / 'Shows').
+    var _topListTypes = {};
+    function noteTopListTypes(lists) {
+        _topListTypes = {};
+        (lists || []).forEach(function (tl) { if (tl.TagName) _topListTypes[tl.TagName.trim().toLowerCase()] = tl.ContentType || 'Movies'; });
+    }
     // Each group's warnings / error from its last run (Status → GroupIssues), by groupIssueKey.
     var _groupIssues = {};
     var _groupIssuesSig = '';
@@ -3564,7 +3570,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // Screen tab's, whose fields the top-list sets are hidden (tl-mode). Not for Your Next Watch.
     function buildTopListTabHtml(tc) {
         var on = !!tc.EnableTopList;
-        var shows = tc.TopListContentType === 'Shows';
+        // A list that is off starts as Auto when ticked (Movies was only the old default).
+        var content = on && (tc.TopListContentType === 'Shows' || tc.TopListContentType === 'Movies') ? tc.TopListContentType : 'Auto';
         var enc = function (v) { return encodeURIComponent(v || ''); };
         return '<div class="toplist-tab hse-nw-hide" style="margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid var(--line-color);"' +
             ' data-tl-badge="' + enc(tc.TopListBadgeStyle || 'neutral') + '"' +
@@ -3580,8 +3587,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '<div class="tl-settings" style="margin-left:20px;padding-left:15px;border-left:2px solid var(--line-color);margin-top:10px;display:' + (on ? 'block' : 'none') + ';">' +
                 '<div style="margin-bottom:12px;"><label class="selectLabel">Content</label>' +
                     '<select is="emby-select" class="selTopListContent" style="width:100%;">' +
-                        '<option value="Movies"' + (shows ? '' : ' selected') + '>Movies</option>' +
-                        '<option value="Shows"' + (shows ? ' selected' : '') + '>TV Shows</option>' +
+                        '<option value="Auto"' + (content === 'Auto' ? ' selected' : '') + '>Auto (from the source)</option>' +
+                        '<option value="Movies"' + (content === 'Movies' ? ' selected' : '') + '>Movies</option>' +
+                        '<option value="Shows"' + (content === 'Shows' ? ' selected' : '') + '>TV Shows</option>' +
                     '</select>' +
                     '<div class="fieldDescription">Only titles of this kind are ranked. Switching it later makes the list again (a new library).</div>' +
                 '</div>' +
@@ -3606,8 +3614,18 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         try { return JSON.parse(decodeURIComponent(hseTab.dataset.hseUserids || '%5B%5D')) || []; } catch (e) { return []; }
     }
 
+    // 'Auto' (movies or TV shows by the source's titles, decided by each run), 'Movies' or 'Shows'.
     function topListContentOf(row) {
-        return (row.querySelector('.selTopListContent') || {}).value === 'Shows' ? 'Shows' : 'Movies';
+        var v = (row.querySelector('.selTopListContent') || {}).value;
+        return v === 'Shows' || v === 'Movies' ? v : 'Auto';
+    }
+
+    // The kind the list is now: as set, or for Auto what the server made it (movies until then).
+    function topListKindOf(row) {
+        var c = topListContentOf(row);
+        if (c !== 'Auto') return c;
+        var tag = ((row.querySelector('.txtTagName') || {}).value || (row.querySelector('.txtEntryLabel') || {}).value || '').trim().toLowerCase();
+        return _topListTypes[tag] === 'Shows' ? 'Shows' : 'Movies';
     }
 
     // What the top-list still needs: [tab to open ('' = none), text].
@@ -3677,7 +3695,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
 
     function topListBadgeHtml(row, values) {
-        var shows = topListContentOf(row) === 'Shows';
+        var shows = topListKindOf(row) === 'Shows';
         return buildBadgePickerHtml(values.style, values.options, values.realPoster, shows ? 'shows' : 'movies');
     }
 
@@ -3710,8 +3728,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
 
     // Switched on: Apply Tag goes off (the list is the source's titles, not the tagged ones; the
-    // tag can be switched back on). For a list the server does not have yet, Content starts as
-    // the Home Screen tab's media type when that is only shows.
+    // tag can be switched back on).
     function onTopListToggled(row) {
         var chk = row.querySelector('.chkEnableTopList');
         var tagNote = row.querySelector('.tl-tagnote');
@@ -3732,15 +3749,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             row.dataset.tlTagWasOn = '1';   // after the event: a change by hand forgets it
             if (tagNote) tagNote.style.display = 'block';
         }
-        if (row.dataset.tlSaved === '1') return;
-        var hseTab = row.querySelector('.homescreen-tab');
-        var itemTypes = '';
-        if (hseTab && hseTab.dataset.hseLoaded === '1') itemTypes = (hseTab.querySelector('.selHseItemTypes') || {}).value || '';
-        else {
-            try { itemTypes = (JSON.parse(JSON.parse(decodeURIComponent(hseTab.dataset.hseSettings || '%7B%7D')).ItemTypes || '[]') || []).join(','); } catch (e) { }
-        }
-        var sel = row.querySelector('.selTopListContent');
-        if (sel && itemTypes === 'Series' && sel.value !== 'Shows') { sel.value = 'Shows'; onTopListContentChanged(row); }
     }
 
     // The tab's fields as saved (TagConfig.EnableTopList etc.).
@@ -6542,7 +6550,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     PlaylistMappings: t.PlaylistMappings || [],
                     NextWatchUsersMigrated: !!t.NextWatchUsersMigrated,
                     NextWatchSeedDays: t.NextWatchSeedDays > 0 ? t.NextWatchSeedDays : 90, NextWatchUseTaste: t.NextWatchUseTaste !== false,
-                    EnableTopList: !!t.EnableTopList, TopListContentType: t.TopListContentType === 'Shows' ? 'Shows' : 'Movies',
+                    EnableTopList: !!t.EnableTopList, TopListContentType: (t.TopListContentType === 'Shows' || t.TopListContentType === 'Movies') ? t.TopListContentType : 'Auto',
                     TopListMaxItems: t.TopListMaxItems || 0, TopListBadgeStyle: t.TopListBadgeStyle || 'neutral',
                     TopListBadgeOptions: t.TopListBadgeOptions || '', TopListRealPoster: t.TopListRealPoster || '',
                     LastRuns: [],
@@ -12246,6 +12254,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }).then(r => {
                 window.Dashboard.processPluginConfigurationUpdateResult(r);
                 _topListTagNames = new Set((configObj.TopLists || []).map(function (tl) { return (tl.TagName || '').toLowerCase(); }).filter(Boolean));
+                noteTopListTypes(configObj.TopLists);
 
                 var newGrouped = groupConfigTags(configObj.Tags);
                 view.querySelectorAll('.tag-row').forEach(row => {
@@ -12492,6 +12501,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var btn = view.querySelector('#btnFilterDropdown'); if (btn) btn.classList.remove('active');
 
                 _topListTagNames = new Set((config.TopLists || []).map(function (tl) { return (tl.TagName || '').toLowerCase(); }).filter(Boolean));
+                noteTopListTypes(config.TopLists);
 
                 var grouped = groupConfigTags(config.Tags);
 

@@ -209,7 +209,8 @@ namespace HomeScreenCompanion
         // and card size come from the Home Screen tab; the TopLists entry is derived from this
         // source on every save (see SourceTopLists).
         public bool EnableTopList { get; set; } = false;
-        public string TopListContentType { get; set; } = "Movies";
+        // "Auto" (movies or TV shows by the source's titles, see SourceTopLists.ResolveAutoTypes), "Movies" or "Shows".
+        public string TopListContentType { get; set; } = "Auto";
         public int TopListMaxItems { get; set; } = 0;
         public string TopListBadgeStyle { get; set; } = "neutral";
         public string TopListBadgeOptions { get; set; } = "";
