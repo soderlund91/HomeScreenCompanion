@@ -84,13 +84,17 @@ namespace HomeScreenCompanion
 
         /// <summary>
         /// Settings saved (Plugin.UpdateConfiguration): links old tag top-lists to their source, then
-        /// makes cfg.TopLists match the sources with Top-List on.
+        /// makes cfg.TopLists match the sources with Top-List on. keepOrphans (a backup restore): a
+        /// list whose source is not in the restored settings is kept as a Top-Lists tab list instead
+        /// of being removed.
         /// </summary>
-        internal static void Derive(PluginConfiguration? old, PluginConfiguration? cfg)
+        internal static void Derive(PluginConfiguration? old, PluginConfiguration? cfg, bool keepOrphans = false)
         {
             if (cfg == null || Json == null || Plugin.Instance == null) return;
             try
             {
+                // The page does not send it: done stays done.
+                if (old != null && old.TopListsMovedToSources) cfg.TopListsMovedToSources = true;
                 Migrate(cfg);
                 cfg.TopLists ??= new List<TopListHomeSection>();
                 var owners = Owners(cfg);
@@ -108,6 +112,13 @@ namespace HomeScreenCompanion
                 {
                     bool hasOwner = owners.TryGetValue((tl.TagName ?? "").Trim(), out var owner);
                     if (hasOwner && string.Equals(ContentTypeOf(tl), IsShows(owner!) ? Shows : Movies, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!hasOwner && keepOrphans)
+                    {
+                        // Its library, rows, folder and saved titles stay.
+                        tl.FromSource = false;
+                        PluginLog.Write("WRN", "Settings", $"Top-list '{tl.TagName}': no source with Create as top-list in the restored settings — kept as a Top-Lists tab list (restore its source or the Top-lists section to set it there again)");
+                        continue;
+                    }
                     cfg.TopLists.Remove(tl);
                     // The source it came from (also when its tag was renamed): its Run Group removes it.
                     var source = hasOwner ? owner!.Name : (old?.Tags ?? new List<TagConfig>())
@@ -198,22 +209,24 @@ namespace HomeScreenCompanion
         }
 
         /// <summary>
-        /// Once per old tag top-list (made in the Top-Lists tab before 4.5): the source with its tag
-        /// gets Top-List on, with the list's users, title, position and look (the list's settings
-        /// win over the source's own row, which the next run removes), and Apply Tag off. The list
-        /// keeps its library and rows. True when something changed.
+        /// Once (TopListsMovedToSources), per old tag top-list (made in the Top-Lists tab before 4.5):
+        /// the first active source with its tag gets Top-List on, with the list's users, title,
+        /// position and look. The list keeps its library and rows, and the source keeps Apply Tag
+        /// (other sources, rules and rows may use the tag). A source that has its own home row
+        /// keeps it: its list stays in the Top-Lists tab (a source has one row, plain or top-list).
+        /// True when something changed.
         /// </summary>
         internal static bool Migrate(PluginConfiguration cfg)
         {
-            if (Json == null) return false;
-            bool changed = false;
+            if (Json == null || cfg.TopListsMovedToSources) return false;
+            cfg.TopListsMovedToSources = true;
             foreach (var tl in (cfg.TopLists ?? new List<TopListHomeSection>()).Where(t => !t.FromSource && !string.IsNullOrWhiteSpace(t.TagName)))
             {
                 var tag = tl.TagName.Trim();
                 // Your Next Watch never has a top-list (IsOn): a list on its tag stays a tag list.
-                var group = (cfg.Tags ?? new List<TagConfig>()).Where(t => t.EnableTag && string.Equals(TagOf(t), tag, StringComparison.OrdinalIgnoreCase)
+                var group = (cfg.Tags ?? new List<TagConfig>()).Where(t => t.Active && t.EnableTag && string.Equals(TagOf(t), tag, StringComparison.OrdinalIgnoreCase)
                     && !string.Equals(t.SourceType, "NextWatch", StringComparison.OrdinalIgnoreCase)).ToList();
-                if (group.Count == 0) continue;   // a manual list, or a tag no source writes
+                if (group.Count == 0) continue;   // a manual list, or a tag no active source writes
                 // All flat entries of the first such source (one per URL / local source).
                 var first = group[0];
                 var key = GroupIssues.Key(first.Name, first.Tag);
@@ -221,6 +234,13 @@ namespace HomeScreenCompanion
                 // Another source with this tag already owns a list made with Create as top-list.
                 if ((cfg.Tags ?? new List<TagConfig>()).Any(t => IsOn(t) && string.Equals(TagOf(t), tag, StringComparison.OrdinalIgnoreCase)
                     && GroupIssues.Key(t.Name, t.Tag) != key)) continue;
+                // The source has its own home row: the list would replace it (and the next run would
+                // remove it for its users), so the list stays as it is.
+                if (entries.Any(PlainRow))
+                {
+                    PluginLog.Write("INF", "Settings", $"Top-list '{tag}' stays in the Top-Lists tab: its source '{(string.IsNullOrWhiteSpace(first.Name) ? tag : first.Name)}' has its own home row");
+                    continue;
+                }
 
                 var ls = Parse(tl.HomeSectionSettings);
                 int max = tl.MaxItems > 0 ? tl.MaxItems : (int.TryParse(Get(ls, "MaxItems"), out var m) ? Math.Max(0, m) : 0);
@@ -236,9 +256,6 @@ namespace HomeScreenCompanion
                     e.EnableHomeSection = true;
                     e.HomeSectionUserIds = (tl.HomeSectionUserIds ?? new List<string>()).ToList();
                     e.EnableTopList = true;
-                    // The list no longer needs the tag (TopListMembers): switched off as when
-                    // Create as top-list is ticked; the next run takes it off the titles.
-                    e.EnableTag = false;
                     e.TopListContentType = ContentTypeOf(tl);
                     e.TopListMaxItems = max;
                     var badge = Get(ls, "BadgeStyle");
@@ -247,10 +264,9 @@ namespace HomeScreenCompanion
                     e.TopListRealPoster = Get(ls, "RealPosterBadge");
                 }
                 tl.FromSource = true;
-                changed = true;
-                PluginLog.Write("INF", "Settings", $"Top-list '{tag}' is now set in its source's Home Screen tab, Create as top-list (source '{(string.IsNullOrWhiteSpace(first.Name) ? tag : first.Name)}'); Apply Tag switched off, the list no longer needs the tag");
+                PluginLog.Write("INF", "Settings", $"Top-list '{tag}' is now set in its source's Home Screen tab, Create as top-list (source '{(string.IsNullOrWhiteSpace(first.Name) ? tag : first.Name)}')");
             }
-            return changed;
+            return true;
         }
 
         // ── Removal queue ────────────────────────────────────────────────────────────────

@@ -4097,16 +4097,19 @@ namespace HomeScreenCompanion
             {
                 var groups = TopListMembers.GroupsOf(config, tag);
                 memberItemsByGroup.TryGetValue(tag, out var ran);
+                bool saved = true;
                 foreach (var g in groups)
                 {
                     if (ran != null && ran.TryGetValue(g, out var items))
-                        TopListMembers.SavePart(tag, g, items, _jsonSerializer, keepOld: failedGroups.Contains(g));
+                        saved &= TopListMembers.SavePart(tag, g, items, _jsonSerializer, keepOld: failedGroups.Contains(g));
                     else if (!failedGroups.Contains(g) && (config.Tags ?? new List<TagConfig>())
                         .Where(t => string.Equals(GroupKey(t), g, StringComparison.OrdinalIgnoreCase))
                         .All(t => !t.Active || !IsScheduleActive(t.ActiveIntervals)))
-                        TopListMembers.SavePart(tag, g, new List<BaseItem>(), _jsonSerializer);
+                        saved &= TopListMembers.SavePart(tag, g, new List<BaseItem>(), _jsonSerializer);
                 }
-                TopListMembers.Combine(tag, groups, _jsonSerializer);
+                // A part that could not be written: the list keeps its last titles.
+                if (!saved || !TopListMembers.Combine(tag, groups, _jsonSerializer))
+                    _log.Warn($"Top-list '{tag}': its titles could not be saved — it keeps its last titles (see the plugin log)");
             }
         }
 
@@ -4115,8 +4118,9 @@ namespace HomeScreenCompanion
         private void SaveTopListPart(PluginConfiguration config, TagConfig tagConfig, string tagName, IEnumerable<BaseItem> items)
         {
             if (!TopListMembers.Wanted(config, tagName)) return;
-            TopListMembers.SavePart(tagName, GroupKey(tagConfig), items, _jsonSerializer);
-            TopListMembers.Combine(tagName, TopListMembers.GroupsOf(config, tagName), _jsonSerializer);
+            if (!TopListMembers.SavePart(tagName, GroupKey(tagConfig), items, _jsonSerializer)
+                || !TopListMembers.Combine(tagName, TopListMembers.GroupsOf(config, tagName), _jsonSerializer))
+                _log.Warn($"Top-list '{tagName}': its titles could not be saved — it keeps its last titles (see the plugin log)");
         }
 
         // Playlist sync for a single group — one individual playlist per user in PlaylistUserIds.

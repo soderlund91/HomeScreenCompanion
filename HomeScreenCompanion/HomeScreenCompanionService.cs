@@ -4156,8 +4156,8 @@ public class HomeScreenCompanionService : IService
 
                 // As a settings save does: each source with Top-List on has its list (one the backup
                 // lacks gets the library and rows it has here), and a list whose source is gone or
-                // switched off is queued for removal.
-                SourceTopLists.Derive(new PluginConfiguration { Tags = tagsBefore, TopLists = listsBefore }, config);
+                // switched off is queued for removal. A list whose source the restore left out is kept.
+                SourceTopLists.Derive(new PluginConfiguration { Tags = tagsBefore, TopLists = listsBefore }, config, keepOrphans: true);
                 plugin.SaveConfiguration();
                 if (mirrorChanged) TopListCollectionMirror.QueueFullSync();
                 response.Success = true;

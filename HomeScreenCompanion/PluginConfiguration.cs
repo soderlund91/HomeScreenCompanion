@@ -61,6 +61,9 @@ namespace HomeScreenCompanion
         // Set once LegacyForkCleanup has run (see there).
         public bool LegacyForkCleanupDone { get; set; } = false;
 
+        // Set once the old Top-Lists tab lists have been moved to their sources (SourceTopLists.Migrate).
+        public bool TopListsMovedToSources { get; set; } = false;
+
         // Legacy, for migration only: settings of the stoep-labs fork (4.2.0.x), read once by
         // LegacyForkCleanup and then cleared.
         public bool? ShowTopListsEnabled { get; set; } = null;
