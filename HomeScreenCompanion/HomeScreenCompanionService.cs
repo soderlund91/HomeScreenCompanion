@@ -123,6 +123,9 @@ namespace HomeScreenCompanion
         public string LibraryName { get; set; } = "";
         public int? LibraryYear { get; set; }
         public string ItemType { get; set; } = "";
+        // "movie" or "tv" when the list says so (Sonarr / Radarr), else "".
+        public string MediaType { get; set; } = "";
+        public string Tmdb { get; set; } = "";
     }
 
     public class StatusResponse
@@ -681,6 +684,11 @@ namespace HomeScreenCompanion
         public string OpenAiApiKey { get; set; } = "";
         public string GeminiApiKey { get; set; } = "";
         public string ClaudeApiKey { get; set; } = "";
+        // Nullable so backups made before Sonarr / Radarr leave the current settings alone.
+        public string? SonarrUrl { get; set; }
+        public string? SonarrApiKey { get; set; }
+        public string? RadarrUrl { get; set; }
+        public string? RadarrApiKey { get; set; }
     }
 
     public class BackupHomeSync
@@ -1136,7 +1144,13 @@ public class HomeScreenCompanionService : IService
                 }
 
                 var library = BuildTestLibraryIndex();
-                var results = items.Select(i => MatchTestItem(library, i.Name, null, i.Imdb, false)).ToList();
+                var results = items.Select(i =>
+                {
+                    var r = MatchTestItem(library, i.Name, null, i.Imdb, false);
+                    r.MediaType = i.MediaType ?? "";
+                    r.Tmdb = i.Tmdb ?? "";
+                    return r;
+                }).ToList();
                 int inLibrary = results.Count(r => r.InLibrary);
 
                 return new TestUrlResponse
@@ -1716,7 +1730,13 @@ public class HomeScreenCompanionService : IService
 
                 var library = BuildTestLibraryIndex();
                 var results = aiItems.Where(i => !string.IsNullOrWhiteSpace(i.title))
-                    .Select(i => MatchTestItem(library, i.title, i.year, i.imdb_id, true)).ToList();
+                    .Select(i =>
+                    {
+                        var r = MatchTestItem(library, i.title, i.year, i.imdb_id, true);
+                        var t = (i.type ?? "").Trim().ToLowerInvariant();
+                        r.MediaType = t == "movie" ? "movie" : (t == "show" || t == "tv" || t == "series") ? "tv" : "";
+                        return r;
+                    }).ToList();
                 int inLibrary = results.Count(r => r.InLibrary);
 
                 return new TestAiSourceResponse
@@ -3879,7 +3899,11 @@ public class HomeScreenCompanionService : IService
                     TmdbApiKey    = config.TmdbApiKey ?? "",
                     OpenAiApiKey  = config.OpenAiApiKey ?? "",
                     GeminiApiKey  = config.GeminiApiKey ?? "",
-                    ClaudeApiKey  = config.ClaudeApiKey ?? ""
+                    ClaudeApiKey  = config.ClaudeApiKey ?? "",
+                    SonarrUrl     = config.SonarrUrl ?? "",
+                    SonarrApiKey  = config.SonarrApiKey ?? "",
+                    RadarrUrl     = config.RadarrUrl ?? "",
+                    RadarrApiKey  = config.RadarrApiKey ?? ""
                 };
                 file.Sections.Add("ApiKeys");
             }
@@ -3998,6 +4022,10 @@ public class HomeScreenCompanionService : IService
                     config.OpenAiApiKey  = k.OpenAiApiKey ?? "";
                     config.GeminiApiKey  = k.GeminiApiKey ?? "";
                     config.ClaudeApiKey  = k.ClaudeApiKey ?? "";
+                    if (k.SonarrUrl != null)    config.SonarrUrl    = k.SonarrUrl;
+                    if (k.SonarrApiKey != null) config.SonarrApiKey = k.SonarrApiKey;
+                    if (k.RadarrUrl != null)    config.RadarrUrl    = k.RadarrUrl;
+                    if (k.RadarrApiKey != null) config.RadarrApiKey = k.RadarrApiKey;
                     response.Applied.Add("API keys");
                 }
 

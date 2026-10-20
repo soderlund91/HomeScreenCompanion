@@ -728,6 +728,7 @@ namespace HomeScreenCompanion
                                 CountsTowardLimit(imdbLookup, blacklist, passesFilters));
                             fetchTimer.Stop();
                             fetchError = fetcher.LastError;
+                            if (items.Count > 0 && MissingTitles.Enabled) MissingTitles.Record(tagConfig, MissingService.Missing(items, imdbLookup.Keys, blacklist), items.Count, _jsonSerializer);
                             // Empty with "Preserve…" on: the URL's last good entries stand in for it (see LastGoodLists).
                             if (items.Count > 0) { if (!dryRun) LastGoodLists.Save(tagConfig.Url!, items, _jsonSerializer); }
                             else if (config.PreserveTagsOnEmptyResult && LastGoodLists.Load(tagConfig.Url!, _jsonSerializer) is var _lastGood && _lastGood != null)
@@ -1005,6 +1006,7 @@ namespace HomeScreenCompanion
                             gs.ListCount = aiItems.Count;
                             fetchError = fetcher.LastError;
                             int _aiTitleMatched = 0, _aiBlacklisted = 0;
+                            var _aiMissing = MissingTitles.Enabled ? new List<MissingTitle>() : null;
 
                             foreach (var aiItem in aiItems)
                             {
@@ -1039,7 +1041,7 @@ namespace HomeScreenCompanion
                                         // IMDB ID not found in library — fall back to title+year match
                                         var titleMatches = FindByTitleAndYear(matchableItems, aiItem.title, aiItem.year);
                                         if (titleMatches.Count > 0) { _aiTitleMatched++; _log.Debug($"    {imdbId} not in library — matched '{_aiLabel}' by title"); }
-                                        else gs.MissingItems.Add($"{_aiLabel}  {imdbId}");
+                                        else { gs.MissingItems.Add($"{_aiLabel}  {imdbId}"); _aiMissing?.Add(MissingTitles.FromAi(aiItem, aiItems.IndexOf(aiItem) + 1)); }
                                         foreach (var localItem in titleMatches)
                                         {
                                             var imdb = localItem.GetProviderId("Imdb");
@@ -1054,7 +1056,7 @@ namespace HomeScreenCompanion
                                     // Fallback: title+year match when AI didn't return an IMDB ID
                                     var titleMatches = FindByTitleAndYear(matchableItems, aiItem.title, aiItem.year);
                                     if (titleMatches.Count > 0) _aiTitleMatched++;
-                                    else gs.MissingItems.Add($"{_aiLabel}  (no IMDb id from AI)");
+                                    else { gs.MissingItems.Add($"{_aiLabel}  (no IMDb id from AI)"); _aiMissing?.Add(MissingTitles.FromAi(aiItem, aiItems.IndexOf(aiItem) + 1)); }
                                     foreach (var localItem in titleMatches)
                                     {
                                         var imdb = localItem.GetProviderId("Imdb");
@@ -1070,6 +1072,7 @@ namespace HomeScreenCompanion
                                 }
                             }
 
+                            if (_aiMissing != null) MissingTitles.Record(tagConfig, _aiMissing, aiItems.Count, _jsonSerializer);
                             _log.Debug($"  AI ({tagConfig.AiProvider}) returned {gs.ListCount} items in {fetchTimer.ElapsedMilliseconds} ms  ·  {matchedLocalItems.Count} matched ({_aiTitleMatched} by title only)  ·  {gs.MissingItems.Count} not in library  ·  {_aiBlacklisted} blacklisted");
                             if (tagConfig.AiRefreshIntervalDays > 0 && aiItems.Count > 0)
                             {
@@ -2368,6 +2371,7 @@ namespace HomeScreenCompanion
                         var items = await fetcher.FetchItems(src.Url, srcLimit, config.TraktClientId, config.MdblistApiKey, config.TmdbApiKey, cancellationToken,
                             CountsTowardLimit(imdbLookup, blacklist, passesFilters));
                         fetchTimer.Stop();
+                        if (_preview == null && items.Count > 0 && MissingTitles.Enabled) MissingTitles.Record(src, MissingService.Missing(items, imdbLookup.Keys, blacklist), items.Count, _jsonSerializer);
                         // Empty with "Preserve…" on: the URL's last good entries stand in for it (see LastGoodLists).
                         if (items.Count > 0) { if (_preview == null && !dryRun) LastGoodLists.Save(src.Url, items, _jsonSerializer); }
                         else if (_preview == null && config.PreserveTagsOnEmptyResult && LastGoodLists.Load(src.Url, _jsonSerializer) is var _lastGood && _lastGood != null)
@@ -2592,6 +2596,7 @@ namespace HomeScreenCompanion
                     if (aiItems.Count == 0) _emptySources.Add((string.IsNullOrWhiteSpace(tagConfig.AiProvider) ? "the AI" : tagConfig.AiProvider) + (fetcher.LastError != null ? $" ({fetcher.LastError})" : ""));
                     if (aiItems.Count == 0 && ListFetcher.IsFailure(fetcher.LastError)) _failedSources.Add(_emptySources[_emptySources.Count - 1]);
                     int _aiTitleMatched = 0, _aiBlacklisted = 0;
+                    var _aiMissing = _preview == null && MissingTitles.Enabled ? new List<MissingTitle>() : null;
 
                     foreach (var aiItem in aiItems)
                     {
@@ -2616,7 +2621,7 @@ namespace HomeScreenCompanion
                                 // IMDB ID not found in library — fall back to title+year match
                                 var titleMatches = FindByTitleAndYear(matchableItems, aiItem.title, aiItem.year);
                                 if (titleMatches.Count > 0) { _aiTitleMatched++; _log.Debug($"    {imdbId} not in library — matched '{_aiLabel}' by title"); }
-                                else { gs.MissingItems.Add($"{_aiLabel}  {imdbId}"); _preview?.Missing.Add(new PreviewMissingTitle(aiItem.title, aiItem.year, imdbId)); }
+                                else { gs.MissingItems.Add($"{_aiLabel}  {imdbId}"); _preview?.Missing.Add(new PreviewMissingTitle(aiItem.title, aiItem.year, imdbId)); _aiMissing?.Add(MissingTitles.FromAi(aiItem, aiItems.IndexOf(aiItem) + 1)); }
                                 foreach (var localItem in titleMatches)
                                 {
                                     var imdb = localItem.GetProviderId("Imdb");
@@ -2629,7 +2634,7 @@ namespace HomeScreenCompanion
                         {
                             var titleMatches = FindByTitleAndYear(matchableItems, aiItem.title, aiItem.year);
                             if (titleMatches.Count > 0) _aiTitleMatched++;
-                            else { gs.MissingItems.Add($"{_aiLabel}  (no IMDb id from AI)"); _preview?.Missing.Add(new PreviewMissingTitle(aiItem.title, aiItem.year, "")); }
+                            else { gs.MissingItems.Add($"{_aiLabel}  (no IMDb id from AI)"); _preview?.Missing.Add(new PreviewMissingTitle(aiItem.title, aiItem.year, "")); _aiMissing?.Add(MissingTitles.FromAi(aiItem, aiItems.IndexOf(aiItem) + 1)); }
                             foreach (var localItem in titleMatches)
                             {
                                 var imdb = localItem.GetProviderId("Imdb");
@@ -2638,6 +2643,7 @@ namespace HomeScreenCompanion
                             }
                         }
                     }
+                    if (_aiMissing != null) MissingTitles.Record(tagConfig, _aiMissing, aiItems.Count, _jsonSerializer);
                     _log.Debug($"  AI ({tagConfig.AiProvider}) returned {_listCount} items in {fetchTimer.ElapsedMilliseconds} ms  ·  {matchedLocalItems.Count} matched ({_aiTitleMatched} by title only)  ·  {gs.MissingItems.Count} not in library  ·  {_aiBlacklisted} blacklisted");
 
                     if (_preview != null)
