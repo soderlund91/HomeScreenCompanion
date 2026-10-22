@@ -159,13 +159,14 @@ namespace HomeScreenCompanion
                 if (totals.ConfigChanged) SaveRunChanges(config);
 
                 int usersDone = totals.Targets - totals.Skipped - totals.Failed;
+                int sourceCount = sourceKeys.Count;   // several profiles may share a source user
                 LastSectionsCopied = totals.Copied;
                 LastSyncTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
                 LastSyncResult = $"OK — {totals.Copied} section(s) copied to {totals.Targets - totals.Skipped} user(s)"
-                    + (profiles.Count > 1 ? $" from {profiles.Count} source users." : ".");
+                    + (sourceCount > 1 ? $" from {sourceCount} source users." : ".");
                 _log.Rule();
                 _log.Info("Summary");
-                _log.Info($"  Sections:      {totals.Copied} copied to {RunLog.Plural(usersDone, "user")}{(profiles.Count > 1 ? $" from {RunLog.Plural(profiles.Count, "source user")}" : "")}{(totals.Failed > 0 ? $", {RunLog.Plural(totals.Failed, "user")} failed" : "")}");
+                _log.Info($"  Sections:      {totals.Copied} copied to {RunLog.Plural(usersDone, "user")}{(sourceCount > 1 ? $" from {RunLog.Plural(sourceCount, "source user")}" : "")}{(totals.Failed > 0 ? $", {RunLog.Plural(totals.Failed, "user")} failed" : "")}");
                 if (userStatus.SummaryLine() is string disabledLine) _log.Info("  " + disabledLine);
                 _log.Info($"  Done in {RunLog.Elapsed(DateTime.Now - startTime)}  ·  {(totals.Failed > 0 ? "✖ Completed with " + RunLog.Plural(totals.Failed, "error") : "✔ Completed")}");
                 _log.Rule();

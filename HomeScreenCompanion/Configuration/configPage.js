@@ -728,7 +728,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     <input is="emby-checkbox" type="checkbox" class="chkOutTag" data-kind="${kind}" ${enabled ? 'checked' : ''} />
                     <span>Custom tag on ${what}</span>
                 </label>
-                <div class="fieldDescription">Puts a tag on the ${what}${kind === 'pl' ? 's' : ''} itself, not on the titles in ${kind === 'pl' ? 'them' : 'it'}.</div>
+                <div class="fieldDescription">Puts a tag on the ${what}${kind === 'pl' ? 's' : ''} itself, not on the titles in ${kind === 'pl' ? 'them' : 'it'}.<br>Not sure you need it? Leave it off.</div>
                 <div class="inputContainer out-tag-field" style="margin-top:10px; display:${enabled ? 'block' : 'none'};">
                     <input is="emby-input" type="text" class="txtOutTag" data-kind="${kind}" label="Tag on the ${what}" value="${val}" />
                     <div class="out-extra-tag-list" style="margin-top:10px;">${extraRows}</div>
@@ -7033,7 +7033,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '</div>',
             '<div id="hscProfilesWrap" class="hsc-card" style="display:' + syncDisplay + '">',
             '<h3 class="hsc-section-title">Profiles</h3>',
-            '<p class="textMuted" style="font-size:0.88em; margin-bottom:12px;">Each profile copies one user\'s home screen to other users, e.g. one for the adults and one for the children. A user can get their home screen from one profile only.</p>',
+            '<p class="textMuted" style="font-size:0.88em; margin-bottom:12px;">Each profile copies one user\'s home screen to other users, e.g. one for the adults and one for the children. Several profiles can use the same source user, e.g. to copy different rows to different users. A user can get their home screen from one profile only.</p>',
             '<p class="hsc-profile-empty textMuted" style="font-size:0.85em; display:' + (profiles.length ? 'none' : 'block') + ';">No profiles yet.</p>',
             '<div class="hsc-profile-list">',
             profiles.map(function (p) { return hscProfileHtml(p, users, false); }).join(''),
@@ -7053,7 +7053,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
 
     // Locks what would make two profiles write the same user: a source user is never a target,
-    // and a user is the target of one profile only (the first that has them). Then the headers.
+    // and a user is the target of one profile only (the first that has them). Several profiles
+    // may share a source user (e.g. different rows to different users). Then the headers.
     function refreshHscProfiles(container) {
         var users = container._hscUsers || [];
         function nameOf(id) { var u = users.filter(function (x) { return x.Id === id; })[0]; return u ? u.Name : id; }
@@ -7082,7 +7083,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var sel = el.querySelector('.selHscProfileSource');
             if (sel) Array.from(sel.options).forEach(function (o) {
                 if (!o.value) return;
-                o.disabled = o.value !== sources[i] && (sources.indexOf(o.value) >= 0 || ((o.value in owner) && owner[o.value] !== i));
+                o.disabled = o.value !== sources[i] && (o.value in owner);
             });
             var list = el.querySelector('.hsc-profile-target-list');
             if (list && list._syncAll) list._syncAll();

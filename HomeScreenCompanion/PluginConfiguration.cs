@@ -95,7 +95,8 @@ namespace HomeScreenCompanion
     }
 
     // One Copy & Sync profile: SourceUserId's home screen (and library order, with LibraryOrder)
-    // is copied to TargetUserIds. A user gets their home screen from one profile only.
+    // is copied to TargetUserIds. A user gets their home screen from one profile only; several
+    // profiles may share a source user.
     public class HomeSyncProfile
     {
         public bool Active { get; set; } = true;
