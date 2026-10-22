@@ -6683,11 +6683,17 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     function effectiveHscProfiles(config) {
         if ((config.HomeSyncProfiles || []).length) {
             return config.HomeSyncProfiles.map(function (p) {
-                return { Active: p.Active !== false, SourceUserId: p.SourceUserId || '', TargetUserIds: (p.TargetUserIds || []).slice().sort(), LibraryOrder: !!p.LibraryOrder };
+                return {
+                    Active: p.Active !== false, SourceUserId: p.SourceUserId || '', TargetUserIds: (p.TargetUserIds || []).slice().sort(), LibraryOrder: !!p.LibraryOrder,
+                    Mode: p.Mode === 'selected' ? 'selected' : 'all', KeepOwnRows: p.KeepOwnRows !== false, SelectedRows: (p.SelectedRows || []).slice().sort()
+                };
             });
         }
         if (!config.HomeSyncSourceUserId) return [];
-        return [{ Active: true, SourceUserId: config.HomeSyncSourceUserId, TargetUserIds: (config.HomeSyncTargetUserIds || []).slice().sort(), LibraryOrder: !!config.HomeSyncLibraryOrder }];
+        return [{
+            Active: true, SourceUserId: config.HomeSyncSourceUserId, TargetUserIds: (config.HomeSyncTargetUserIds || []).slice().sort(), LibraryOrder: !!config.HomeSyncLibraryOrder,
+            Mode: 'all', KeepOwnRows: true, SelectedRows: []
+        }];
     }
 
     // The profiles in the Copy & Sync tab, in page order.
@@ -6697,9 +6703,82 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 Active: !!(el.querySelector('.chkHscProfileActive') || {}).checked,
                 SourceUserId: (el.querySelector('.selHscProfileSource') || {}).value || '',
                 TargetUserIds: Array.from(el.querySelectorAll('.hsc-target-chk:checked')).map(function (c) { return c.value; }).sort(),  // sorted: the dirty check compares with effectiveHscProfiles
-                LibraryOrder: !!(el.querySelector('.chkHscProfileLibraryOrder') || {}).checked
+                LibraryOrder: !!(el.querySelector('.chkHscProfileLibraryOrder') || {}).checked,
+                Mode: (el.querySelector('.selHscProfileMode') || {}).value === 'selected' ? 'selected' : 'all',
+                KeepOwnRows: !!(el.querySelector('.chkHscProfileKeepOwn') || {}).checked,
+                SelectedRows: hscSelectedRows(el)
             };
         });
+    }
+
+    // The rows a profile copies with Copy selected (sorted, like effectiveHscProfiles): the ticked
+    // boxes once the source user's rows are listed, else what was saved.
+    function hscSelectedRows(el) {
+        var list = el.querySelector('.hsc-profile-row-list');
+        if (!list || !list.dataset.source) return (el._hscSavedRows || []).slice().sort();
+        return Array.from(list.querySelectorAll('.hsc-row-chk:checked')).map(function (c) { return c.value; }).sort();
+    }
+
+    // Copy selected: the source user's home rows to tick (GET Hsc/SourceRows). Rows ticked before
+    // that are not on that home screen now stay listed (and ticked), so a save keeps them.
+    function loadHscProfileRows(el, users) {
+        var list = el.querySelector('.hsc-profile-row-list');
+        var source = (el.querySelector('.selHscProfileSource') || {}).value || '';
+        if (!list || list.dataset.loading === source) return;
+        var keep = hscSelectedRows(el);
+        el._hscSavedRows = keep;
+        delete list.dataset.source;
+        if (!source) {
+            list.innerHTML = '<p class="textMuted" style="font-size:0.85em;">Select a source user first.</p>';
+            return;
+        }
+        list.dataset.loading = source;
+        list.innerHTML = '<p class="textMuted" style="font-size:0.85em;">Loading rows…</p>';
+        var sourceUser = (users || []).filter(function (u) { return u.Id === source; })[0];
+        var sourceName = sourceUser ? sourceUser.Name : 'the source user';
+        window.ApiClient.getJSON(window.ApiClient.getUrl('HomeScreenCompanion/Hsc/SourceRows', { UserId: source }))
+            .then(function (rows) { return rows || []; }, function () { return null; })
+            .then(function (rows) {
+                if (list.dataset.loading !== source) return;   // the source user was changed meanwhile
+                delete list.dataset.loading;
+                if (rows === null) {
+                    list.innerHTML = '<p class="textMuted" style="font-size:0.85em;">Could not load the rows of ' + escapeHtml(sourceName) + '.</p>';
+                    return;
+                }
+                var kinds = { source: 'Source', playlist: 'Playlist', toplist: 'Top-list' };
+                function rowHtml(key, title, kind, missing) {
+                    var chip = kinds[kind] ? '<span style="margin-left:8px;font-size:0.75em;padding:1px 8px;border-radius:10px;border:1px solid var(--line-color);color:var(--theme-text-secondary);">' + kinds[kind] + '</span>' : '';
+                    var note = missing ? '<span style="margin-left:auto;font-size:0.8em;color:var(--theme-text-secondary);">Not on ' + escapeHtml(sourceName) + '\'s home screen</span>' : '';
+                    return '<div class="hsc-user-row"' + (missing ? ' style="opacity:0.6;"' : '') + '><label style="display:flex;align-items:center;gap:10px;cursor:pointer;width:100%;">' +
+                        '<input is="emby-checkbox" type="checkbox" class="hsc-row-chk" value="' + escapeHtml(key) + '"' + (keep.indexOf(key) >= 0 ? ' checked' : '') + ' />' +
+                        '<span>' + escapeHtml(title) + chip + '</span>' + note + '</label></div>';
+                }
+                var keys = rows.map(function (r) { return r.Key; });
+                var missing = keep.filter(function (k) { return keys.indexOf(k) < 0; });
+                list.dataset.source = source;
+                list.innerHTML = rows.length || missing.length
+                    ? buildSelectAllRowHtml('hsc-user-row') +
+                      rows.map(function (r) { return rowHtml(r.Key, r.Title, r.Kind, false); }).join('') +
+                      missing.map(function (k) { return rowHtml(k, hscRowKeyLabel(k), '', true); }).join('')
+                    : '<p class="textMuted" style="font-size:0.85em;">' + escapeHtml(sourceName) + ' has no home screen rows.</p>';
+                list._syncAll = wireSelectAll(list, '.hsc-row-chk');
+                var container = el.closest('#hscContainer');
+                if (container) refreshHscProfiles(container);
+                setTimeout(checkFormState, 0);
+            });
+    }
+
+    // A saved row key the source user does not have now, as a readable name.
+    function hscRowKeyLabel(key) {
+        var k = key.replace(/^(src|tl|row):/, '');
+        if (key.indexOf('src:') === 0) {
+            // "src:<name>/<tag>", each URI-escaped (HomeSectionSyncTask.SourceKey).
+            var parts = k.split('/').map(function (x) { try { return decodeURIComponent(x); } catch (e) { return x; } });
+            return parts[0] || parts[1] || k;
+        }
+        if (k.indexOf('name:') === 0) return k.substring(5);
+        if (k.indexOf('type:') === 0) return k.substring(5).split('|')[0] + ' row';
+        return k;
     }
 
     // One profile: its header names the source user and who it copies to; the body holds its settings.
@@ -6743,6 +6822,29 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '<label><input is="emby-checkbox" type="checkbox" class="chkHscProfileLibraryOrder"' + (p.LibraryOrder ? ' checked' : '') + ' /><span>Also copy library order</span></label>',
             '<div class="fieldDescription">Also copies the order of media libraries in the navigation sidebar.</div>',
             '</div>',
+            '<div class="inputContainer" style="margin-top:16px;">',
+            '<select is="emby-select" class="selHscProfileMode" label="What to copy">',
+            '<option value="all"' + (p.Mode !== 'selected' ? ' selected' : '') + '>Everything (replaces the home screen)</option>',
+            '<option value="selected"' + (p.Mode === 'selected' ? ' selected' : '') + '>Selected rows only</option>',
+            '</select>',
+            '</div>',
+            '<div class="hsc-mode-all"' + (p.Mode === 'selected' ? ' style="display:none;"' : '') + '>',
+            '<div class="checkboxContainer checkboxContainer-withDescription">',
+            '<label><input is="emby-checkbox" type="checkbox" class="chkHscProfileKeepOwn"' + (p.KeepOwnRows !== false ? ' checked' : '') + ' /><span>Keep each user\'s own rows</span></label>',
+            '</div>',
+            '<div class="hsc-callout" style="margin-top:4px;"><i class="md-icon">info</i><span>',
+            'Each user\'s home screen is replaced by the source user\'s, and the user is added to the sources and top-lists whose rows they get.<br>',
+            '<strong>On:</strong> rows from sources and top-lists the user is selected on, that the source user doesn\'t have, stay where they are.<br>',
+            '<strong>Off:</strong> an exact copy. Everything else is removed, and the user is also taken off those sources and top-lists.',
+            '</span></div>',
+            '</div>',
+            '<div class="hsc-mode-selected"' + (p.Mode === 'selected' ? '' : ' style="display:none;"') + '>',
+            '<div class="hsc-callout" style="margin-bottom:8px;"><i class="md-icon">info</i><span>',
+            'Only the ticked rows are copied: updated where a user already has them, else added at the same place as on the source user\'s home screen. Each user\'s other rows stay.<br>',
+            'A row from a source or top-list also adds the user to it. Unticking it later removes the row and takes the user off again, unless you added them yourself.',
+            '</span></div>',
+            '<div class="hsc-user-list hsc-profile-row-list"></div>',
+            '</div>',
             '<div class="hsc-eyebrow" style="margin:16px 0 8px;">Copy to</div>',
             (targetRows ? userListSelectLinksHtml() : ''),
             '<div class="hsc-user-list hsc-profile-target-list">',
@@ -6762,7 +6864,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '<h3 class="hsc-section-title">Configuration</h3>',
             '<div class="checkboxContainer checkboxContainer-withDescription">',
             '<label><input is="emby-checkbox" type="checkbox" id="chkHscEnabled"' + (config.HomeSyncEnabled ? ' checked' : '') + ' /><span>Enable Home Screen sync</span></label>',
-            '<div class="fieldDescription">When enabled, each profile copies all Home Sections of its source user to the users it lists. When disabled, the task always skips — even if triggered manually.</div>',
+            '<div class="fieldDescription">When enabled, each profile copies its source user\'s home screen (everything, or the rows you select) to the users it lists. When disabled, the task always skips — even if triggered manually.</div>',
             '</div>',
             '</div>',
             '<div id="hscProfilesWrap" class="hsc-card" style="display:' + syncDisplay + '">',
@@ -6822,8 +6924,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             if (list && list._syncAll) list._syncAll();
 
             var targets = Array.from(el.querySelectorAll('.hsc-target-chk:checked')).map(function (c) { return nameOf(c.value); });
+            var selectedMode = (el.querySelector('.selHscProfileMode') || {}).value === 'selected';
+            el.querySelector('.hsc-mode-all').style.display = selectedMode ? 'none' : '';
+            el.querySelector('.hsc-mode-selected').style.display = selectedMode ? '' : 'none';
+            var rowList = el.querySelector('.hsc-profile-row-list');
+            if (selectedMode && rowList && (rowList.dataset.source || '') !== sources[i] && rowList.dataset.loading !== sources[i]) loadHscProfileRows(el, users);
+            var nSelected = hscSelectedRows(el).length;
+            var what = selectedMode ? nSelected + ' selected row' + (nSelected === 1 ? '' : 's')
+                : (el.querySelector('.chkHscProfileKeepOwn') || {}).checked ? '' : 'exact copy';
             el.querySelector('.hsc-profile-source').textContent = sources[i] ? nameOf(sources[i]) : 'No source user';
-            el.querySelector('.hsc-profile-targets').textContent = targets.length ? '→ ' + targets.join(', ') : 'Copies to nobody yet';
+            el.querySelector('.hsc-profile-targets').textContent = (targets.length ? '→ ' + targets.join(', ') : 'Copies to nobody yet') + (what ? '  ·  ' + what : '');
             el.querySelector('.hsc-profile-off').style.display = (el.querySelector('.chkHscProfileActive') || {}).checked ? 'none' : '';
         });
         var empty = container.querySelector('.hsc-profile-empty');
@@ -6837,7 +6947,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         getHseUsers()
             .then(function (users) {
                 renderHscTab(container, lastHscConfig, users || []);
-                container.querySelectorAll('.hsc-profile').forEach(wireHscProfile);
+                var savedProfiles = lastHscConfig.HomeSyncProfiles || [];
+                container.querySelectorAll('.hsc-profile').forEach(function (el, i) {
+                    el._hscSavedRows = ((savedProfiles[i] || {}).SelectedRows || []).slice();
+                    wireHscProfile(el);
+                });
                 refreshHscProfiles(container);
 
                 container.querySelector('#chkHscEnabled').addEventListener('change', function () {
@@ -6847,7 +6961,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 container.querySelector('.btnAddHscProfile').addEventListener('click', function () {
                     var list = container.querySelector('.hsc-profile-list');
-                    list.insertAdjacentHTML('beforeend', hscProfileHtml({ Active: true, SourceUserId: '', TargetUserIds: [], LibraryOrder: false }, container._hscUsers || [], true));
+                    list.insertAdjacentHTML('beforeend', hscProfileHtml({ Active: true, SourceUserId: '', TargetUserIds: [], LibraryOrder: false, Mode: 'all', KeepOwnRows: true, SelectedRows: [] }, container._hscUsers || [], true));
                     wireHscProfile(list.lastElementChild);
                     refreshHscProfiles(container);
                     setTimeout(checkFormState, 0);

@@ -56,6 +56,7 @@ namespace HomeScreenCompanion
         public string HomeSyncSourceUserId { get; set; } = "";
         public List<string> HomeSyncTargetUserIds { get; set; } = new List<string>();
         public bool HomeSyncLibraryOrder { get; set; } = false;
+        public List<HomeSyncAddition> HomeSyncAdditions { get; set; } = new List<HomeSyncAddition>();
 
         // The profiles Copy & Sync runs: HomeSyncProfiles, or the legacy single source as one profile.
         public List<HomeSyncProfile> EffectiveHomeSyncProfiles()
@@ -96,6 +97,32 @@ namespace HomeScreenCompanion
         public string SourceUserId { get; set; } = "";
         public List<string> TargetUserIds { get; set; } = new List<string>();
         public bool LibraryOrder { get; set; } = false;
+        // "all" (Copy all): the target's home screen is replaced by the source user's; with
+        // KeepOwnRows, rows of sources and top-lists the target is on (and the source user is not)
+        // stay. "selected" (Copy selected): only the SelectedRows (HomeSectionSyncTask.RowKey) are
+        // added or updated, the target's other rows stay.
+        public string Mode { get; set; } = ModeAll;
+        public bool KeepOwnRows { get; set; } = true;
+        public List<string> SelectedRows { get; set; } = new List<string>();
+
+        public const string ModeAll = "all";
+        public const string ModeSelected = "selected";
+        public bool CopiesSelected() => string.Equals(Mode, ModeSelected, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // What Copy & Sync added for a target user, so it can take it away again when the row is no
+    // longer copied to them: the user on a source / top-list (List "home" = its home-row users,
+    // "playlist" = the source's playlist users), or a home row it copied ("row", Copy selected).
+    // Key: the row's HomeSectionSyncTask.RowKey. Never made for a user who was already there.
+    public class HomeSyncAddition
+    {
+        public string List { get; set; } = "";
+        public string Key { get; set; } = "";
+        public string UserId { get; set; } = "";
+
+        public const string Home = "home";
+        public const string Playlist = "playlist";
+        public const string Row = "row";
     }
 
     public class TagConfig

@@ -332,6 +332,13 @@ namespace HomeScreenCompanion
     [Authenticated(Roles = "Admin")]
     public class HscGetStatusRequest : IReturn<HscSyncStatusResponse> { }
 
+    [Route("/HomeScreenCompanion/Hsc/SourceRows", "GET")]
+    [Authenticated(Roles = "Admin")]
+    public class HscGetSourceRowsRequest : IReturn<List<HomeSyncRowChoice>>
+    {
+        public string UserId { get; set; } = string.Empty;
+    }
+
     [Route("/HomeScreenCompanion/DebugSections", "GET")]
     [Authenticated(Roles = "Admin")]
     public class DebugSectionsRequest : IReturn<string>
@@ -1102,6 +1109,15 @@ public class HomeScreenCompanionService : IService
             {
                 return new UploadCollectionImageResponse { Success = false, Message = ex.Message };
             }
+        }
+
+        // The rows of a source user's home screen, for a Copy & Sync profile's Copy selected picker.
+        public object Get(HscGetSourceRowsRequest request)
+        {
+            var config = Plugin.Instance?.Configuration;
+            if (config == null || string.IsNullOrWhiteSpace(request.UserId)) return new List<HomeSyncRowChoice>();
+            try { return HomeSectionSyncTask.RowChoices(config, _userManager, _libraryManager, _jsonSerializer, request.UserId); }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); return new List<HomeSyncRowChoice>(); }
         }
 
         public object Get(DebugSectionsRequest request)
@@ -4202,7 +4218,10 @@ public class HomeScreenCompanionService : IService
             Active = p.Active,
             SourceUserId = p.SourceUserId ?? "",
             TargetUserIds = (p.TargetUserIds ?? new List<string>()).ToList(),
-            LibraryOrder = p.LibraryOrder
+            LibraryOrder = p.LibraryOrder,
+            Mode = string.IsNullOrEmpty(p.Mode) ? HomeSyncProfile.ModeAll : p.Mode,
+            KeepOwnRows = p.KeepOwnRows,
+            SelectedRows = (p.SelectedRows ?? new List<string>()).ToList()
         };
 
         private string UserNameOf(string? userId)

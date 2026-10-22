@@ -44,6 +44,9 @@ namespace HomeScreenCompanion
             // Groups deleted on the settings page: their tag and home rows are cleaned up by the next full run.
             HomeScreenCompanionTask.RecordDeletedGroups(Configuration, configuration as PluginConfiguration);
             LegacyForkCleanup.KeepCleanupDone(Configuration, configuration as PluginConfiguration);
+            // What Copy & Sync added for its target users is the task's own record (the page never edits it).
+            if (configuration is PluginConfiguration incoming && Configuration is PluginConfiguration current)
+                incoming.HomeSyncAdditions = current.HomeSyncAdditions ?? new List<HomeSyncAddition>();
             base.UpdateConfiguration(configuration);
             HomeScreenCompanionTask.RecordImportedCollections(Configuration);
             // Toggling the collection mirror adds (or removes) memberships for all existing copies.
