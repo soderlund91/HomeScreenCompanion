@@ -686,6 +686,8 @@ namespace HomeScreenCompanion
     public class BackupHomeSync
     {
         public bool HomeSyncEnabled { get; set; }
+        // Null in backups from before profiles: the single-source fields below are used then.
+        public List<HomeSyncProfile>? HomeSyncProfiles { get; set; }
         public string HomeSyncSourceUserId { get; set; } = "";
         public List<string> HomeSyncTargetUserIds { get; set; } = new List<string>();
         public bool HomeSyncLibraryOrder { get; set; }
@@ -3925,12 +3927,16 @@ public class HomeScreenCompanionService : IService
 
             if (request.HomeSync)
             {
+                // The first profile also goes into the single-source fields, for older versions.
+                var profiles = config.EffectiveHomeSyncProfiles();
+                var first = profiles.FirstOrDefault();
                 file.HomeSync = new BackupHomeSync
                 {
                     HomeSyncEnabled       = config.HomeSyncEnabled,
-                    HomeSyncSourceUserId  = config.HomeSyncSourceUserId ?? "",
-                    HomeSyncTargetUserIds = (config.HomeSyncTargetUserIds ?? new List<string>()).ToList(),
-                    HomeSyncLibraryOrder  = config.HomeSyncLibraryOrder,
+                    HomeSyncProfiles      = profiles.Select(CopyProfile).ToList(),
+                    HomeSyncSourceUserId  = first?.SourceUserId ?? "",
+                    HomeSyncTargetUserIds = (first?.TargetUserIds ?? new List<string>()).ToList(),
+                    HomeSyncLibraryOrder  = first?.LibraryOrder ?? false,
                     ContinueWatchingBumpEnabled  = config.ContinueWatchingBumpEnabled,
                     ContinueWatchingBumpMode     = config.ContinueWatchingBumpMode ?? ContinueWatchingBumper.ModeAllEpisodes,
                     ContinueWatchingBumpAllUsers = config.ContinueWatchingBumpAllUsers,
@@ -4033,20 +4039,27 @@ public class HomeScreenCompanionService : IService
                 if (request.HomeSync && Has("HomeSync") && backup.HomeSync != null)
                 {
                     var h = backup.HomeSync;
-                    config.HomeSyncEnabled       = h.HomeSyncEnabled;
-                    config.HomeSyncSourceUserId  = h.HomeSyncSourceUserId ?? "";
-                    config.HomeSyncTargetUserIds = (h.HomeSyncTargetUserIds ?? new List<string>()).ToList();
-                    config.HomeSyncLibraryOrder  = h.HomeSyncLibraryOrder;
-                    if (!string.IsNullOrEmpty(config.HomeSyncSourceUserId) && !IsKnownUser(knownUsers, config.HomeSyncSourceUserId))
-                    {
-                        config.HomeSyncSourceUserId = "";
-                        if (config.HomeSyncEnabled)
+                    config.HomeSyncEnabled = h.HomeSyncEnabled;
+                    // Backups from before profiles hold one source user: it becomes one profile.
+                    var restored = h.HomeSyncProfiles != null
+                        ? h.HomeSyncProfiles.Where(p => p != null).Select(CopyProfile).ToList()
+                        : new PluginConfiguration
                         {
-                            config.HomeSyncEnabled = false;
-                            response.Warnings.Add("Home screen sync: the source user does not exist on this server – sync has been disabled until you pick a new source user.");
-                        }
-                    }
-                    PruneUnknownUsers(config.HomeSyncTargetUserIds, knownUsers, response.Warnings, "Home screen sync targets");
+                            HomeSyncSourceUserId = h.HomeSyncSourceUserId ?? "",
+                            HomeSyncTargetUserIds = (h.HomeSyncTargetUserIds ?? new List<string>()).ToList(),
+                            HomeSyncLibraryOrder = h.HomeSyncLibraryOrder
+                        }.EffectiveHomeSyncProfiles();
+                    int unknownSources = restored.RemoveAll(p => !IsKnownUser(knownUsers, p.SourceUserId));
+                    if (unknownSources > 0)
+                        response.Warnings.Add($"Home screen sync: {unknownSources} profile(s) have a source user that does not exist on this server and were removed – add them again with a new source user.");
+                    foreach (var p in restored)
+                        PruneUnknownUsers(p.TargetUserIds, knownUsers, response.Warnings, $"Home screen sync targets of {UserNameOf(p.SourceUserId)}");
+                    config.HomeSyncProfiles = restored;
+                    config.HomeSyncSourceUserId = "";
+                    config.HomeSyncTargetUserIds = new List<string>();
+                    config.HomeSyncLibraryOrder = false;
+                    if (config.HomeSyncEnabled && restored.Count == 0 && unknownSources > 0)
+                        config.HomeSyncEnabled = false;
                     if (h.ContinueWatchingBumpEnabled.HasValue)  config.ContinueWatchingBumpEnabled  = h.ContinueWatchingBumpEnabled.Value;
                     if (!string.IsNullOrEmpty(h.ContinueWatchingBumpMode)) config.ContinueWatchingBumpMode = h.ContinueWatchingBumpMode!;
                     if (h.ContinueWatchingBumpAllUsers.HasValue) config.ContinueWatchingBumpAllUsers = h.ContinueWatchingBumpAllUsers.Value;
@@ -4184,6 +4197,17 @@ public class HomeScreenCompanionService : IService
             catch { return null; }
         }
 
+        private static HomeSyncProfile CopyProfile(HomeSyncProfile p) => new HomeSyncProfile
+        {
+            Active = p.Active,
+            SourceUserId = p.SourceUserId ?? "",
+            TargetUserIds = (p.TargetUserIds ?? new List<string>()).ToList(),
+            LibraryOrder = p.LibraryOrder
+        };
+
+        private string UserNameOf(string? userId)
+            => Guid.TryParse(userId, out var g) ? (_userManager.GetUserById(g)?.Name ?? userId!) : (userId ?? "");
+
         private static bool IsKnownUser(HashSet<string>? known, string? userId)
         {
             if (known == null) return true;
@@ -4287,6 +4311,11 @@ public class HomeScreenCompanionService : IService
         {
             t.Name                ??= "";
             t.Tag                 ??= "";
+            t.ExtraTags           ??= new List<string>();
+            t.CollectionTag       ??= "";
+            t.PlaylistTag         ??= "";
+            t.CollectionExtraTags ??= new List<string>();
+            t.PlaylistExtraTags   ??= new List<string>();
             t.Url                 ??= "";
             t.SourceType          ??= "External";
             t.LocalSourceId       ??= "";
@@ -4883,7 +4912,7 @@ public class HomeScreenCompanionService : IService
         private bool TagExistsHere(string tag)
         {
             if (string.IsNullOrWhiteSpace(tag)) return false;
-            if ((Plugin.Instance?.Configuration?.Tags ?? new List<TagConfig>()).Any(t => string.Equals((t.Tag ?? "").Trim(), tag.Trim(), StringComparison.OrdinalIgnoreCase)))
+            if ((Plugin.Instance?.Configuration?.Tags ?? new List<TagConfig>()).Any(t => t.AllTags().Contains(tag.Trim(), StringComparer.OrdinalIgnoreCase)))
                 return true;
             try { return _libraryManager.GetItemList(new InternalItemsQuery { Tags = new[] { tag.Trim() }, Recursive = true, Limit = 1 }).Length > 0; }
             catch { return false; }

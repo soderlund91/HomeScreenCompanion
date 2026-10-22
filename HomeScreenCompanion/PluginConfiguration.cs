@@ -1,6 +1,7 @@
 ﻿using MediaBrowser.Model.Plugins;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace HomeScreenCompanion
 {
@@ -48,9 +49,29 @@ namespace HomeScreenCompanion
         public List<SavedMediaInfoFilter> SavedFilters { get; set; } = new List<SavedMediaInfoFilter>();
 
         public bool HomeSyncEnabled { get; set; } = false;
+        // Copy & Sync profiles: each copies one source user's home screen to its own target users.
+        public List<HomeSyncProfile> HomeSyncProfiles { get; set; } = new List<HomeSyncProfile>();
+        // Legacy (one source user, before profiles): read as a single profile by
+        // EffectiveHomeSyncProfiles while HomeSyncProfiles is empty; the page clears them on save.
         public string HomeSyncSourceUserId { get; set; } = "";
         public List<string> HomeSyncTargetUserIds { get; set; } = new List<string>();
         public bool HomeSyncLibraryOrder { get; set; } = false;
+
+        // The profiles Copy & Sync runs: HomeSyncProfiles, or the legacy single source as one profile.
+        public List<HomeSyncProfile> EffectiveHomeSyncProfiles()
+        {
+            if (HomeSyncProfiles != null && HomeSyncProfiles.Count > 0) return HomeSyncProfiles;
+            if (string.IsNullOrWhiteSpace(HomeSyncSourceUserId)) return new List<HomeSyncProfile>();
+            return new List<HomeSyncProfile>
+            {
+                new HomeSyncProfile
+                {
+                    SourceUserId = HomeSyncSourceUserId,
+                    TargetUserIds = (HomeSyncTargetUserIds ?? new List<string>()).ToList(),
+                    LibraryOrder = HomeSyncLibraryOrder
+                }
+            };
+        }
 
         // Continue Watching bump: moves a finished series to the front of Next Up when a new episode arrives.
         public bool ContinueWatchingBumpEnabled { get; set; } = false;
@@ -65,6 +86,16 @@ namespace HomeScreenCompanion
         // LegacyForkCleanup and then cleared.
         public bool? ShowTopListsEnabled { get; set; } = null;
         public bool CollectionSortTitleEnabled { get; set; } = false;
+    }
+
+    // One Copy & Sync profile: SourceUserId's home screen (and library order, with LibraryOrder)
+    // is copied to TargetUserIds. A user gets their home screen from one profile only.
+    public class HomeSyncProfile
+    {
+        public bool Active { get; set; } = true;
+        public string SourceUserId { get; set; } = "";
+        public List<string> TargetUserIds { get; set; } = new List<string>();
+        public bool LibraryOrder { get; set; } = false;
     }
 
     public class TagConfig
@@ -97,6 +128,24 @@ namespace HomeScreenCompanion
 
         public bool OverrideWhenActive { get; set; } = false;
         public bool EnableTag { get; set; } = true;
+        // More tags put on the same titles as Tag ("Add another tag"). Only Tag drives the home
+        // row, tag art, top-list and priority override; these are just written and cleaned up with it.
+        public List<string> ExtraTags { get; set; } = new List<string>();
+
+        // Tag followed by ExtraTags: trimmed, without empties or repeats.
+        public List<string> AllTags() => Distinct(new[] { Tag }.Concat(ExtraTags ?? new List<string>()));
+
+        private static List<string> Distinct(IEnumerable<string?> tags)
+        {
+            var all = new List<string>();
+            foreach (var t in tags)
+            {
+                var s = (t ?? "").Trim();
+                if (s.Length > 0 && !all.Contains(s, StringComparer.OrdinalIgnoreCase)) all.Add(s);
+            }
+            return all;
+        }
+
         // Generated art on the tag's own page (the Emby Tag item), same styles as the collection
         // art. "" = none: Emby's own collage poster and no background (or TagBackgroundPath).
         public string TagPosterStyle { get; set; } = "";
@@ -150,6 +199,19 @@ namespace HomeScreenCompanion
         public bool CollectionThumbReplaced { get; set; } = false;
         public bool CollectionBannerReplaced { get; set; } = false;
         public bool OnlyCollection { get; set; } = false;
+        // "Custom tag on collection/playlist": a tag put on the collection / the playlists this group
+        // creates (not on their titles). Kept in sync by CleanupBoxSetTags / SyncPlaylistTags.
+        public bool EnableCollectionTag { get; set; } = false;
+        public string CollectionTag { get; set; } = "";
+        public List<string> CollectionExtraTags { get; set; } = new List<string>();
+        public bool EnablePlaylistTag { get; set; } = false;
+        public string PlaylistTag { get; set; } = "";
+        public List<string> PlaylistExtraTags { get; set; } = new List<string>();
+        // The custom tags in force (switched on, and the collection / playlist is made): trimmed, no repeats.
+        internal List<string> ActiveCollectionTags() => EnableCollection && EnableCollectionTag
+            ? Distinct(new[] { CollectionTag }.Concat(CollectionExtraTags ?? new List<string>())) : new List<string>();
+        internal List<string> ActivePlaylistTags() => EnablePlaylist && EnablePlaylistTag
+            ? Distinct(new[] { PlaylistTag }.Concat(PlaylistExtraTags ?? new List<string>())) : new List<string>();
 
         // Legacy, for migration only (stoep-labs fork, see LegacyForkCleanup): "Show at the top of
         // Collections" and its custom sort title.

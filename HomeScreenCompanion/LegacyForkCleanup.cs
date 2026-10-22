@@ -139,7 +139,7 @@ namespace HomeScreenCompanion
                 }
             }
             if (config.HomeSyncEnabled)
-                pending.CopySyncUserIds = (config.HomeSyncTargetUserIds ?? new List<string>()).ToList();
+                pending.CopySyncUserIds = config.EffectiveHomeSyncProfiles().SelectMany(p => p.TargetUserIds ?? new List<string>()).Distinct().ToList();
 
             _logger.Info($"[Migration] Settings of the stoep-labs fork found: {pending.ShowLists.Count} show list(s) with "
                 + $"{pending.ShowLists.Sum(l => l.Entries.Count)} ranked show(s), {tags.Count(t => t.CollectionSortToTop)} source(s) with \"Show at the top\"");
