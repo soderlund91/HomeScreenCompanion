@@ -425,11 +425,23 @@ namespace HomeScreenCompanion
             {
                 bool failed = false;
                 int rows = 0;
+                // Made again (its Content switched, by hand or by Auto): each row's place is
+                // remembered, so the new list's row comes back there instead of at the bottom
+                // (TopListSyncTask.PlaceAddedRow restores it; the key is the tag, the same for both).
+                var again = (config.TopLists ?? new List<TopListHomeSection>())
+                    .FirstOrDefault(t => string.Equals((t.TagName ?? "").Trim(), (r.TagName ?? "").Trim(), StringComparison.OrdinalIgnoreCase));
                 foreach (var row in r.Rows ?? new List<HomeSectionTracking>())
                 {
                     if (string.IsNullOrEmpty(row.UserId) || string.IsNullOrEmpty(row.SectionId)) continue;
                     long uid;
                     try { uid = userManager.GetInternalId(row.UserId); } catch { continue; }   // user deleted since
+                    if (again != null && Json != null)
+                    {
+                        // The user's id as the new list has it (the row is placed for that id).
+                        string Norm(string? id) => (id ?? "").Replace("-", "").Trim().ToLowerInvariant();
+                        var userId = (again.HomeSectionUserIds ?? new List<string>()).FirstOrDefault(u => Norm(u) == Norm(row.UserId)) ?? row.UserId;
+                        HomeScreenCompanionTask.RememberRowPosition(userManager, Json, TopListSyncTask.RowPositionKey(again), userId, uid, row.SectionId, ct);
+                    }
                     try { userManager.DeleteHomeSections(uid, new[] { row.SectionId }, ct); rows++; }
                     catch (Exception ex) { failed = true; log.Warn($"Top-list '{r.TagName}': a home row could not be removed: {ex.Message}"); }
                 }
