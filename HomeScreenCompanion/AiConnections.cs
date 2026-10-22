@@ -92,7 +92,9 @@ namespace HomeScreenCompanion
                 {
                     var key = Pick(request.ApiKey, c.GeminiApiKey);
                     if (key.Length == 0) return Fail("No API key");
-                    req = new HttpRequestMessage(HttpMethod.Get, "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key=" + Uri.EscapeDataString(key));
+                    // The key in a header, not in the URL (a proxy may log URLs).
+                    req = new HttpRequestMessage(HttpMethod.Get, "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000");
+                    req.Headers.Add("x-goog-api-key", key);
                 }
                 else if (provider.Equals("Claude", StringComparison.OrdinalIgnoreCase))
                 {

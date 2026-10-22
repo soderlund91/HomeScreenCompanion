@@ -632,12 +632,15 @@ namespace HomeScreenCompanion
         // object (response_format json_object); a service that rejects that is asked again without it.
         private async Task<string> CallOpenAi(string url, string apiKey, string model, string systemPrompt, string userMessage, bool jsonMode, string name, CancellationToken cancellationToken)
         {
-            if (jsonMode)
-                userMessage += "\n\nAnswer with a JSON object of the form {\"items\": [ ... ]} holding the array.";
+            // JSON mode only allows an object: the system prompt's array goes inside one, said in
+            // the system prompt itself so the two instructions do not disagree.
+            var system = jsonMode
+                ? systemPrompt + "\n\nThis answer must be a JSON object: put the JSON array described above in it as \"items\", like {\"items\": [ ... ]}, and nothing else."
+                : systemPrompt;
             var requestBody = $"{{" +
                 $"\"model\":{EscapeJsonString(model)}," +
                 $"\"messages\":[" +
-                $"{{\"role\":\"system\",\"content\":{EscapeJsonString(systemPrompt)}}}," +
+                $"{{\"role\":\"system\",\"content\":{EscapeJsonString(system)}}}," +
                 $"{{\"role\":\"user\",\"content\":{EscapeJsonString(userMessage)}}}" +
                 $"]" + (jsonMode ? ",\"response_format\":{\"type\":\"json_object\"}" : "") + "}";
 
@@ -652,9 +655,12 @@ namespace HomeScreenCompanion
             var response = await _netHttpClient.SendAsync(request, cts.Token);
             var responseBody = await response.Content.ReadAsStringAsync();
 
+            // A service without JSON mode says so about response_format / json_object: asked again
+            // without it (any other 400 is a real error and shown as one).
             if (jsonMode && ((int)response.StatusCode == 400 || (int)response.StatusCode == 422)
                 && (responseBody.IndexOf("response_format", StringComparison.OrdinalIgnoreCase) >= 0
-                    || responseBody.IndexOf("json", StringComparison.OrdinalIgnoreCase) >= 0))
+                    || responseBody.IndexOf("json_object", StringComparison.OrdinalIgnoreCase) >= 0
+                    || responseBody.IndexOf("json mode", StringComparison.OrdinalIgnoreCase) >= 0))
                 return await CallOpenAi(url, apiKey, model, systemPrompt, userMessage, false, name, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
@@ -666,13 +672,15 @@ namespace HomeScreenCompanion
 
         private async Task<string> CallGemini(string apiKey, string model, string systemPrompt, string userMessage, CancellationToken cancellationToken)
         {
-            var url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent";
             var requestBody = $"{{" +
                 $"\"systemInstruction\":{{\"parts\":[{{\"text\":{EscapeJsonString(systemPrompt)}}}]}}," +
                 $"\"contents\":[{{\"role\":\"user\",\"parts\":[{{\"text\":{EscapeJsonString(userMessage)}}}]}}]" +
                 $"}}";
 
             var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, url);
+            // The key in a header, not in the URL (a proxy may log URLs).
+            request.Headers.Add("x-goog-api-key", apiKey);
             request.Content = new System.Net.Http.StringContent(requestBody, Encoding.UTF8, "application/json");
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -755,13 +763,45 @@ namespace HomeScreenCompanion
                 if (firstNewline > 0 && lastFence > firstNewline)
                     trimmed = trimmed.Substring(firstNewline + 1, lastFence - firstNewline - 1).Trim();
             }
-            // The array inside a JSON object ({"items":[…]}) or inside text around it.
+            // The array inside a JSON object ({"items":[…]}) or inside text around it: the first
+            // complete array of objects or strings (so "[5] picks: [ … ]" gives the list, not "[5]").
             if (!trimmed.StartsWith("["))
             {
-                int start = trimmed.IndexOf('['), end = trimmed.LastIndexOf(']');
-                if (start >= 0 && end > start) trimmed = trimmed.Substring(start, end - start + 1);
+                var found = FirstItemArray(trimmed);
+                if (found != null) trimmed = found;
             }
             return trimmed;
+        }
+
+        // The first [ … ] in text whose first element is an object or a string, up to its own
+        // closing bracket (brackets inside strings and nested arrays are skipped). Null: none.
+        private static string? FirstItemArray(string text)
+        {
+            for (int start = text.IndexOf('['); start >= 0; start = text.IndexOf('[', start + 1))
+            {
+                int i = start + 1;
+                while (i < text.Length && char.IsWhiteSpace(text[i])) i++;
+                if (i >= text.Length || (text[i] != '{' && text[i] != '"')) continue;
+                int depth = 0, end = -1;
+                bool inString = false, escaped = false;
+                for (int j = start; j < text.Length && end < 0; j++)
+                {
+                    char c = text[j];
+                    if (inString)
+                    {
+                        if (escaped) escaped = false;
+                        else if (c == '\\') escaped = true;
+                        else if (c == '"') inString = false;
+                        continue;
+                    }
+                    if (c == '"') inString = true;
+                    else if (c == '[' || c == '{') depth++;
+                    else if ((c == ']' || c == '}') && --depth == 0) end = c == ']' ? j : int.MaxValue;
+                }
+                if (end >= 0 && end != int.MaxValue) return text.Substring(start, end - start + 1);
+                if (end < 0) return null;   // not closed: a cut-off answer
+            }
+            return null;
         }
 
         private static string EscapeJsonString(string value)
