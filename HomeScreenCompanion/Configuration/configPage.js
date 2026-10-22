@@ -3650,7 +3650,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '<div class="tl-settings" style="margin-left:20px;padding-left:15px;border-left:2px solid var(--line-color);margin-top:10px;display:' + (on ? 'block' : 'none') + ';">' +
                 '<div style="margin-bottom:12px;"><label class="selectLabel">Content</label>' +
                     '<select is="emby-select" class="selTopListContent" style="width:100%;">' +
-                        '<option value="Auto"' + (content === 'Auto' ? ' selected' : '') + '>Auto (based of the source)</option>' +
+                        '<option value="Auto"' + (content === 'Auto' ? ' selected' : '') + '>Auto (based on the source)</option>' +
                         '<option value="Movies"' + (content === 'Movies' ? ' selected' : '') + '>Movies</option>' +
                         '<option value="Shows"' + (content === 'Shows' ? ' selected' : '') + '>TV Shows</option>' +
                     '</select>' +
