@@ -702,11 +702,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             </div>`;
     }
 
-    // The extra tags of a source card: filled in, without repeats.
-    function readExtraTags(row) {
+    // The values of tag fields: filled in, trimmed, without repeats (case-insensitive).
+    function uniqueTagValues(inputs) {
         var seen = {};
-        return Array.from(row.querySelectorAll('.txtExtraTag')).map(function (i) { return (i.value || '').trim(); })
+        return Array.from(inputs).map(function (i) { return (i.value || '').trim(); })
             .filter(function (v) { var k = v.toLowerCase(); if (!v || seen[k]) return false; seen[k] = 1; return true; });
+    }
+
+    // The extra tags of a source card.
+    function readExtraTags(row) {
+        return uniqueTagValues(row.querySelectorAll('.txtExtraTag'));
     }
 
     // "Custom tag on collection / playlist": a tag on the collection or playlists the group makes,
@@ -740,9 +745,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var chk = row.querySelector('.chkOutTag[data-kind="' + kind + '"]');
         var txt = row.querySelector('.txtOutTag[data-kind="' + kind + '"]');
         var box = chk ? chk.closest('.out-tag-box') : null;
-        var seen = {};
-        var extras = box ? Array.from(box.querySelectorAll('.txtOutExtraTag')).map(function (i) { return (i.value || '').trim(); })
-            .filter(function (v) { var k = v.toLowerCase(); if (!v || seen[k]) return false; seen[k] = 1; return true; }) : [];
+        var extras = box ? uniqueTagValues(box.querySelectorAll('.txtOutExtraTag')) : [];
         return { enabled: !!(chk && chk.checked), tag: txt ? txt.value.trim() : '', extras: extras };
     }
 
@@ -2110,6 +2113,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var aiRecentlyWatchedUserId = (row.querySelector('.selAiWatchedUser') || {}).value || '';
         var aiRecentlyWatchedCount = parseInt((row.querySelector('.txtAiWatchedCount') || {}).value, 10) || 20;
         var aiRefreshIntervalDays = parseInt((row.querySelector('.txtAiRefreshInterval') || {}).value, 10) || 0;
+        var collTag = readOutputTag(row, 'coll'), plTag = readOutputTag(row, 'pl');
 
         return Object.assign({
             Name: entryLabel, Tag: tagName, ExtraTags: readExtraTags(row), Active: active, Blacklist: bl, ActiveIntervals: intervals,
@@ -2148,8 +2152,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             CollectionTargetSeason:  !!(row.querySelector('.chkCollTargetSeason')  || {}).checked,
             CollectionTargetSeries:  !!(row.querySelector('.chkCollTargetSeries')  || {}).checked,
             EnablePlaylist:   !!(row.querySelector('.chkEnablePlaylist') || {}).checked,
-            EnableCollectionTag: readOutputTag(row, 'coll').enabled, CollectionTag: readOutputTag(row, 'coll').tag, CollectionExtraTags: readOutputTag(row, 'coll').extras,
-            EnablePlaylistTag: readOutputTag(row, 'pl').enabled, PlaylistTag: readOutputTag(row, 'pl').tag, PlaylistExtraTags: readOutputTag(row, 'pl').extras,
+            EnableCollectionTag: collTag.enabled, CollectionTag: collTag.tag, CollectionExtraTags: collTag.extras,
+            EnablePlaylistTag: plTag.enabled, PlaylistTag: plTag.tag, PlaylistExtraTags: plTag.extras,
             PlaylistName:     (row.querySelector('.txtPlaylistName') || { value: '' }).value,
             PlaylistDescription: readPlaylistLook(row).PlaylistDescription, PlaylistPosterPath: readPlaylistLook(row).PlaylistPosterPath,
             PlaylistPosterStyle: readPlaylistLook(row).PlaylistPosterStyle, PlaylistBackgroundStyle: readPlaylistLook(row).PlaylistBackgroundStyle,
@@ -6100,6 +6104,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
             clearDefaultCustomName(hseSettings, hseTab);
             var hseTracked = (function() { try { return JSON.parse(decodeURIComponent((hseTab && hseTab.dataset.hseTracked) || '%5B%5D')); } catch { return []; } })();
+            var collTag = readOutputTag(row, 'coll'), plTag = readOutputTag(row, 'pl');
 
             var baseTag = {
                 Name: entryLabel, Tag: name, ExtraTags: readExtraTags(row), Active: active, Blacklist: bl, ActiveIntervals: intervals,
@@ -6133,8 +6138,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 HomeSectionSettings: JSON.stringify(hseSettings),
                 HomeSectionTracked: hseTracked,
                 EnablePlaylist:   !!(row.querySelector('.chkEnablePlaylist') || {}).checked,
-                EnableCollectionTag: readOutputTag(row, 'coll').enabled, CollectionTag: readOutputTag(row, 'coll').tag, CollectionExtraTags: readOutputTag(row, 'coll').extras,
-                EnablePlaylistTag: readOutputTag(row, 'pl').enabled, PlaylistTag: readOutputTag(row, 'pl').tag, PlaylistExtraTags: readOutputTag(row, 'pl').extras,
+                EnableCollectionTag: collTag.enabled, CollectionTag: collTag.tag, CollectionExtraTags: collTag.extras,
+                EnablePlaylistTag: plTag.enabled, PlaylistTag: plTag.tag, PlaylistExtraTags: plTag.extras,
                 PlaylistName:     (row.querySelector('.txtPlaylistName') || { value: '' }).value,
                 PlaylistDescription: readPlaylistLook(row).PlaylistDescription, PlaylistPosterPath: readPlaylistLook(row).PlaylistPosterPath,
                 PlaylistPosterStyle: readPlaylistLook(row).PlaylistPosterStyle, PlaylistBackgroundStyle: readPlaylistLook(row).PlaylistBackgroundStyle,

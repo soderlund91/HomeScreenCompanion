@@ -606,7 +606,7 @@ namespace HomeScreenCompanion
                     if (string.IsNullOrWhiteSpace(conn.Model))
                         throw new InvalidOperationException($"{conn.Name}: model is not configured.");
                     rawJson = await CallOpenAi(conn.BaseUrl.Trim().TrimEnd('/') + "/chat/completions", conn.ApiKey, conn.Model.Trim(),
-                        systemPrompt, userMessage, true, string.IsNullOrWhiteSpace(conn.Name) ? "AI" : conn.Name, cancellationToken);
+                        systemPrompt, userMessage, true, string.IsNullOrWhiteSpace(conn.Name) ? "AI" : conn.Name, cancellationToken, timeoutSeconds: 120);
                 }
                 else
                 {
@@ -630,7 +630,9 @@ namespace HomeScreenCompanion
 
         // OpenAI's chat API, also spoken by the OpenAI-compatible services. jsonMode asks for a JSON
         // object (response_format json_object); a service that rejects that is asked again without it.
-        private async Task<string> CallOpenAi(string url, string apiKey, string model, string systemPrompt, string userMessage, bool jsonMode, string name, CancellationToken cancellationToken)
+        // timeoutSeconds: OpenAI-compatible services are often local models, so they get longer
+        // (also when asked again without JSON mode).
+        private async Task<string> CallOpenAi(string url, string apiKey, string model, string systemPrompt, string userMessage, bool jsonMode, string name, CancellationToken cancellationToken, int timeoutSeconds = 30)
         {
             // JSON mode only allows an object: the system prompt's array goes inside one, said in
             // the system prompt itself so the two instructions do not disagree.
@@ -650,7 +652,7 @@ namespace HomeScreenCompanion
             request.Content = new System.Net.Http.StringContent(requestBody, Encoding.UTF8, "application/json");
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(jsonMode ? 120 : 30));
+            cts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
 
             var response = await _netHttpClient.SendAsync(request, cts.Token);
             var responseBody = await response.Content.ReadAsStringAsync();
@@ -661,7 +663,7 @@ namespace HomeScreenCompanion
                 && (responseBody.IndexOf("response_format", StringComparison.OrdinalIgnoreCase) >= 0
                     || responseBody.IndexOf("json_object", StringComparison.OrdinalIgnoreCase) >= 0
                     || responseBody.IndexOf("json mode", StringComparison.OrdinalIgnoreCase) >= 0))
-                return await CallOpenAi(url, apiKey, model, systemPrompt, userMessage, false, name, cancellationToken);
+                return await CallOpenAi(url, apiKey, model, systemPrompt, userMessage, false, name, cancellationToken, timeoutSeconds);
 
             if (!response.IsSuccessStatusCode)
                 throw new InvalidOperationException($"{name} API error {(int)response.StatusCode}: {responseBody}");
@@ -781,7 +783,9 @@ namespace HomeScreenCompanion
             {
                 int i = start + 1;
                 while (i < text.Length && char.IsWhiteSpace(text[i])) i++;
-                if (i >= text.Length || (text[i] != '{' && text[i] != '"')) continue;
+                if (i >= text.Length) continue;
+                if (text[i] == ']') return text.Substring(start, i - start + 1);   // [] — no picks: an empty list, not a failure
+                if (text[i] != '{' && text[i] != '"') continue;
                 int depth = 0, end = -1;
                 bool inString = false, escaped = false;
                 for (int j = start; j < text.Length && end < 0; j++)

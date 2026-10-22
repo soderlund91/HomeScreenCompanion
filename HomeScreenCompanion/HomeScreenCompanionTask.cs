@@ -5337,11 +5337,13 @@ namespace HomeScreenCompanion
             if (allHseTags.Count == 0 && customTags.Count == 0) return 0;
 
             int removed = 0;
+            bool incomplete = false;   // a collection could not be updated: its old custom tags are kept in the history
             var allBoxSets = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Recursive = true });
             foreach (var boxSet in allBoxSets)
             {
                 if (TagAnchor.IsAnchor(boxSet, _jsonSerializer)) continue;   // holds the tag rows' tags
-                bool updated = false;
+                var toAdd = new List<string>();
+                var toRemove = new List<string>();
                 foreach (var tagName in allHseTags.Concat(customTags).Distinct(StringComparer.OrdinalIgnoreCase))
                 {
                     if (!allHseTags.Contains(tagName) && !hscCollections.Contains(boxSet.Name ?? "")) continue;
@@ -5349,16 +5351,18 @@ namespace HomeScreenCompanion
                     activeTags.TryGetValue(tagName, out var targets);
                     var shouldHave = targets != null && targets.Any(n => string.Equals(n, boxSet.Name, StringComparison.OrdinalIgnoreCase));
                     if (shouldHave == hasTag) continue;
-                    if (shouldHave) boxSet.AddTag(tagName); else { boxSet.RemoveTag(tagName); removed++; }
-                    updated = true;
+                    if (shouldHave) toAdd.Add(tagName); else toRemove.Add(tagName);
                 }
-                if (updated && !dryRun)
-                {
-                    try { _libraryManager.UpdateItem(boxSet, boxSet.Parent, ItemUpdateType.MetadataEdit, null); }
-                    catch (Exception ex) { _log.Warn($"Could not update tags on collection '{boxSet.Name}': {ex.Message}"); }
-                }
+                removed += toRemove.Count;
+                // A dry run only counts: the collection (a cached item) is not touched.
+                if (dryRun || (toAdd.Count == 0 && toRemove.Count == 0)) continue;
+                foreach (var t in toAdd) boxSet.AddTag(t);
+                foreach (var t in toRemove) boxSet.RemoveTag(t);
+                try { _libraryManager.UpdateItem(boxSet, boxSet.Parent, ItemUpdateType.MetadataEdit, null); }
+                catch (Exception ex) { incomplete = true; _log.Warn($"Could not update tags on collection '{boxSet.Name}': {ex.Message}"); }
             }
-            if (!dryRun) SaveFileHistory(CollectionTagHistoryFile, configuredCustom.ToList());
+            // A tag switched off or renamed stays in the history until every collection has lost it.
+            if (!dryRun) SaveFileHistory(CollectionTagHistoryFile, (incomplete ? customTags : configuredCustom).ToList());
             return removed;
         }
 
@@ -5375,6 +5379,7 @@ namespace HomeScreenCompanion
                 configured.UnionWith(tc.ActivePlaylistTags());
             managed.UnionWith(configured);
             int changed = 0;
+            bool incomplete = false;   // a playlist could not be read or updated: old tags stay in the history
             if (managed.Count > 0)
             {
                 foreach (var tc in config.Tags ?? new List<TagConfig>())
@@ -5382,22 +5387,25 @@ namespace HomeScreenCompanion
                     var want = new HashSet<string>(tc.ActivePlaylistTags(), StringComparer.OrdinalIgnoreCase);
                     foreach (var m in tc.PlaylistMappings ?? new List<PlaylistMapping>())
                     {
-                        if (!Guid.TryParse(m.PlaylistId, out var plId) || !(_libraryManager.GetItemById(plId) is BaseItem pl)) continue;
+                        if (!Guid.TryParse(m.PlaylistId, out var plId)) continue;
+                        if (!(_libraryManager.GetItemById(plId) is BaseItem pl)) { incomplete = true; continue; }
                         var has = new HashSet<string>(pl.Tags ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
                         var toRemove = has.Where(t => managed.Contains(t) && !want.Contains(t)).ToList();
                         var toAdd = want.Where(t => !has.Contains(t)).ToList();
                         if (toRemove.Count == 0 && toAdd.Count == 0) continue;
-                        foreach (var t in toRemove) pl.RemoveTag(t);
-                        foreach (var t in toAdd) pl.AddTag(t);
                         changed += toRemove.Count + toAdd.Count;
                         _log.Debug($"  Playlist '{pl.Name}' {(dryRun ? "would get" : "got")} tags{string.Concat(toAdd.Select(t => $" +{t}"))}{string.Concat(toRemove.Select(t => $" -{t}"))}");
+                        // A dry run only says what would change: the playlist (a cached item) is not touched.
                         if (dryRun) continue;
+                        foreach (var t in toRemove) pl.RemoveTag(t);
+                        foreach (var t in toAdd) pl.AddTag(t);
                         try { _libraryManager.UpdateItem(pl, pl.Parent, ItemUpdateType.MetadataEdit, null); }
-                        catch (Exception ex) { _log.Warn($"Could not update tags on playlist '{pl.Name}': {ex.Message}"); }
+                        catch (Exception ex) { incomplete = true; _log.Warn($"Could not update tags on playlist '{pl.Name}': {ex.Message}"); }
                     }
                 }
             }
-            if (!dryRun) SaveFileHistory(PlaylistTagHistoryFile, configured.ToList());
+            // A tag switched off or renamed stays in the history until every playlist has lost it.
+            if (!dryRun) SaveFileHistory(PlaylistTagHistoryFile, (incomplete ? managed : configured).ToList());
             return changed;
         }
 

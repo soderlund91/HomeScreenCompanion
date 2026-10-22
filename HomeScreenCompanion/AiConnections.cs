@@ -115,7 +115,10 @@ namespace HomeScreenCompanion
                     var saved = (c.AiConnections ?? new List<AiConnection>())
                         .FirstOrDefault(x => x != null && string.Equals(x.Id, request.ConnectionId, StringComparison.OrdinalIgnoreCase));
                     var url = Pick(request.BaseUrl, saved?.BaseUrl).TrimEnd('/');
-                    var key = Pick(request.ApiKey, saved?.ApiKey);
+                    // The saved key only goes to the saved address: one typed in for another host
+                    // with a blank key field is asked without a key.
+                    bool sameHost = saved != null && string.Equals((saved.BaseUrl ?? "").Trim().TrimEnd('/'), url, StringComparison.OrdinalIgnoreCase);
+                    var key = string.IsNullOrWhiteSpace(request.ApiKey) ? (sameHost ? (saved!.ApiKey ?? "").Trim() : "") : request.ApiKey.Trim();
                     if (url.Length == 0) return Fail("No base URL");
                     req = new HttpRequestMessage(HttpMethod.Get, url + "/models");
                     if (key.Length > 0) req.Headers.Add("Authorization", "Bearer " + key);
