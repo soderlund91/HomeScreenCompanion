@@ -1665,6 +1665,10 @@ public class HomeScreenCompanionService : IService
             if (string.IsNullOrWhiteSpace(request.Prompt))
                 return new TestAiSourceResponse { Success = false, Message = "Prompt is required." };
 
+            // The test asks the AI with the saved settings, like a run does.
+            if (AiConnection.IsCompat(request.Provider) && AiConnection.Find(config.AiConnections, request.Provider) == null)
+                return new TestAiSourceResponse { Success = false, Message = "This AI connection is not saved yet. Click Save, then test again." };
+
             string recentlyWatchedContext = "";
             if (request.IncludeRecentlyWatched && !string.IsNullOrWhiteSpace(request.RecentlyWatchedUserId))
             {
@@ -4089,11 +4093,13 @@ public class HomeScreenCompanionService : IService
                             HomeSyncTargetUserIds = (h.HomeSyncTargetUserIds ?? new List<string>()).ToList(),
                             HomeSyncLibraryOrder = h.HomeSyncLibraryOrder
                         }.EffectiveHomeSyncProfiles();
-                    int unknownSources = restored.RemoveAll(p => !IsKnownUser(knownUsers, p.SourceUserId));
+                    // (A profile saved before its source user was picked stays as it was saved.)
+                    int unknownSources = restored.RemoveAll(p => !string.IsNullOrWhiteSpace(p.SourceUserId) && !IsKnownUser(knownUsers, p.SourceUserId));
                     if (unknownSources > 0)
                         response.Warnings.Add($"Home screen sync: {unknownSources} profile(s) have a source user that does not exist on this server and were removed – add them again with a new source user.");
                     foreach (var p in restored)
-                        PruneUnknownUsers(p.TargetUserIds, knownUsers, response.Warnings, $"Home screen sync targets of {UserNameOf(p.SourceUserId)}");
+                        PruneUnknownUsers(p.TargetUserIds, knownUsers, response.Warnings,
+                            string.IsNullOrWhiteSpace(p.SourceUserId) ? "Home screen sync targets of a profile without a source user" : $"Home screen sync targets of {UserNameOf(p.SourceUserId)}");
                     config.HomeSyncProfiles = restored;
                     config.HomeSyncSourceUserId = "";
                     config.HomeSyncTargetUserIds = new List<string>();

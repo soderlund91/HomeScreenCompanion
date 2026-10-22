@@ -112,8 +112,7 @@ namespace HomeScreenCompanion
                 }
                 else if (provider.Equals("Compat", StringComparison.OrdinalIgnoreCase))
                 {
-                    var saved = (c.AiConnections ?? new List<AiConnection>())
-                        .FirstOrDefault(x => x != null && string.Equals(x.Id, request.ConnectionId, StringComparison.OrdinalIgnoreCase));
+                    var saved = AiConnection.Find(c.AiConnections, AiConnection.ProviderPrefix + request.ConnectionId);
                     var url = Pick(request.BaseUrl, saved?.BaseUrl).TrimEnd('/');
                     // The saved key only goes to the saved address: one typed in for another host
                     // with a blank key field is asked without a key.

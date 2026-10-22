@@ -35,8 +35,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // ---- Save conflict check ----
     // A fingerprint of the server's settings without what runs write on their own (home-section
     // ids, playlist mappings, art-replaced flags, the AI's last-run date, the Next Watch migration
-    // flag, top-list exclusions in a home section's settings, the top-lists Save re-reads anyway)
-    // and without secrets. Taken when the page loads; Save compares it with the server's current
+    // flag, top-list exclusions in a home section's settings, the top-lists Save re-reads anyway,
+    // Copy & Sync's record of whom it added, which the server always keeps) and without secrets.
+    // Taken when the page loads; Save compares it with the server's current
     // one, so a change made elsewhere (another tab, another admin, an import) is never overwritten,
     // while a run that finished meanwhile does not count.
     function hscServerStamp(config) {
@@ -49,6 +50,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }
         var c = strip(config || {});
         delete c.TopLists;
+        delete c.HomeSyncAdditions;
         c.Tags = (c.Tags || []).map(function (t) {
             var x = Object.assign({}, t);
             delete x.HomeSectionTracked; delete x.PlaylistMappings;
@@ -7129,21 +7131,32 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     setTimeout(checkFormState, 0);
                 });
 
-                // Before the page's own panel toggle (on the view): removing must not fold the panel.
-                container.addEventListener('click', function (e) {
-                    var del = e.target.closest('.btnRemoveHscProfile');
-                    if (!del) return;
-                    e.stopPropagation();
-                    del.closest('.hsc-profile').remove();
-                    refreshHscProfiles(container);
-                    setTimeout(checkFormState, 0);
-                });
-
-                container.addEventListener('change', function (e) {
-                    if (e.target.closest('.hsc-profile')) refreshHscProfiles(container);
-                    setTimeout(checkFormState, 0);
-                });
-                container.addEventListener('input', function () { setTimeout(checkFormState, 0); });
+                // On the container, which outlives a reload (a backup restore loads the tab
+                // again): the earlier handlers go first, so each runs once.
+                if (container._hscHandlers) {
+                    container.removeEventListener('click', container._hscHandlers.click);
+                    container.removeEventListener('change', container._hscHandlers.change);
+                    container.removeEventListener('input', container._hscHandlers.input);
+                }
+                container._hscHandlers = {
+                    // Before the page's own panel toggle (on the view): removing must not fold the panel.
+                    click: function (e) {
+                        var del = e.target.closest('.btnRemoveHscProfile');
+                        if (!del) return;
+                        e.stopPropagation();
+                        del.closest('.hsc-profile').remove();
+                        refreshHscProfiles(container);
+                        setTimeout(checkFormState, 0);
+                    },
+                    change: function (e) {
+                        if (e.target.closest('.hsc-profile')) refreshHscProfiles(container);
+                        setTimeout(checkFormState, 0);
+                    },
+                    input: function () { setTimeout(checkFormState, 0); }
+                };
+                container.addEventListener('click', container._hscHandlers.click);
+                container.addEventListener('change', container._hscHandlers.change);
+                container.addEventListener('input', container._hscHandlers.input);
             })
             .catch(function () {
                 container.innerHTML = '<p class="textMuted" style="padding:20px;">Failed to load users. Check server connection.</p>';
@@ -10306,7 +10319,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var name  = tag.Name || '';
                     var count = isShows ? (tag.SeriesCount || 0)
                         : (tag.MovieCount != null ? tag.MovieCount : (tag.ItemCount != null ? tag.ItemCount : 0));
-                    var countText = count + (isShows ? ' shows' : ' movies');
+                    var countText = count + (isShows ? (count === 1 ? ' show' : ' shows') : (count === 1 ? ' movie' : ' movies'));
                     var hasTopList = existingTopLists.has(sanitizeName(name).toLowerCase());
                     var badge = hasTopList
                         ? '<span class="tag-indicator toplist" style="margin-left:6px;font-size:0.72em;">top-list</span>'
@@ -11306,8 +11319,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var k = (t.Tag || '').trim().toLowerCase();
                 if (t.EnableTopList && k && !sourceNameByTag[k]) sourceNameByTag[k] = (t.Name || '').trim() || (t.Tag || '').trim();
             });
+            // Every list, also one whose folder is gone (the sync then asks to open it and Save; the
+            // card says so).
             var allExistingTopLists = (pluginConfig.TopLists || []).filter(function (tl) {
-                return tl.TagName && (tl.FromSource || existingTopLists.has(sanitizeTlName(tl.TagName).toLowerCase()));
+                return !!tl.TagName;
             }).map(function (tl) {
                 var key = sanitizeTlName(tl.TagName || '').toLowerCase();
                 var settings = {};
@@ -11378,7 +11393,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         '<div style="display:flex;align-items:center;flex-wrap:wrap;row-gap:4px;min-width:0;">' +
                         '<span class="tag-title" style="margin-left:0;">' + escHtml(item.displayName) + '</span>' +
                         contentBadge + typeBadge +
-                        '<span class="tag-indicator" style="flex-shrink:0;font-variant-numeric:tabular-nums;">' + item.count + (isShows ? ' shows' : ' movies') + '</span>' +
+                        '<span class="tag-indicator" style="flex-shrink:0;font-variant-numeric:tabular-nums;">' + item.count + (isShows ? (item.count === 1 ? ' show' : ' shows') : (item.count === 1 ? ' movie' : ' movies')) + '</span>' +
+                        (!item.fromSource && item.count === 0 ? '<span class="hsc-run-issue"><i class="md-icon" style="font-size:1.3em;" title="This list has no titles: its folder is empty or gone. Open it, add titles and click Save to make it again, or delete it.">warning</i></span>' : '') +
                         '</div>' +
                         '<i class="md-icon expand-icon" style="flex-shrink:0;margin-left:12px;">expand_more</i>' +
                         '</div>' +

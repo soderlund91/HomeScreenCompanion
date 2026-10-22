@@ -98,6 +98,7 @@ namespace HomeScreenCompanion
         {
             IsRunning = true;
             lock (ExecutionLog) { ExecutionLog.Clear(); }
+            _memberOps.Clear();
             LastStartedUtc = DateTime.UtcNow;
             try
             {
@@ -123,6 +124,10 @@ namespace HomeScreenCompanion
                 {
                     _log.Warn("No active profile with a source user in Settings — nothing to sync");
                     LastSyncResult = "No source user configured.";
+                    // The last profile removed: what Copy & Sync added for its users still goes.
+                    var none = new SyncTotals();
+                    RemoveStaleAdditions(config, ManagedRows.Build(config, _libraryManager, _jsonSerializer), new HashSet<string>(), new HashSet<string>(), none);
+                    if (none.ConfigChanged) SaveRunChanges(config);
                     return Task.CompletedTask;
                 }
 
@@ -151,7 +156,7 @@ namespace HomeScreenCompanion
                     progress.Report(5 + (int)(95.0 * (pi + 1) / profiles.Count));
                 }
                 RemoveStaleAdditions(config, managed, handledTargets, sourceKeys, totals);
-                if (totals.ConfigChanged) Plugin.Instance?.SaveConfiguration();
+                if (totals.ConfigChanged) SaveRunChanges(config);
 
                 int usersDone = totals.Targets - totals.Skipped - totals.Failed;
                 LastSectionsCopied = totals.Copied;
@@ -190,6 +195,40 @@ namespace HomeScreenCompanion
         {
             public int Copied, Targets, Failed, Skipped;
             public bool ConfigChanged;   // top-list or source row tracking updated
+        }
+
+        // Who this run put on or took off which source / top-list (AddMember, RemoveMember).
+        private sealed class MemberOp
+        {
+            public string Key = "", List = "", UserId = "";
+            public bool On;
+        }
+        private readonly List<MemberOp> _memberOps = new List<MemberOp>();
+
+        // Saves what this run changed. The run works on the settings it started with: when they
+        // were saved on the page meanwhile, the server holds a new copy, so the run's membership
+        // changes and its record of them (HomeSyncAdditions) are carried over to it first. Row
+        // tracking is not: the next run finds the rows again.
+        private void SaveRunChanges(PluginConfiguration config)
+        {
+            var plugin = Plugin.Instance;
+            if (plugin == null) return;
+            var live = plugin.Configuration;
+            if (live != null && !ReferenceEquals(live, config))
+            {
+                foreach (var op in _memberOps)
+                {
+                    string userKey = NormId(op.UserId);
+                    foreach (var l in UserLists(live, op.Key, op.List))
+                    {
+                        if (op.On) { if (!IsOn(l, userKey)) l.Add(op.UserId); }
+                        else l.RemoveAll(u => NormId(u) == userKey);
+                    }
+                }
+                live.HomeSyncAdditions = (config.HomeSyncAdditions ?? new List<HomeSyncAddition>()).ToList();
+                _log.Debug("Settings were saved during the run: its changes to source and top-list users were carried over");
+            }
+            plugin.SaveUsersAndRows();
         }
 
         // One profile: the source user's home screen (and library order) to its target users.
@@ -273,7 +312,7 @@ namespace HomeScreenCompanion
                     // remembers whom it added), and off what it added for rows no longer copied.
                     // An exact copy also takes the user off every other source and top-list, so
                     // the full sync does not put those rows back.
-                    if (UpdateMemberships(config, managed, wanted, wantedKeys, mirror, selectedOnly, targetIdStr, targetName, targetInternalId, sourceName, cancellationToken))
+                    if (UpdateMemberships(config, managed, masterRows, wanted, wantedKeys, selectedOnly ? selected : null, mirror, targetIdStr, targetName, targetInternalId, sourceName, cancellationToken))
                         totals.ConfigChanged = true;
 
                     var notCopied = new List<string>();   // rows this user does not get (said in the log)
@@ -304,7 +343,8 @@ namespace HomeScreenCompanion
                         }
                         var tracked = (tl.HomeSectionTracked ??= new List<HomeSectionTracking>()).FirstOrDefault(t => NormId(t.UserId) == targetKey);
                         if (tracked == null) tl.HomeSectionTracked.Add(new HomeSectionTracking { UserId = targetIdStr, SectionId = row.Id });
-                        else tracked.SectionId = row.Id;
+                        else if (tracked.SectionId != row.Id) tracked.SectionId = row.Id;
+                        else continue;
                         totals.ConfigChanged = true;
                     }
 
@@ -431,17 +471,21 @@ namespace HomeScreenCompanion
             string targetKey = NormId(targetIdStr);
             var additions = config.HomeSyncAdditions ??= new List<HomeSyncAddition>();
             int copiedHere = 0;
+            // Rows already written this run: two master rows with the same key (e.g. the same
+            // title) each get their own row instead of the second overwriting the first.
+            var done = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var (section, key) in wanted)
             {
                 var copy = PrepareCopy(managed, section, targetKey, targetName, notCopied);
                 if (copy == null) continue;
                 string label = section.CustomName ?? section.Name ?? section.SectionType ?? "";
                 var current = _userManager.GetHomeSections(targetInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>();
-                var match = current.FirstOrDefault(s => string.Equals(managed.RowKey(config, s, targetKey), key, StringComparison.OrdinalIgnoreCase));
+                var match = current.FirstOrDefault(s => !done.Contains(s.Id ?? "") && string.Equals(managed.RowKey(config, s, targetKey), key, StringComparison.OrdinalIgnoreCase));
                 if (match != null)
                 {
                     typeof(ContentSection).GetProperty("Id")?.SetValue(copy, match.Id);
                     _userManager.UpdateHomeSection(targetInternalId, copy, cancellationToken);
+                    done.Add(match.Id ?? "");
                     _log.Debug($"  {targetName}: = '{label}' updated");
                 }
                 else
@@ -451,6 +495,7 @@ namespace HomeScreenCompanion
                         .FirstOrDefault(s => !string.IsNullOrEmpty(s.Id) && !current.Any(b => b.Id == s.Id));
                     if (added != null)
                     {
+                        done.Add(added.Id);
                         // Below the row that is above it on the master's home screen. When this user
                         // does not have that row, PlaceNewRow looks on the master's screen (the
                         // reference user) for the nearest row above it that this user has; else the top.
@@ -505,17 +550,27 @@ namespace HomeScreenCompanion
         // in HomeSyncAdditions when Copy & Sync put them there), and off what Copy & Sync added
         // for rows they no longer get. Copy selected also removes those rows (Copy all replaces
         // the whole home screen anyway). An exact copy (mirror) takes the user off every other
-        // source and top-list too. True when the settings changed.
-        private bool UpdateMemberships(PluginConfiguration config, ManagedRows managed, List<(ContentSection Section, string Key)> wanted, HashSet<string> wantedKeys,
-            bool mirror, bool selectedOnly, string targetIdStr, string targetName, long targetInternalId, string sourceName, CancellationToken cancellationToken)
+        // source and top-list too. selected: the ticked rows (Copy selected), null for Copy all.
+        // True when the settings changed.
+        private bool UpdateMemberships(PluginConfiguration config, ManagedRows managed, List<(ContentSection Section, string Key)> masterRows,
+            List<(ContentSection Section, string Key)> wanted, HashSet<string> wantedKeys, HashSet<string>? selected,
+            bool mirror, string targetIdStr, string targetName, long targetInternalId, string sourceName, CancellationToken cancellationToken)
         {
             string targetKey = NormId(targetIdStr);
+            bool selectedOnly = selected != null;
             var additions = config.HomeSyncAdditions ??= new List<HomeSyncAddition>();
             bool changed = false;
+            // The master's rows that are no source's or top-list's row (see MirrorMayRemove).
+            var unknownMasterRows = masterRows.Where(w => w.Key.StartsWith(RowPrefix, StringComparison.Ordinal)).Select(w => w.Section).ToArray();
 
-            // Rows no longer copied here: what Copy & Sync added for them goes.
+            // Rows no longer copied here: what Copy & Sync added for them goes. Not while a row the
+            // profile still copies is only missing from the master's home screen for now (its
+            // source switched off or outside its schedule, its list not made yet): the user would
+            // lose the membership, and the row its place, until the master has it again.
             var gone = additions.Where(a => NormId(a.UserId) == targetKey
-                && (!wantedKeys.Contains(a.Key) || (a.List == HomeSyncAddition.Row && !selectedOnly))).ToList();
+                && (!wantedKeys.Contains(a.Key) || (a.List == HomeSyncAddition.Row && !selectedOnly))
+                && !(a.List != HomeSyncAddition.Row && (selected == null || selected.Contains(a.Key))
+                     && UserLists(config, a.Key, a.List).Count > 0 && !MirrorMayRemove(config, managed, a.Key, unknownMasterRows))).ToList();
             if (gone.Count > 0)
             {
                 if (selectedOnly)
@@ -552,8 +607,6 @@ namespace HomeScreenCompanion
             // the master would have it now if it were on it (see MirrorMayRemove).
             if (mirror)
             {
-                // Copy all: every master row. Those known as no source's or top-list's row.
-                var unknownMasterRows = wanted.Where(w => w.Key.StartsWith(RowPrefix, StringComparison.Ordinal)).Select(w => w.Section).ToArray();
                 foreach (var key in MemberKeys(config, targetKey).Where(k => !wantedKeys.Contains(k)).ToList())
                 {
                     if (!MirrorMayRemove(config, managed, key, unknownMasterRows))
@@ -574,14 +627,16 @@ namespace HomeScreenCompanion
         // master's home screen now if the master were one of its users. Not for a source switched
         // off, nor one outside its schedule whose row is removed then (a tag row stays, titled
         // [INACTIVE], and is copied like any row), nor when the master has a row with the source's
-        // title that is no source's row (it may be this source's row, copied to the master by hand):
-        // the user would lose a membership for good.
+        // title that is no source's row (it may be this source's row, copied to the master by hand),
+        // nor while no user has the row yet (a new source or top-list before the full sync made
+        // its rows or library): the user would lose a membership for good.
         private bool MirrorMayRemove(PluginConfiguration config, ManagedRows managed, string key, ContentSection[] unknownMasterRows)
         {
             if (key.StartsWith(SrcPrefix, StringComparison.Ordinal))
             {
                 var entries = (config.Tags ?? new List<TagConfig>()).Where(t => string.Equals(SourceKey(t.Name, t.Tag), key, StringComparison.OrdinalIgnoreCase)).ToList();
                 if (entries.Count == 0) return false;
+                if (!entries.Any(tc => (tc.HomeSectionTracked?.Count ?? 0) > 0)) return false;
                 foreach (var tc in entries)
                 {
                     if (!tc.Active) return false;
@@ -592,11 +647,11 @@ namespace HomeScreenCompanion
             }
             if (key.StartsWith(TlPrefix, StringComparison.Ordinal))
             {
-                var tag = key.Substring(TlPrefix.Length);
-                var tl = (config.TopLists ?? new List<TopListHomeSection>()).FirstOrDefault(t => string.Equals((t.TagName ?? "").Trim(), tag, StringComparison.OrdinalIgnoreCase));
+                var tl = (config.TopLists ?? new List<TopListHomeSection>()).FirstOrDefault(t => IsTopList(t.TagName, key));
                 if (tl == null) return false;
+                if (string.IsNullOrEmpty(tl.HomeSectionLibraryId) || tl.HomeSectionLibraryId == "auto" || (tl.HomeSectionTracked?.Count ?? 0) == 0) return false;
                 if (!tl.FromSource) return true;
-                var owner = (config.Tags ?? new List<TagConfig>()).FirstOrDefault(t => SourceTopLists.IsOn(t) && string.Equals((t.Tag ?? "").Trim(), tag, StringComparison.OrdinalIgnoreCase));
+                var owner = (config.Tags ?? new List<TagConfig>()).FirstOrDefault(t => SourceTopLists.IsOn(t) && IsTopList(t.Tag, key));
                 return owner != null && owner.Active;
             }
             return false;
@@ -612,7 +667,7 @@ namespace HomeScreenCompanion
                 keys.Add(SourceTopLists.IsOn(tc) ? TopListKey(tc.Tag) : SourceKey(tc.Name, tc.Tag));
             }
             foreach (var tl in config.TopLists ?? new List<TopListHomeSection>())
-                if (!tl.FromSource && IsOn(tl.HomeSectionUserIds, userKey)) keys.Add(TlPrefix + (tl.TagName ?? "").Trim());
+                if (!tl.FromSource && IsOn(tl.HomeSectionUserIds, userKey)) keys.Add(TopListKey(tl.TagName));
             return keys.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         }
 
@@ -634,19 +689,27 @@ namespace HomeScreenCompanion
                 _log.Info($"  {targetName}: added to {ListLabel(key, list)} (gets that row from {sourceName})");
                 changed = true;
             }
-            if (changed && key.StartsWith(TlPrefix, StringComparison.Ordinal)) managed.SetTopListUser(key.Substring(TlPrefix.Length), userKey, true);
+            if (changed)
+            {
+                _memberOps.Add(new MemberOp { Key = key, List = list, UserId = userId, On = true });
+                if (key.StartsWith(TlPrefix, StringComparison.Ordinal)) managed.SetTopListUser(key, userKey, true);
+            }
             return changed;
         }
 
         // Takes the user off the lists of a row key. rowGone: Copy & Sync removes (or replaced) the
         // row itself, so the source's / top-list's tracking of it goes too. Else the full sync
         // would look for the vanished row and, by its title, remove another source's row.
-        private static bool RemoveMember(PluginConfiguration config, ManagedRows managed, string key, string list, string userKey, bool rowGone)
+        private bool RemoveMember(PluginConfiguration config, ManagedRows managed, string key, string list, string userKey, bool rowGone)
         {
             bool changed = false;
             foreach (var l in UserLists(config, key, list))
                 changed |= l.RemoveAll(u => NormId(u) == userKey) > 0;
-            if (changed && key.StartsWith(TlPrefix, StringComparison.Ordinal)) managed.SetTopListUser(key.Substring(TlPrefix.Length), userKey, false);
+            if (changed)
+            {
+                _memberOps.Add(new MemberOp { Key = key, List = list, UserId = userKey, On = false });
+                if (key.StartsWith(TlPrefix, StringComparison.Ordinal)) managed.SetTopListUser(key, userKey, false);
+            }
             if (rowGone && list == HomeSyncAddition.Home)
             {
                 if (key.StartsWith(SrcPrefix, StringComparison.Ordinal))
@@ -656,8 +719,7 @@ namespace HomeScreenCompanion
                 }
                 else if (key.StartsWith(TlPrefix, StringComparison.Ordinal))
                 {
-                    var tag = key.Substring(TlPrefix.Length);
-                    foreach (var tl in (config.TopLists ?? new List<TopListHomeSection>()).Where(t => string.Equals((t.TagName ?? "").Trim(), tag, StringComparison.OrdinalIgnoreCase)))
+                    foreach (var tl in (config.TopLists ?? new List<TopListHomeSection>()).Where(t => IsTopList(t.TagName, key)))
                         tl.HomeSectionTracked?.RemoveAll(t => NormId(t.UserId) == userKey);
                 }
             }
@@ -682,13 +744,12 @@ namespace HomeScreenCompanion
             }
             else if (key.StartsWith(TlPrefix, StringComparison.Ordinal) && list == HomeSyncAddition.Home)
             {
-                var tag = key.Substring(TlPrefix.Length);
-                var tl = (config.TopLists ?? new List<TopListHomeSection>()).FirstOrDefault(t => string.Equals((t.TagName ?? "").Trim(), tag, StringComparison.OrdinalIgnoreCase));
+                var tl = (config.TopLists ?? new List<TopListHomeSection>()).FirstOrDefault(t => IsTopList(t.TagName, key));
                 if (tl != null)
                 {
                     if (tl.FromSource)
                     {
-                        var owner = (config.Tags ?? new List<TagConfig>()).FirstOrDefault(tc => SourceTopLists.IsOn(tc) && string.Equals((tc.Tag ?? "").Trim(), tag, StringComparison.OrdinalIgnoreCase));
+                        var owner = (config.Tags ?? new List<TagConfig>()).FirstOrDefault(tc => SourceTopLists.IsOn(tc) && IsTopList(tc.Tag, key));
                         if (owner != null) lists.Add(owner.HomeSectionUserIds ??= new List<string>());
                     }
                     lists.Add(tl.HomeSectionUserIds ??= new List<string>());
@@ -696,6 +757,9 @@ namespace HomeScreenCompanion
             }
             return lists;
         }
+
+        // A top-list (by its tag) is the list of a "tl:" row key.
+        private static bool IsTopList(string? tag, string key) => string.Equals(TopListKey(tag), key, StringComparison.OrdinalIgnoreCase);
 
         private static bool IsOn(List<string>? users, string userKey) => (users ?? new List<string>()).Any(u => NormId(u) == userKey);
 
@@ -724,13 +788,13 @@ namespace HomeScreenCompanion
         }
 
         // What Copy & Sync added for users it no longer copies to (taken off the profile, or the
-        // profile removed): taken away again. Not for users of a paused profile (they keep what
-        // they have), nor for source users.
+        // profile removed): taken away again. Not for users of a paused profile, nor of one without
+        // a source user yet (they keep what they have), nor for source users.
         private void RemoveStaleAdditions(PluginConfiguration config, ManagedRows managed, HashSet<string> handledTargets, HashSet<string> sourceKeys, SyncTotals totals)
         {
             var additions = config.HomeSyncAdditions ?? new List<HomeSyncAddition>();
             if (additions.Count == 0) return;
-            var paused = new HashSet<string>(config.EffectiveHomeSyncProfiles().Where(p => !p.Active)
+            var paused = new HashSet<string>(config.EffectiveHomeSyncProfiles().Where(p => !p.Active || string.IsNullOrWhiteSpace(p.SourceUserId))
                 .SelectMany(p => p.TargetUserIds ?? new List<string>()).Select(NormId));
             var stale = additions.Where(a =>
             {
@@ -748,6 +812,34 @@ namespace HomeScreenCompanion
                 additions.Remove(a);
             }
             totals.ConfigChanged = true;
+        }
+
+        // A source renamed on the settings page (its Name or its Tag, not both) gets a new row key:
+        // what Copy & Sync added for it and the profiles' ticked rows move to that key, else the
+        // old key matches nothing and the users it added stay on the source untracked. A source has
+        // no id, so a rename is told by its place: the page saves the sources in their order.
+        internal static void KeepKeysOfRenamedSources(PluginConfiguration? old, PluginConfiguration? incoming)
+        {
+            var oldTags = old?.Tags; var newTags = incoming?.Tags;
+            if (oldTags == null || newTags == null || oldTags.Count != newTags.Count) return;
+            var oldKeys = new HashSet<string>(oldTags.Select(t => SourceKey(t.Name, t.Tag)), StringComparer.OrdinalIgnoreCase);
+            var newKeys = new HashSet<string>(newTags.Select(t => SourceKey(t.Name, t.Tag)), StringComparer.OrdinalIgnoreCase);
+            var moved = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < oldTags.Count; i++)
+            {
+                var o = oldTags[i]; var n = newTags[i];
+                string from = SourceKey(o.Name, o.Tag), to = SourceKey(n.Name, n.Tag);
+                if (string.Equals(from, to, StringComparison.OrdinalIgnoreCase) || newKeys.Contains(from) || oldKeys.Contains(to)) continue;
+                bool sameName = string.Equals((o.Name ?? "").Trim(), (n.Name ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
+                bool sameTag = string.Equals((o.Tag ?? "").Trim(), (n.Tag ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
+                if ((sameName || sameTag) && string.Equals(o.SourceType, n.SourceType, StringComparison.OrdinalIgnoreCase)) moved[from] = to;
+            }
+            if (moved.Count == 0) return;
+            foreach (var a in incoming!.HomeSyncAdditions ?? new List<HomeSyncAddition>())
+                if (moved.TryGetValue(a.Key ?? "", out var to)) a.Key = to;
+            foreach (var p in incoming.HomeSyncProfiles ?? new List<HomeSyncProfile>())
+                if (p.SelectedRows != null)
+                    p.SelectedRows = p.SelectedRows.Select(k => moved.TryGetValue(k ?? "", out var to) ? to : k ?? "").ToList();
         }
 
         // Row keys (RowKey): a source's row, a top-list's row, any other row by its SectionKey.
@@ -850,7 +942,7 @@ namespace HomeScreenCompanion
             }
         }
 
-        private static string NormId(string id) => (id ?? "").Replace("-", "").Trim().ToLowerInvariant();
+        internal static string NormId(string? id) => (id ?? "").Replace("-", "").Trim().ToLowerInvariant();
 
         private string UserName(string normId)
             => Guid.TryParse(normId, out var g) ? (_userManager.GetUserById(g)?.Name ?? normId) : normId;
@@ -949,10 +1041,10 @@ namespace HomeScreenCompanion
 
             public bool IsTopListUser(TopListHomeSection tl, string user) => _topListUsers[tl].Contains(user);
 
-            // Copy & Sync put the user on (or took them off) the list of this tag.
-            public void SetTopListUser(string tag, string user, bool on)
+            // Copy & Sync put the user on (or took them off) the list of this row key.
+            public void SetTopListUser(string key, string user, bool on)
             {
-                foreach (var tl in TopLists.Where(t => string.Equals((t.TagName ?? "").Trim(), tag, StringComparison.OrdinalIgnoreCase)))
+                foreach (var tl in TopLists.Where(t => IsTopList(t.TagName, key)))
                 {
                     if (on) _topListUsers[tl].Add(user);
                     else _topListUsers[tl].Remove(user);
@@ -997,7 +1089,11 @@ namespace HomeScreenCompanion
                 if (tracked != null) return tracked;
                 var byTitle = rest.Where(tc => HomeScreenCompanionTask.SameTitle(s.CustomName, _sourceTitles[tc])
                     && !HomeScreenCompanionTask.SectionOwnedElsewhere(config, tc, SourceUserId(tc, user)!, s.Id)).ToList();
-                return byTitle.Count == 1 ? byTitle[0] : null;
+                // One source only (a source with several URLs or local sources is several entries
+                // with the same title: still one source).
+                if (byTitle.Count == 0) return null;
+                var group = SourceKey(byTitle[0].Name, byTitle[0].Tag);
+                return byTitle.All(tc => string.Equals(SourceKey(tc.Name, tc.Tag), group, StringComparison.OrdinalIgnoreCase)) ? byTitle[0] : null;
             }
 
             // The tag ids (Query.TagIds) and the parent (ParentId) a row shows.

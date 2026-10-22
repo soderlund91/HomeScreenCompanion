@@ -291,7 +291,7 @@ namespace HomeScreenCompanion
                 {
                     if (tc.EnableCollection && !string.IsNullOrWhiteSpace(tc.Tag))
                     {
-                        string cn = string.IsNullOrWhiteSpace(tc.CollectionName) ? tc.Tag.Trim() : tc.CollectionName.Trim();
+                        string cn = CollectionNameOf(tc);
                         if (!previouslyManagedCollections.Contains(cn))
                             previouslyManagedCollections.Add(cn);
                     }
@@ -436,7 +436,7 @@ namespace HomeScreenCompanion
                     activeTagOverrides.Add(tc.Tag.Trim());
                     if (tc.EnableCollection)
                     {
-                        var overrideCName = string.IsNullOrWhiteSpace(tc.CollectionName) ? tc.Tag.Trim() : tc.CollectionName.Trim();
+                        var overrideCName = CollectionNameOf(tc);
                         activeCollectionOverrides.Add(overrideCName);
                     }
                 }
@@ -5321,7 +5321,7 @@ namespace HomeScreenCompanion
             foreach (var tc in config.Tags)
             {
                 if (tc.EnableCollection && !string.IsNullOrWhiteSpace(tc.Tag))
-                    hscCollections.Add(string.IsNullOrWhiteSpace(tc.CollectionName) ? tc.Tag.Trim() : tc.CollectionName.Trim());
+                    hscCollections.Add(CollectionNameOf(tc));
                 if (string.IsNullOrWhiteSpace(tc.Tag)) continue;
                 var cts = tc.ActiveCollectionTags();
                 configuredCustom.UnionWith(cts);
@@ -5329,7 +5329,7 @@ namespace HomeScreenCompanion
                 foreach (var ct in cts)
                 {
                     if (!activeTags.ContainsKey(ct)) activeTags[ct] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    activeTags[ct].Add(string.IsNullOrWhiteSpace(tc.CollectionName) ? tc.Tag.Trim() : tc.CollectionName.Trim());
+                    activeTags[ct].Add(CollectionNameOf(tc));
                 }
             }
             customTags.UnionWith(configuredCustom);

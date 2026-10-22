@@ -438,8 +438,8 @@ namespace HomeScreenCompanion
                     if (again != null && Json != null)
                     {
                         // The user's id as the new list has it (the row is placed for that id).
-                        string Norm(string? id) => (id ?? "").Replace("-", "").Trim().ToLowerInvariant();
-                        var userId = (again.HomeSectionUserIds ?? new List<string>()).FirstOrDefault(u => Norm(u) == Norm(row.UserId)) ?? row.UserId;
+                        var userId = (again.HomeSectionUserIds ?? new List<string>())
+                            .FirstOrDefault(u => HomeSectionSyncTask.NormId(u) == HomeSectionSyncTask.NormId(row.UserId)) ?? row.UserId;
                         HomeScreenCompanionTask.RememberRowPosition(userManager, Json, TopListSyncTask.RowPositionKey(again), userId, uid, row.SectionId, ct);
                     }
                     try { userManager.DeleteHomeSections(uid, new[] { row.SectionId }, ct); rows++; }
