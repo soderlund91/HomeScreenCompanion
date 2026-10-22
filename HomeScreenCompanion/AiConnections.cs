@@ -133,7 +133,11 @@ namespace HomeScreenCompanion
                 {
                     body = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
                     if (!res.IsSuccessStatusCode)
-                        return Fail($"HTTP {(int)res.StatusCode} {res.ReasonPhrase}".Trim());
+                    {
+                        // The provider's own reason when it gives one ("API key not valid" …).
+                        var why = System.Text.RegularExpressions.Regex.Match(body ?? "", "\"message\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+                        return Fail($"HTTP {(int)res.StatusCode}" + (why.Success ? ": " + why.Groups[1].Value.Replace("\\\"", "\"") : $" {res.ReasonPhrase}").TrimEnd());
+                    }
                 }
 
                 var list = _json.DeserializeFromString<AiModelList>(body) ?? new AiModelList();
