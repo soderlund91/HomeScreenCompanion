@@ -7583,6 +7583,11 @@ namespace HomeScreenCompanion
             var dataPath = Plugin.Instance.DataFolderPath;
             var topListsPath = Path.Combine(dataPath, "toplists");
 
+            // Content Auto: a list whose source's titles turned out to be the other kind is queued
+            // here and made again below.
+            if (!dryRun && SourceTopLists.ResolveAutoTypes(config, _libraryManager, _log, onlyTag))
+                Plugin.Instance.SaveConfiguration();
+
             // Lists switched off in their source: rows, library and copies go first (a list made
             // again in the same folder is written below).
             if (!dryRun) SourceTopLists.RemoveQueued(config, _libraryManager, _userManager, _log, CancellationToken.None, onlyTag);
