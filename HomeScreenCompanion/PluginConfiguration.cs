@@ -18,6 +18,8 @@ namespace HomeScreenCompanion
         public string ClaudeModel { get; set; } = "claude-haiku-4-5-20251001";
         public string OllamaBaseUrl { get; set; } = "http://localhost:11434";
         public string OllamaModel { get; set; } = "";
+        // OpenAI-compatible AI services (Groq, OpenRouter, LM Studio …), any number of them.
+        public List<AiConnection> AiConnections { get; set; } = new List<AiConnection>();
         public string AiSystemPrompt { get; set; } =
             "You are a movie and TV show recommendation assistant. " +
             "Respond ONLY with a valid JSON array. No explanation, no markdown, no code fences. " +

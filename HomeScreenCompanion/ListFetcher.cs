@@ -556,6 +556,7 @@ namespace HomeScreenCompanion
             string claudeModel,
             string ollamaBaseUrl,
             string ollamaModel,
+            IList<AiConnection>? aiConnections,
             string systemPrompt,
             string recentlyWatchedContext,
             int limit,
@@ -595,11 +596,23 @@ namespace HomeScreenCompanion
                         throw new InvalidOperationException("Ollama model is not configured.");
                     rawJson = await CallOllama(ollamaBaseUrl, ollamaModel, systemPrompt, userMessage, cancellationToken);
                 }
+                else if (AiConnection.IsCompat(provider))
+                {
+                    // A removed connection must not fall through to OpenAI below.
+                    var conn = AiConnection.Find(aiConnections, provider)
+                        ?? throw new InvalidOperationException("AI connection not found");
+                    if (string.IsNullOrWhiteSpace(conn.BaseUrl))
+                        throw new InvalidOperationException($"{conn.Name}: base URL is not configured.");
+                    if (string.IsNullOrWhiteSpace(conn.Model))
+                        throw new InvalidOperationException($"{conn.Name}: model is not configured.");
+                    rawJson = await CallOpenAi(conn.BaseUrl.Trim().TrimEnd('/') + "/chat/completions", conn.ApiKey, conn.Model.Trim(),
+                        systemPrompt, userMessage, true, string.IsNullOrWhiteSpace(conn.Name) ? "AI" : conn.Name, cancellationToken);
+                }
                 else
                 {
                     if (string.IsNullOrWhiteSpace(openAiApiKey))
                         throw new InvalidOperationException("OpenAI API key is not configured.");
-                    rawJson = await CallOpenAi(openAiApiKey, openAiModel ?? "gpt-4o-mini", systemPrompt, userMessage, cancellationToken);
+                    rawJson = await CallOpenAi("https://api.openai.com/v1/chat/completions", openAiApiKey, openAiModel ?? "gpt-4o-mini", systemPrompt, userMessage, false, "OpenAI", cancellationToken);
                 }
 
                 var cleaned = CleanAiJsonOutput(rawJson);
@@ -615,27 +628,37 @@ namespace HomeScreenCompanion
             }
         }
 
-        private async Task<string> CallOpenAi(string apiKey, string model, string systemPrompt, string userMessage, CancellationToken cancellationToken)
+        // OpenAI's chat API, also spoken by the OpenAI-compatible services. jsonMode asks for a JSON
+        // object (response_format json_object); a service that rejects that is asked again without it.
+        private async Task<string> CallOpenAi(string url, string apiKey, string model, string systemPrompt, string userMessage, bool jsonMode, string name, CancellationToken cancellationToken)
         {
+            if (jsonMode)
+                userMessage += "\n\nAnswer with a JSON object of the form {\"items\": [ ... ]} holding the array.";
             var requestBody = $"{{" +
                 $"\"model\":{EscapeJsonString(model)}," +
                 $"\"messages\":[" +
                 $"{{\"role\":\"system\",\"content\":{EscapeJsonString(systemPrompt)}}}," +
                 $"{{\"role\":\"user\",\"content\":{EscapeJsonString(userMessage)}}}" +
-                $"]}}";
+                $"]" + (jsonMode ? ",\"response_format\":{\"type\":\"json_object\"}" : "") + "}";
 
-            var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, "https://api.openai.com/v1/chat/completions");
-            request.Headers.Add("Authorization", $"Bearer {apiKey}");
+            var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, url);
+            if (!string.IsNullOrWhiteSpace(apiKey))
+                request.Headers.Add("Authorization", $"Bearer {apiKey.Trim()}");
             request.Content = new System.Net.Http.StringContent(requestBody, Encoding.UTF8, "application/json");
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(30));
+            cts.CancelAfter(TimeSpan.FromSeconds(jsonMode ? 120 : 30));
 
             var response = await _netHttpClient.SendAsync(request, cts.Token);
             var responseBody = await response.Content.ReadAsStringAsync();
 
+            if (jsonMode && ((int)response.StatusCode == 400 || (int)response.StatusCode == 422)
+                && (responseBody.IndexOf("response_format", StringComparison.OrdinalIgnoreCase) >= 0
+                    || responseBody.IndexOf("json", StringComparison.OrdinalIgnoreCase) >= 0))
+                return await CallOpenAi(url, apiKey, model, systemPrompt, userMessage, false, name, cancellationToken);
+
             if (!response.IsSuccessStatusCode)
-                throw new InvalidOperationException($"OpenAI API error {(int)response.StatusCode}: {responseBody}");
+                throw new InvalidOperationException($"{name} API error {(int)response.StatusCode}: {responseBody}");
 
             var parsed = _jsonSerializer.DeserializeFromString<OpenAiResponse>(responseBody);
             return parsed?.choices?.FirstOrDefault()?.message?.content ?? "";
@@ -724,13 +747,19 @@ namespace HomeScreenCompanion
 
         private static string CleanAiJsonOutput(string raw)
         {
-            var trimmed = raw.Trim();
+            var trimmed = (raw ?? "").Trim();
             if (trimmed.StartsWith("```"))
             {
                 var firstNewline = trimmed.IndexOf('\n');
                 var lastFence = trimmed.LastIndexOf("```");
                 if (firstNewline > 0 && lastFence > firstNewline)
                     trimmed = trimmed.Substring(firstNewline + 1, lastFence - firstNewline - 1).Trim();
+            }
+            // The array inside a JSON object ({"items":[…]}) or inside text around it.
+            if (!trimmed.StartsWith("["))
+            {
+                int start = trimmed.IndexOf('['), end = trimmed.LastIndexOf(']');
+                if (start >= 0 && end > start) trimmed = trimmed.Substring(start, end - start + 1);
             }
             return trimmed;
         }

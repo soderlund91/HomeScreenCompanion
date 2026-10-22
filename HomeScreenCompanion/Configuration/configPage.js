@@ -3157,11 +3157,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         <div style="margin-bottom: 15px;">
                             <label class="selectLabel">AI Provider</label>
                             <select is="emby-select" class="selAiProvider" style="width:100%;">
-                                <option value="Claude" ${(tagConfig.AiProvider || 'OpenAI') === 'Claude' ? 'selected' : ''}>Anthropic Claude</option>
-                                <option value="Gemini" ${(tagConfig.AiProvider || 'OpenAI') === 'Gemini' ? 'selected' : ''}>Google Gemini</option>
-                                <option value="Ollama" ${(tagConfig.AiProvider || 'OpenAI') === 'Ollama' ? 'selected' : ''}>Ollama (Local)</option>
-                                <option value="OpenAI" ${(tagConfig.AiProvider || 'OpenAI') === 'OpenAI' ? 'selected' : ''}>OpenAI (ChatGPT)</option>
+                                ${aiProviderOptionsHtml(tagConfig.AiProvider || 'OpenAI')}
                             </select>
+                            <div class="ai-provider-missing" style="display:${aiProviderMissing(tagConfig.AiProvider) ? 'block' : 'none'}; font-size:0.9em; color:var(--hsc-danger-text); margin-top:4px;">Needs a provider</div>
                         </div>
 
                         <div class="ollama-experimental-warning" style="display:${(tagConfig.AiProvider || 'OpenAI') === 'Ollama' ? 'flex' : 'none'}; align-items:flex-start; gap:8px; background:rgba(230,193,90,0.1); border:1px solid rgba(230,193,90,0.35); border-radius:6px; padding:10px 12px; margin-bottom:15px; font-size:0.85em; line-height:1.5;">
@@ -4181,6 +4179,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             selAiProv.addEventListener('change', function () {
                 var warn = row.querySelector('.ollama-experimental-warning');
                 if (warn) warn.style.display = this.value === 'Ollama' ? 'flex' : 'none';
+                updateAiProviderMissing(row);
             });
         }
 
@@ -4478,7 +4477,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 btnTestAi.disabled = true;
                 if (resultSpan) resultSpan.textContent = 'Testing...';
-                var aiModal = openSourceTestModal('AI source test', aiProvider + ' · ' + aiPrompt);
+                var aiModal = openSourceTestModal('AI source test', aiProviderLabel(aiProvider) + ' · ' + aiPrompt);
 
                 fetch(window.ApiClient.getUrl('HomeScreenCompanion/TestAiSource'), {
                     method: 'POST',
@@ -6228,6 +6227,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             ClaudeModel: fieldOr('#txtClaudeModel', 'claude-haiku-4-5-20251001'),
             OllamaBaseUrl: fieldOr('#txtOllamaBaseUrl', 'http://localhost:11434'),
             OllamaModel: (view.querySelector('#txtOllamaModel') || {}).value || '',
+            AiConnections: readAiConnections(view),
             AiSystemPrompt: (view.querySelector('#txtAiSystemPrompt') || {}).value || '',
             ExtendedConsoleOutput: view.querySelector('#chkExtendedConsoleOutput').checked,
             LogMissingItems: view.querySelector('#chkLogMissingItems').checked,
@@ -6254,12 +6254,161 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         };
     }
 
+    // ---- AI: OpenAI-compatible connections and model lists ----
+    // Settings holds any number of OpenAI-compatible connections (Groq, OpenRouter, LM Studio …).
+    // A source uses one with AiProvider "Compat:<id>", so renaming it keeps the sources on it.
+    var AI_COMPAT = 'Compat:';
+    var _aiConnections = [];   // the connections as they are in Settings now, for the provider menus
+    var AI_BUILTIN_PROVIDERS = [['Claude', 'Anthropic Claude'], ['Gemini', 'Google Gemini'], ['Ollama', 'Ollama (Local)'], ['OpenAI', 'OpenAI (ChatGPT)']];
+
+    function newAiConnId() {
+        return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    }
+    function aiConnName(c) { return (c && (c.Name || '').trim()) || 'OpenAI-compatible'; }
+    function aiProviderMissing(value) {
+        if ((value || '').indexOf(AI_COMPAT) !== 0) return false;
+        var id = value.substring(AI_COMPAT.length);
+        return !_aiConnections.some(function (c) { return c.Id === id; });
+    }
+    function aiProviderLabel(value) {
+        var b = AI_BUILTIN_PROVIDERS.filter(function (p) { return p[0] === value; })[0];
+        if (b) return b[1];
+        var id = (value || '').indexOf(AI_COMPAT) === 0 ? value.substring(AI_COMPAT.length) : null;
+        var c = id && _aiConnections.filter(function (x) { return x.Id === id; })[0];
+        return c ? aiConnName(c) : (id ? 'Missing connection' : (value || ''));
+    }
+    // The AI Provider options of a source: the built-in providers, then each connection by name.
+    // A connection that was removed stays selected as "Missing connection", so a save keeps it
+    // pointing there (and the source shows it needs a provider) instead of moving it to Claude.
+    function aiProviderOptionsHtml(value) {
+        var opts = AI_BUILTIN_PROVIDERS.map(function (p) {
+            return '<option value="' + p[0] + '"' + (p[0] === value ? ' selected' : '') + '>' + p[1] + '</option>';
+        });
+        _aiConnections.slice().sort(function (a, b) { return aiConnName(a).localeCompare(aiConnName(b)); }).forEach(function (c) {
+            var v = AI_COMPAT + c.Id;
+            opts.push('<option value="' + escapeHtml(v) + '"' + (v === value ? ' selected' : '') + '>' + escapeHtml(aiConnName(c)) + '</option>');
+        });
+        if (aiProviderMissing(value))
+            opts.push('<option value="' + escapeHtml(value) + '" selected>Missing connection</option>');
+        return opts.join('');
+    }
+    function updateAiProviderMissing(row) {
+        var sel = row.querySelector('.selAiProvider'), hint = row.querySelector('.ai-provider-missing');
+        if (sel && hint) hint.style.display = aiProviderMissing(sel.value) ? 'block' : 'none';
+    }
+    function refreshAiProviderSelects(view) {
+        _aiConnections = readAiConnections(view);
+        view.querySelectorAll('.tag-row .selAiProvider').forEach(function (sel) {
+            var v = sel.value;
+            sel.innerHTML = aiProviderOptionsHtml(v);
+            sel.value = v;
+            updateAiProviderMissing(sel.closest('.tag-row'));
+        });
+    }
+
+    function aiConnCardHtml(c) {
+        var id = escapeHtml(c.Id);
+        return '<div class="hsc-ai-conn" data-id="' + id + '">' +
+            '<div class="inputContainer"><input is="emby-input" type="text" class="txtAiConnName" label="Name" placeholder="Groq" value="' + escapeHtml(c.Name || '') + '" /></div>' +
+            '<div class="inputContainer"><input is="emby-input" type="text" class="txtAiConnBaseUrl" label="Base URL" placeholder="https://api.groq.com/openai/v1" value="' + escapeHtml(c.BaseUrl || '') + '" /></div>' +
+            '<div class="inputContainer"><input is="emby-input" type="text" class="api-key-field txtAiConnApiKey" autocomplete="off" spellcheck="false" data-lpignore="true" data-1p-ignore id="txtAiConnKey_' + id + '" label="API Key" value="' + escapeHtml(c.ApiKey || '') + '" />' +
+                '<label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">' +
+                '<input type="checkbox" class="chkShowApiKey" data-target="txtAiConnKey_' + id + '" style="margin:0;" /> Show</label></div>' +
+            '<div class="inputContainer hsc-model-field" data-provider="Compat">' +
+                '<label class="selectLabel">Model</label>' +
+                '<div class="hsc-model-row"><div class="hsc-model-sel"><select is="emby-select" class="selAiModel"></select></div>' +
+                '<button type="button" is="emby-button" class="raised hsc-btn-ghost btnAiModelsReload" title="Reload models"><i class="md-icon">refresh</i></button></div>' +
+                '<div class="hsc-model-custom"><input is="emby-input" type="text" class="txtAiConnModel" label="Model name" value="' + escapeHtml(c.Model || '') + '" /></div>' +
+                '<div class="hsc-model-status"></div>' +
+            '</div>' +
+            '<div class="hsc-ai-conn-foot"><button type="button" is="emby-button" class="raised hsc-btn-danger btnRemoveAiConn"><i class="md-icon" style="font-size:1em; margin-right:4px;">delete</i><span>Remove</span></button></div>' +
+            '</div>';
+    }
+    function readAiConnections(view) {
+        return Array.from(view.querySelectorAll('#aiConnList .hsc-ai-conn')).map(function (card) {
+            function val(cls) { return ((card.querySelector(cls) || {}).value || '').trim(); }
+            return { Id: card.dataset.id, Name: val('.txtAiConnName'), BaseUrl: val('.txtAiConnBaseUrl'), ApiKey: val('.txtAiConnApiKey'), Model: val('.txtAiConnModel') };
+        });
+    }
+    function renderAiConnections(view, list) {
+        var box = view.querySelector('#aiConnList');
+        if (!box) return;
+        box.innerHTML = (list || []).filter(function (c) { return c && c.Id; }).map(aiConnCardHtml).join('');
+        _aiConnections = readAiConnections(view);
+        box.querySelectorAll('.hsc-model-field').forEach(function (f) { syncModelField(f); });
+    }
+
+    // ---- Model dropdowns ----
+    // Each Model field is a list read from the provider (HomeScreenCompanion/Ai/Models, the key
+    // stays on the server) plus "Custom…", which shows the text field. The text field holds the
+    // value that is saved; a saved model that is not in the list stays selected.
+    var AI_MODEL_CUSTOM = '__hsc_custom__';
+    function modelFieldInput(field) { return field.querySelector('.hsc-model-custom input'); }
+    function modelFieldRequest(field) {
+        var view = field.closest('#HomeScreenCompanionConfigPage') || document;
+        var card = field.closest('.hsc-ai-conn');
+        function byId(id) { return id ? ((view.querySelector('#' + id) || {}).value || '').trim() : ''; }
+        if (card) return {
+            Provider: 'Compat', ConnectionId: card.dataset.id,
+            BaseUrl: ((card.querySelector('.txtAiConnBaseUrl') || {}).value || '').trim(),
+            ApiKey: ((card.querySelector('.txtAiConnApiKey') || {}).value || '').trim()
+        };
+        return { Provider: field.dataset.provider, ConnectionId: '', BaseUrl: byId(field.dataset.url), ApiKey: byId(field.dataset.key) };
+    }
+    function modelFieldReady(req) {
+        return req.Provider === 'Compat' || req.Provider === 'Ollama' ? !!req.BaseUrl : !!req.ApiKey;
+    }
+    function syncModelField(field) {
+        var sel = field.querySelector('.selAiModel'), input = modelFieldInput(field);
+        if (!sel || !input) return;
+        var models = field._models || [], v = (input.value || '').trim();
+        var custom = field.classList.contains('is-custom');
+        var html = [];
+        if (!v && !custom) html.push('<option value=""></option>');
+        if (v && !custom && models.indexOf(v) < 0) html.push('<option value="' + escapeHtml(v) + '">' + escapeHtml(v) + '</option>');
+        models.forEach(function (m) { html.push('<option value="' + escapeHtml(m) + '">' + escapeHtml(m) + '</option>'); });
+        html.push('<option value="' + AI_MODEL_CUSTOM + '">Custom…</option>');
+        sel.innerHTML = html.join('');
+        sel.value = custom ? AI_MODEL_CUSTOM : v;
+    }
+    function loadModelField(field, force) {
+        var req = modelFieldRequest(field), status = field.querySelector('.hsc-model-status');
+        if (!modelFieldReady(req)) { field._models = []; field._sig = ''; if (status) status.textContent = ''; syncModelField(field); return; }
+        var sig = JSON.stringify(req);
+        if (!force && field._sig === sig) return;
+        field._sig = sig;
+        field.classList.add('is-loading');
+        fetch(window.ApiClient.getUrl('HomeScreenCompanion/Ai/Models'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-MediaBrowser-Token': window.ApiClient.accessToken() },
+            body: JSON.stringify(req)
+        }).then(function (r) { return r.json(); }).then(function (res) {
+            if (field._sig !== sig) return;
+            field._models = res.Success ? (res.Models || []) : [];
+            if (status) status.textContent = res.Success ? (field._models.length ? '' : (res.Message || 'No models')) : (res.Message || 'Failed');
+            syncModelField(field);
+        }).catch(function (err) {
+            if (field._sig !== sig) return;
+            field._models = [];
+            if (status) status.textContent = err && err.message ? err.message : 'Failed';
+            syncModelField(field);
+        }).finally(function () { field.classList.remove('is-loading'); });
+    }
+    function syncModelFields(view) {
+        view.querySelectorAll('.hsc-model-field').forEach(function (f) {
+            f.classList.remove('is-custom');
+            f._sig = '';
+            syncModelField(f);
+            if (f.offsetParent) loadModelField(f);
+        });
+    }
+
     // ---- What is unsaved, in words ----
     // Compares two getUiConfig(view, true) results (saved, current) and returns
     // { settings: [label], sources: [{ name, what }] } for the unsaved-changes popup.
     var _settingLabels = {
         OpenAiModel: 'OpenAI model', GeminiModel: 'Gemini model', ClaudeModel: 'Claude model',
-        OllamaBaseUrl: 'Ollama URL', OllamaModel: 'Ollama model', AiSystemPrompt: 'AI system prompt',
+        OllamaBaseUrl: 'Ollama URL', OllamaModel: 'Ollama model', AiConnections: 'OpenAI-compatible connections', AiSystemPrompt: 'AI system prompt',
         ExtendedConsoleOutput: 'Extended log', LogMissingItems: 'Log missing movies and shows',
         DryRunMode: 'Dry Run Mode', PreserveTagsOnEmptyResult: 'Preserve tags and collections on empty result',
         IgnoreMarkedAsWatched: 'Ignore titles only marked as watched',
@@ -10218,7 +10367,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // sync tasks generate (tags, collections, playlists, top-list files, images) is rebuilt on run.
     var _backupSections = [
         { key: 'Settings',     label: 'General settings',          desc: 'AI models, system prompt, logging, dry run, preserve-on-empty.' },
-        { key: 'ApiKeys',      label: 'API keys',                  desc: 'Trakt, MDBList, TMDB, OpenAI, Gemini, Claude. Stored in plain text in the file.' },
+        { key: 'ApiKeys',      label: 'API keys',                  desc: 'Trakt, MDBList, TMDB, OpenAI, Gemini, Claude, OpenAI-compatible. Stored in plain text in the file.' },
         { key: 'Tags',         label: 'Tag & collection groups',   desc: 'All source groups incl. schedules, blacklists, filters, collection settings, home sections and playlists.' },
         { key: 'SavedFilters', label: 'Saved media-info filters',  desc: 'Your saved filter presets.' },
         { key: 'TopLists',     label: 'Top lists',                 desc: 'Top-list settings and the movie and show lists of manual top-lists.' },
@@ -10852,7 +11001,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '</details>' +
             '<div class="hsc-callout" style="margin:12px 0 16px;">' +
             '<i class="md-icon">lock</i>' +
-            '<span><strong>API keys are always hidden.</strong> Keys and tokens (Trakt, MDBList, TMDb, OpenAI, Gemini, Claude, and keys in list URLs) are replaced by *** in every file, whether or not names are anonymised. Titles, source and library names stay as they are.</span>' +
+            '<span><strong>API keys are always hidden.</strong> Keys and tokens (Trakt, MDBList, TMDb, OpenAI, Gemini, Claude, OpenAI-compatible, and keys in list URLs) are replaced by *** in every file, whether or not names are anonymised. Titles, source and library names stay as they are.</span>' +
             '</div>' +
             '<div class="logs-error" style="color:var(--hsc-danger-text);font-size:0.85em;min-height:1.2em;margin-bottom:6px;"></div>' +
             '<div style="display:flex;gap:10px;justify-content:flex-end;align-items:center;">' +
@@ -12699,6 +12848,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     view._hscServerStamp = fetchedStamp;
                     var restored = false, serverChanged = false;
                     if (leave && leave.draft) {
+                        // The draft holds no keys: a connection still on the server gets its key back.
+                        if (Array.isArray(leave.draft.AiConnections)) leave.draft.AiConnections.forEach(function (c) {
+                            var s = (config.AiConnections || []).filter(function (x) { return x.Id === c.Id; })[0];
+                            if (c.ApiKey === undefined) c.ApiKey = s ? (s.ApiKey || '') : '';
+                        });
                         renderConfig(view, Object.assign({}, config, leave.draft));
                         restored = true;
                         serverChanged = !!leave.serverStamp && leave.serverStamp !== fetchedStamp;
@@ -12749,6 +12903,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var clmElInit = view.querySelector('#txtClaudeModel'); if (clmElInit) clmElInit.value = config.ClaudeModel || 'claude-haiku-4-5-20251001';
                 var olElInit = view.querySelector('#txtOllamaBaseUrl'); if (olElInit) olElInit.value = config.OllamaBaseUrl || 'http://localhost:11434';
                 var omElInit = view.querySelector('#txtOllamaModel'); if (omElInit) omElInit.value = config.OllamaModel || '';
+                renderAiConnections(view, config.AiConnections || []);
+                syncModelFields(view);
                 var spElInit = view.querySelector('#txtAiSystemPrompt'); if (spElInit) spElInit.value = config.AiSystemPrompt || ''; updateSystemPromptResetBtn(view);
                 view.querySelector('#chkExtendedConsoleOutput').checked = config.ExtendedConsoleOutput || false;
                 view.querySelector('#chkLogMissingItems').checked = config.LogMissingItems || false;
@@ -12833,6 +12989,61 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 if (wasDirty) { writeLeaveState(null); hideDraftBar(); loadConfig(); }
                 showPageTab(target);
             });
+        });
+
+        // AI: OpenAI-compatible connections (Add / Remove) and the Model dropdowns.
+        view.addEventListener('click', function (e) {
+            if (e.target.closest('#btnAddAiConn')) {
+                var box = view.querySelector('#aiConnList');
+                box.insertAdjacentHTML('beforeend', aiConnCardHtml({ Id: newAiConnId() }));
+                syncModelField(box.lastElementChild.querySelector('.hsc-model-field'));
+                refreshAiProviderSelects(view);
+                var nm = box.lastElementChild.querySelector('.txtAiConnName'); if (nm) nm.focus();
+                setTimeout(checkFormState, 0);
+                return;
+            }
+            var rm = e.target.closest('.btnRemoveAiConn');
+            if (rm) {
+                rm.closest('.hsc-ai-conn').remove();
+                refreshAiProviderSelects(view);
+                setTimeout(checkFormState, 0);
+                return;
+            }
+            var rl = e.target.closest('.btnAiModelsReload');
+            if (rl) { loadModelField(rl.closest('.hsc-model-field'), true); return; }
+            // Opening a provider's panel loads its models (once per key / URL).
+            var hd = e.target.closest('.settings-panel-toggle');
+            if (hd) setTimeout(function () {
+                var panel = hd.closest('.settings-panel');
+                if (panel) panel.querySelectorAll('.hsc-model-field').forEach(function (f) { if (f.offsetParent) loadModelField(f); });
+            }, 0);
+        });
+        view.addEventListener('change', function (e) {
+            var sel = e.target.closest('.selAiModel');
+            if (sel) {
+                var field = sel.closest('.hsc-model-field'), input = modelFieldInput(field);
+                if (sel.value === AI_MODEL_CUSTOM) {
+                    field.classList.add('is-custom');
+                    syncModelField(field);
+                    if (input) input.focus();
+                } else if (input) {
+                    field.classList.remove('is-custom');
+                    input.value = sel.value;
+                    syncModelField(field);
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                return;
+            }
+            // A key or URL filled in or changed: read that provider's models again.
+            var t = e.target;
+            if (t.matches && t.matches('.txtAiConnBaseUrl, .txtAiConnApiKey')) {
+                loadModelField(t.closest('.hsc-ai-conn').querySelector('.hsc-model-field'), true);
+                return;
+            }
+            if (t.id) view.querySelectorAll('.hsc-model-field[data-key="' + t.id + '"], .hsc-model-field[data-url="' + t.id + '"]').forEach(function (f) { loadModelField(f, true); });
+        });
+        view.addEventListener('input', function (e) {
+            if (e.target.closest && e.target.closest('.txtAiConnName')) refreshAiProviderSelects(view);
         });
 
         view.addEventListener('change', function (e) {

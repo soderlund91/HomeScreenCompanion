@@ -1003,6 +1003,7 @@ namespace HomeScreenCompanion
                                 config.ClaudeModel,
                                 config.OllamaBaseUrl,
                                 config.OllamaModel,
+                                config.AiConnections,
                                 config.AiSystemPrompt,
                                 recentlyWatchedContext,
                                 AiAskCount(effectiveLimit),
@@ -1077,7 +1078,7 @@ namespace HomeScreenCompanion
                                 }
                             }
 
-                            _log.Debug($"  AI ({tagConfig.AiProvider}) returned {gs.ListCount} items in {fetchTimer.ElapsedMilliseconds} ms  ·  {matchedLocalItems.Count} matched ({_aiTitleMatched} by title only)  ·  {gs.MissingItems.Count} not in library  ·  {_aiBlacklisted} blacklisted");
+                            _log.Debug($"  AI ({AiConnection.Label(tagConfig.AiProvider)}) returned {gs.ListCount} items in {fetchTimer.ElapsedMilliseconds} ms  ·  {matchedLocalItems.Count} matched ({_aiTitleMatched} by title only)  ·  {gs.MissingItems.Count} not in library  ·  {_aiBlacklisted} blacklisted");
                             if (tagConfig.AiRefreshIntervalDays > 0 && aiItems.Count > 0)
                             {
                                 tagConfig.AiLastRunDate = DateTime.UtcNow;
@@ -2600,6 +2601,7 @@ namespace HomeScreenCompanion
                         config.ClaudeModel,
                         config.OllamaBaseUrl,
                         config.OllamaModel,
+                        config.AiConnections,
                         config.AiSystemPrompt,
                         recentlyWatchedContext,
                         AiAskCount(effectiveLimit),
@@ -2607,7 +2609,7 @@ namespace HomeScreenCompanion
                     fetchTimer.Stop();
 
                     _listCount = aiItems.Count;
-                    if (aiItems.Count == 0) _emptySources.Add((string.IsNullOrWhiteSpace(tagConfig.AiProvider) ? "the AI" : tagConfig.AiProvider) + (fetcher.LastError != null ? $" ({fetcher.LastError})" : ""));
+                    if (aiItems.Count == 0) _emptySources.Add((string.IsNullOrWhiteSpace(tagConfig.AiProvider) ? "the AI" : AiConnection.Label(tagConfig.AiProvider)) + (fetcher.LastError != null ? $" ({fetcher.LastError})" : ""));
                     if (aiItems.Count == 0 && ListFetcher.IsFailure(fetcher.LastError)) _failedSources.Add(_emptySources[_emptySources.Count - 1]);
                     int _aiTitleMatched = 0, _aiBlacklisted = 0;
 
@@ -2656,10 +2658,10 @@ namespace HomeScreenCompanion
                             }
                         }
                     }
-                    _log.Debug($"  AI ({tagConfig.AiProvider}) returned {_listCount} items in {fetchTimer.ElapsedMilliseconds} ms  ·  {matchedLocalItems.Count} matched ({_aiTitleMatched} by title only)  ·  {gs.MissingItems.Count} not in library  ·  {_aiBlacklisted} blacklisted");
+                    _log.Debug($"  AI ({AiConnection.Label(tagConfig.AiProvider)}) returned {_listCount} items in {fetchTimer.ElapsedMilliseconds} ms  ·  {matchedLocalItems.Count} matched ({_aiTitleMatched} by title only)  ·  {gs.MissingItems.Count} not in library  ·  {_aiBlacklisted} blacklisted");
 
                     if (_preview != null)
-                        _preview.Note = $"Asked {(string.IsNullOrWhiteSpace(tagConfig.AiProvider) ? "the AI" : tagConfig.AiProvider)} once; the result may differ next time.";
+                        _preview.Note = $"Asked {(string.IsNullOrWhiteSpace(tagConfig.AiProvider) ? "the AI" : AiConnection.Label(tagConfig.AiProvider))} once; the result may differ next time.";
                     else if (tagConfig.AiRefreshIntervalDays > 0 && aiItems.Count > 0)
                     {
                         tagConfig.AiLastRunDate = DateTime.UtcNow;
@@ -6778,7 +6780,7 @@ namespace HomeScreenCompanion
                 case "LocalPlaylist":   return "Local playlist";
                 case "Manual":          return "Manual list";
                 case "NextWatch":       return "Your Next Watch";
-                case "AI":              return "AI · " + (string.IsNullOrWhiteSpace(tc.AiProvider) ? "unknown provider" : tc.AiProvider);
+                case "AI":              return "AI · " + (string.IsNullOrWhiteSpace(tc.AiProvider) ? "unknown provider" : AiConnection.Label(tc.AiProvider));
                 default:
                     var url = tc.Url ?? "";
                     if (url.IndexOf("mdblist.com", StringComparison.OrdinalIgnoreCase) >= 0) return "MDBList";

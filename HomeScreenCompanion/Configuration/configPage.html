@@ -75,6 +75,18 @@
         /* API keys are plain text fields shown masked: a type="password" field makes the browser
            offer to save a password every time the settings are saved. "Show" unmasks them. */
         .api-key-field:not(.api-key-shown) { -webkit-text-security: disc; text-security: disc; }
+        /* AI model: a list from the provider, "Custom…" shows the text field. */
+        .hsc-model-row { display: flex; align-items: center; gap: 8px; }
+        .hsc-model-sel { flex: 1; min-width: 0; position: relative; }
+        .hsc-model-row .btnAiModelsReload { min-width: 0; padding: 0 10px; margin: 0; }
+        .hsc-model-field:not(.is-custom) .hsc-model-custom { display: none; }
+        .hsc-model-custom { margin-top: 10px; }
+        .hsc-model-status:not(:empty) { font-size: 0.85em; margin-top: 6px; color: var(--hsc-danger-text); }
+        .hsc-model-field.is-loading .btnAiModelsReload .md-icon { animation: hsc-spin 1s linear infinite; }
+        @keyframes hsc-spin { to { transform: rotate(360deg); } }
+        .hsc-ai-conn { border: 1px solid var(--hsc-hairline); border-radius: 8px; padding: 4px 14px 14px; margin-bottom: 10px; }
+        .hsc-ai-conn .inputContainer { margin-top: 12px; margin-bottom: 0; }
+        .hsc-ai-conn-foot { display: flex; justify-content: flex-end; margin-top: 12px; }
         /* Collapsible rows (sources, top-lists): surface-1 + hairline, no coloured border, no shadow */
         .tag-row {
             position: relative;
@@ -1540,8 +1552,11 @@
                                         Used for AI created lists via Google Gemini. Get your key at <a href="https://aistudio.google.com/app/apikey" target="_blank" class="help-link">Google AI Studio</a>.
                                     </div>
                                 </div>
-                                <div class="inputContainer" style="margin-top: 12px;">
-                                    <input is="emby-input" type="text" id="txtGeminiModel" label="Model" placeholder="gemini-2.5-flash-lite" />
+                                <div class="inputContainer hsc-model-field" data-provider="Gemini" data-key="txtGeminiApiKey" style="margin-top: 12px;">
+                                    <label class="selectLabel">Model</label>
+                                    <div class="hsc-model-row"><div class="hsc-model-sel"><select is="emby-select" class="selAiModel"></select></div><button type="button" is="emby-button" class="raised hsc-btn-ghost btnAiModelsReload" title="Reload models"><i class="md-icon">refresh</i></button></div>
+                                    <div class="hsc-model-custom"><input is="emby-input" type="text" id="txtGeminiModel" label="Model name" placeholder="gemini-2.5-flash-lite" /></div>
+                                    <div class="hsc-model-status"></div>
                                     <div class="fieldDescription">
                                         Model to use, e.g. <code>gemini-2.5-flash-lite</code> or <code>gemini-1.5-pro</code>. See current models at <a href="https://ai.google.dev/gemini-api/docs/models" target="_blank" class="help-link">ai.google.dev/gemini-api/docs/models</a>.
                                     </div>
@@ -1566,8 +1581,11 @@
                                         Used for AI created lists via ChatGPT. Get your key at <a href="https://platform.openai.com/api-keys" target="_blank" class="help-link">platform.openai.com</a>.
                                     </div>
                                 </div>
-                                <div class="inputContainer" style="margin-top: 12px;">
-                                    <input is="emby-input" type="text" id="txtOpenAiModel" label="Model" placeholder="gpt-4o-mini" />
+                                <div class="inputContainer hsc-model-field" data-provider="OpenAI" data-key="txtOpenAiApiKey" style="margin-top: 12px;">
+                                    <label class="selectLabel">Model</label>
+                                    <div class="hsc-model-row"><div class="hsc-model-sel"><select is="emby-select" class="selAiModel"></select></div><button type="button" is="emby-button" class="raised hsc-btn-ghost btnAiModelsReload" title="Reload models"><i class="md-icon">refresh</i></button></div>
+                                    <div class="hsc-model-custom"><input is="emby-input" type="text" id="txtOpenAiModel" label="Model name" placeholder="gpt-4o-mini" /></div>
+                                    <div class="hsc-model-status"></div>
                                     <div class="fieldDescription">
                                         Model to use, e.g. <code>gpt-4o-mini</code> or <code>gpt-4o</code>. See current models at <a href="https://platform.openai.com/docs/models" target="_blank" class="help-link">platform.openai.com/docs/models</a>.
                                     </div>
@@ -1592,8 +1610,11 @@
                                         Used for AI created lists via Anthropic Claude. Get your key at <a href="https://console.anthropic.com/settings/keys" target="_blank" class="help-link">console.anthropic.com</a>.
                                     </div>
                                 </div>
-                                <div class="inputContainer" style="margin-top: 12px;">
-                                    <input is="emby-input" type="text" id="txtClaudeModel" label="Model" placeholder="claude-haiku-4-5-20251001" />
+                                <div class="inputContainer hsc-model-field" data-provider="Claude" data-key="txtClaudeApiKey" style="margin-top: 12px;">
+                                    <label class="selectLabel">Model</label>
+                                    <div class="hsc-model-row"><div class="hsc-model-sel"><select is="emby-select" class="selAiModel"></select></div><button type="button" is="emby-button" class="raised hsc-btn-ghost btnAiModelsReload" title="Reload models"><i class="md-icon">refresh</i></button></div>
+                                    <div class="hsc-model-custom"><input is="emby-input" type="text" id="txtClaudeModel" label="Model name" placeholder="claude-haiku-4-5-20251001" /></div>
+                                    <div class="hsc-model-status"></div>
                                     <div class="fieldDescription">
                                         Model to use, e.g. <code>claude-haiku-4-5-20251001</code> or <code>claude-sonnet-4-6</code>. See current models at <a href="https://docs.anthropic.com/en/docs/about-claude/models" target="_blank" class="help-link">docs.anthropic.com/en/docs/about-claude/models</a>.
                                     </div>
@@ -1615,12 +1636,28 @@
                                         Full URL to your local Ollama instance — e.g. <code>http://localhost:11434</code> or <code>http://192.168.1.100:11434</code>. See <a href="https://ollama.com" target="_blank" class="help-link">ollama.com</a>.
                                     </div>
                                 </div>
-                                <div class="inputContainer" style="margin-top: 12px;">
-                                    <input is="emby-input" type="text" id="txtOllamaModel" label="Model" placeholder="llama3.2" />
+                                <div class="inputContainer hsc-model-field" data-provider="Ollama" data-url="txtOllamaBaseUrl" style="margin-top: 12px;">
+                                    <label class="selectLabel">Model</label>
+                                    <div class="hsc-model-row"><div class="hsc-model-sel"><select is="emby-select" class="selAiModel"></select></div><button type="button" is="emby-button" class="raised hsc-btn-ghost btnAiModelsReload" title="Reload models"><i class="md-icon">refresh</i></button></div>
+                                    <div class="hsc-model-custom"><input is="emby-input" type="text" id="txtOllamaModel" label="Model name" placeholder="llama3.2" /></div>
+                                    <div class="hsc-model-status"></div>
                                     <div class="fieldDescription">
                                         The model to use, e.g. <code>llama3.2</code>, <code>mistral</code>, <code>gemma3</code>. Must be pulled first: <code>ollama pull llama3.2</code>.
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+
+                        <!-- OpenAI-compatible (Groq, OpenRouter, LM Studio …): any number of connections -->
+                        <div class="advanced-section settings-panel" style="margin-bottom: 8px;">
+                            <div class="advanced-header settings-panel-toggle" style="padding: 10px 14px;">
+                                <i class="md-icon" style="margin-right: 8px; font-size: 1.1em; opacity: 0.65;">hub</i>
+                                <span style="font-size: 0.95em; font-weight: 600;">OpenAI-compatible</span>
+                                <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s; font-size: 1.1em; opacity: 0.65;">expand_more</i>
+                            </div>
+                            <div class="settings-panel-body" style="display:none; padding: 0 14px 14px;">
+                                <div id="aiConnList"></div>
+                                <button type="button" is="emby-button" id="btnAddAiConn" class="raised btn-neutral"><i class="md-icon" style="margin-right:5px;">add</i><span>Add connection</span></button>
                             </div>
                         </div>
 
@@ -2045,7 +2082,7 @@
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">auto_awesome</i> AI created lists</div>
-                        Describe what you want in plain language — for example <em>"Best sci-fi films from the 90s"</em> — and let <strong>Anthropic Claude</strong>, <strong>Google Gemini</strong>, <strong>OpenAI (ChatGPT)</strong> or a local <strong>Ollama</strong> model write the list. <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-more-ai').scrollIntoView({behavior:'smooth'});return false;">More about AI lists below</a>.
+                        Describe what you want in plain language — for example <em>"Best sci-fi films from the 90s"</em> — and let <strong>Anthropic Claude</strong>, <strong>Google Gemini</strong>, <strong>OpenAI (ChatGPT)</strong>, any <strong>OpenAI-compatible</strong> service or a local <strong>Ollama</strong> model write the list. <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-more-ai').scrollIntoView({behavior:'smooth'});return false;">More about AI lists below</a>.
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">recommend</i> Personal: Your Next Watch</div>
@@ -2103,7 +2140,7 @@
                     <i class="md-icon help-feat-icon">auto_awesome</i>
                     <div><strong>AI created lists</strong> — write what you want, and an AI answers with a list of titles that the plugin then looks for in your library.
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
-                            <li><strong>AI Provider</strong> — <em>Anthropic Claude</em>, <em>Google Gemini</em>, <em>OpenAI (ChatGPT)</em> or <em>Ollama (Local)</em>. Each needs its key (or for Ollama its URL) and model under <em>AI Settings</em> in the Settings tab. Ollama is experimental: local models often know less about new titles and give wrong IMDb ids more often.</li>
+                            <li><strong>AI Provider</strong> — <em>Anthropic Claude</em>, <em>Google Gemini</em>, <em>OpenAI (ChatGPT)</em>, <em>Ollama (Local)</em> or one of your <em>OpenAI-compatible</em> connections (listed by name). Each needs its key (or for Ollama its URL) and model under <em>AI Settings</em> in the Settings tab. Ollama is experimental: local models often know less about new titles and give wrong IMDb ids more often.</li>
                             <li><strong>Prompt</strong> — just say what you want, e.g. <em>"Feel-good comedies from the 80s"</em>. You don't need to ask for a format; the plugin's <em>system prompt</em> (Settings) already tells the AI how to answer.</li>
                             <li><strong>Max items</strong> — how many titles you want. The AI is asked for more (up to twice as many) since some will not be in your library; the first ones found fill the list.</li>
                             <li><strong>Matching</strong> — by the IMDb id in the AI's answer; when that id is missing or not in your library, by exact title and year.</li>
@@ -2666,6 +2703,14 @@
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">auto_awesome</i>
                     <div><strong>Anthropic Claude</strong> — API key from <a href="https://console.anthropic.com/settings/keys" target="_blank" class="help-link">console.anthropic.com</a>. Model e.g. <code>claude-haiku-4-5-20251001</code>.</div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">list</i>
+                    <div><strong>Model</strong> — the Model list of each provider is read from the provider once its key (Ollama: URL) is filled in; <span class="md-icon" style="font-size:1em;vertical-align:middle;">refresh</span> reads it again. <em>Custom…</em> takes any model name.</div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">hub</i>
+                    <div><strong>OpenAI-compatible</strong> — any service with OpenAI's API, such as Groq, OpenRouter, Mistral, DeepSeek, Together, xAI, LM Studio or vLLM. <strong>Add connection</strong> once per service: a <strong>Name</strong> (shown in a source's AI Provider list), the <strong>Base URL</strong> (e.g. <code>https://api.groq.com/openai/v1</code> or <code>http://192.168.1.100:1234/v1</code>), the <strong>API key</strong> (none for most local servers) and the <strong>Model</strong>. A source whose connection was removed shows <em>Needs a provider</em>.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">computer</i>

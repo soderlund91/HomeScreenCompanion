@@ -554,6 +554,7 @@ namespace HomeScreenCompanion
                 _secrets = typeof(PluginConfiguration).GetProperties()
                     .Where(p => p.PropertyType == typeof(string) && Regex.IsMatch(p.Name, "(Key|Token|Secret|Password|ClientId)$"))
                     .Select(p => (p.GetValue(config) as string ?? "").Trim())
+                    .Concat((config.AiConnections ?? new List<AiConnection>()).Select(c => (c?.ApiKey ?? "").Trim()))
                     .Where(v => v.Length >= 4)
                     .Distinct().OrderByDescending(v => v.Length).ToList();
 
