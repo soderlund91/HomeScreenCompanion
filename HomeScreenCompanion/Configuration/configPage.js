@@ -36,7 +36,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // A fingerprint of the server's settings without what runs write on their own (home-section
     // ids, playlist mappings, art-replaced flags, the AI's last-run date, the Next Watch migration
     // flag, top-list exclusions in a home section's settings, the top-lists Save re-reads anyway,
-    // Copy & Sync's record of whom it added, which the server always keeps) and without secrets.
+    // Copy & Sync's record of whom it added, which the server always keeps, and a source's user
+    // lists, which Save merges, see mergeUserIds) and without secrets.
     // Taken when the page loads; Save compares it with the server's current
     // one, so a change made elsewhere (another tab, another admin, an import) is never overwritten,
     // while a run that finished meanwhile does not count.
@@ -58,6 +59,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             delete x.CollectionThumbReplaced; delete x.CollectionBannerReplaced;
             delete x.AiLastRunDate; delete x.NextWatchUsersMigrated;
             delete x.LastRunCount; delete x.LastRunLimit;
+            delete x.HomeSectionUserIds; delete x.PlaylistUserIds;
             try {
                 var s = JSON.parse(x.HomeSectionSettings || '{}') || {};
                 delete s._queryExcludeViewIds; delete s.ExcludedFolders;
@@ -68,6 +70,27 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             return x;
         });
         return JSON.stringify(c);
+    }
+    // Each source's user lists as the server has them (by the card key), the base mergeUserIds
+    // compares with.
+    function sourceUserLists(config) {
+        var out = {};
+        (config.Tags || []).forEach(function (t) {
+            var key = t.Name ? t.Name + '\x1F' + t.Tag : t.Tag;
+            if (!out[key]) out[key] = { Home: (t.HomeSectionUserIds || []).slice(), Playlist: (t.PlaylistUserIds || []).slice() };
+        });
+        return out;
+    }
+    // A user list as saved: this page's, plus who was put on it on the server since the page loaded,
+    // minus who was taken off there (Copy & Sync, another tab). A user changed both here and there
+    // follows this page.
+    function mergeUserIds(page, loaded, server) {
+        function norm(u) { return String(u || '').replace(/-/g, '').toLowerCase(); }
+        function has(list, u) { return (list || []).some(function (x) { return norm(x) === norm(u); }); }
+        // Added here, or loaded and still on the server.
+        var out = (page || []).filter(function (u) { return !has(loaded, u) || has(server, u); });
+        (server || []).forEach(function (u) { if (!has(loaded, u) && !has(out, u)) out.push(u); });
+        return out;
     }
     // After this page saved part of the settings itself (saved filters, Clean up): the server's new
     // state is the page's own, so move the fingerprint along — only if nothing else had changed.
@@ -6849,14 +6872,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             return config.HomeSyncProfiles.map(function (p) {
                 return {
                     Active: p.Active !== false, SourceUserId: p.SourceUserId || '', TargetUserIds: (p.TargetUserIds || []).slice().sort(), LibraryOrder: !!p.LibraryOrder,
-                    Mode: p.Mode === 'selected' ? 'selected' : 'all', KeepOwnRows: p.KeepOwnRows !== false, SelectedRows: (p.SelectedRows || []).slice().sort()
+                    Mode: p.Mode === 'selected' ? 'selected' : 'all', KeepOwnRows: p.KeepOwnRows !== false, AddToSources: !!p.AddToSources, SelectedRows: (p.SelectedRows || []).slice().sort()
                 };
             });
         }
         if (!config.HomeSyncSourceUserId) return [];
         return [{
             Active: true, SourceUserId: config.HomeSyncSourceUserId, TargetUserIds: (config.HomeSyncTargetUserIds || []).slice().sort(), LibraryOrder: !!config.HomeSyncLibraryOrder,
-            Mode: 'all', KeepOwnRows: true, SelectedRows: []
+            Mode: 'all', KeepOwnRows: true, AddToSources: false, SelectedRows: []
         }];
     }
 
@@ -6870,6 +6893,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 LibraryOrder: !!(el.querySelector('.chkHscProfileLibraryOrder') || {}).checked,
                 Mode: (el.querySelector('.selHscProfileMode') || {}).value === 'selected' ? 'selected' : 'all',
                 KeepOwnRows: !!(el.querySelector('.chkHscProfileKeepOwn') || {}).checked,
+                AddToSources: !!(el.querySelector('.chkHscProfileAddToSources') || {}).checked,
                 SelectedRows: hscSelectedRows(el)
             };
         });
@@ -6973,7 +6997,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '<div class="advanced-body settings-panel-body" style="display:' + (open ? 'block' : 'none') + '; padding-top:4px;">',
             '<div class="checkboxContainer checkboxContainer-withDescription">',
             '<label><input is="emby-checkbox" type="checkbox" class="chkHscProfileActive"' + (p.Active !== false ? ' checked' : '') + ' /><span>Sync this profile</span></label>',
-            '<div class="fieldDescription">Untick to pause this profile: its users keep the home screen they have.</div>',
+            '<div class="fieldDescription">Untick to pause this profile: its users keep the home screen they have, and stay on the sources and top-lists Copy & Sync added them to.</div>',
             '</div>',
             '<div class="inputContainer" style="margin-top:16px;">',
             '<select is="emby-select" class="selHscProfileSource" label="Source User">',
@@ -6997,17 +7021,21 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '<label><input is="emby-checkbox" type="checkbox" class="chkHscProfileKeepOwn"' + (p.KeepOwnRows !== false ? ' checked' : '') + ' /><span>Keep each user\'s own rows</span></label>',
             '</div>',
             '<div class="hsc-callout" style="margin-top:4px;"><i class="md-icon">info</i><span>',
-            'Each user\'s home screen is replaced by the source user\'s, and the user is added to the sources and top-lists whose rows they get.<br>',
+            'Each user\'s home screen is replaced by the source user\'s.<br>',
             '<strong>On:</strong> rows from sources and top-lists the user is selected on, that the source user doesn\'t have, stay where they are.<br>',
-            '<strong>Off:</strong> an exact copy. Everything else is removed, and the user is also taken off those sources and top-lists.',
+            '<strong>Off:</strong> an exact copy. Everything else is removed. With "Also add users to the sources and top-lists" on, the user is also taken off those sources and top-lists; without it, rows from their own sources come back with the next full sync.',
             '</span></div>',
             '</div>',
             '<div class="hsc-mode-selected"' + (p.Mode === 'selected' ? '' : ' style="display:none;"') + '>',
             '<div class="hsc-callout" style="margin-bottom:8px;"><i class="md-icon">info</i><span>',
             'Only the ticked rows are copied: updated where a user already has them, else added at the same place as on the source user\'s home screen. Each user\'s other rows stay.<br>',
-            'A row from a source or top-list also adds the user to it. Unticking it later removes the row and takes the user off again, unless you added them yourself.',
+            'Unticking a row later removes it again.',
             '</span></div>',
             '<div class="hsc-user-list hsc-profile-row-list"></div>',
+            '</div>',
+            '<div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:16px;">',
+            '<label><input is="emby-checkbox" type="checkbox" class="chkHscProfileAddToSources"' + (p.AddToSources ? ' checked' : '') + ' /><span>Also add users to the sources and top-lists of copied rows</span></label>',
+            '<div class="fieldDescription">Each user is added to the source or top-list of every row they get, so the full sync keeps that row updated for them and makes their own playlist rows (such as Your Next Watch). They show up in its user list. Copy & Sync takes them off again when the row is no longer copied or the user leaves the profile, and the row stays as a plain copy (a personal playlist row goes). Users you added yourself stay. Off: the rows are only copied, and a top-list row only goes to the list\'s own users, as before 4.4.3.</div>',
             '</div>',
             '<div class="hsc-eyebrow" style="margin:16px 0 8px;">Copy to</div>',
             (targetRows ? userListSelectLinksHtml() : ''),
@@ -7028,7 +7056,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '<h3 class="hsc-section-title">Configuration</h3>',
             '<div class="checkboxContainer checkboxContainer-withDescription">',
             '<label><input is="emby-checkbox" type="checkbox" id="chkHscEnabled"' + (config.HomeSyncEnabled ? ' checked' : '') + ' /><span>Enable Home Screen sync</span></label>',
-            '<div class="fieldDescription">When enabled, each profile copies its source user\'s home screen (everything, or the rows you select) to the users it lists. When disabled, the task always skips — even if triggered manually.</div>',
+            '<div class="fieldDescription">When enabled, each profile copies its source user\'s home screen (everything, or the rows you select) to the users it lists. When disabled, nothing changes, even if the task is triggered manually: users keep their home screens and stay on the sources and top-lists Copy & Sync added them to. Delete a profile to take its users off those again.</div>',
             '</div>',
             '</div>',
             '<div id="hscProfilesWrap" class="hsc-card" style="display:' + syncDisplay + '">',
@@ -7105,6 +7133,21 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         if (empty) empty.style.display = els.length ? 'none' : 'block';
     }
 
+    // A profile set to an exact copy (Everything, own rows not kept) that also changes the lists.
+    function hscProfileMirrors(el) {
+        return (el.querySelector('.selHscProfileMode') || {}).value !== 'selected'
+            && !(el.querySelector('.chkHscProfileKeepOwn') || {}).checked
+            && !!(el.querySelector('.chkHscProfileAddToSources') || {}).checked;
+    }
+
+    function confirmHscMirror(el) {
+        var n = el.querySelectorAll('.hsc-target-chk:checked').length;
+        return confirm('Exact copy with "Also add users to the sources and top-lists" on takes '
+            + (n === 1 ? 'this user' : 'these ' + n + ' users')
+            + ' off every source and top-list the source user isn\'t on, also those you selected them on yourself. '
+            + 'Turning it off again later does not put them back. Continue?');
+    }
+
     function loadHscUsers(view) {
         var container = view.querySelector('#hscContainer');
         if (!container) return;
@@ -7126,7 +7169,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 container.querySelector('.btnAddHscProfile').addEventListener('click', function () {
                     var list = container.querySelector('.hsc-profile-list');
-                    list.insertAdjacentHTML('beforeend', hscProfileHtml({ Active: true, SourceUserId: '', TargetUserIds: [], LibraryOrder: false, Mode: 'all', KeepOwnRows: true, SelectedRows: [] }, container._hscUsers || [], true));
+                    list.insertAdjacentHTML('beforeend', hscProfileHtml({ Active: true, SourceUserId: '', TargetUserIds: [], LibraryOrder: false, Mode: 'all', KeepOwnRows: true, AddToSources: false, SelectedRows: [] }, container._hscUsers || [], true));
                     wireHscProfile(list.lastElementChild);
                     refreshHscProfiles(container);
                     setTimeout(checkFormState, 0);
@@ -7145,12 +7188,24 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         var del = e.target.closest('.btnRemoveHscProfile');
                         if (!del) return;
                         e.stopPropagation();
-                        del.closest('.hsc-profile').remove();
+                        var gone = del.closest('.hsc-profile');
+                        var src = (gone.querySelector('.hsc-profile-source') || {}).textContent || 'this user';
+                        var n = gone.querySelectorAll('.hsc-target-chk:checked').length;
+                        if (!confirm('Delete the profile that copies from ' + src + ' to ' + n + ' user' + (n === 1 ? '' : 's') + '? '
+                            + 'After saving, they are taken off the sources and top-lists Copy & Sync added them to. Their home screens stay as they are, except a personal playlist row.')) return;
+                        gone.remove();
                         refreshHscProfiles(container);
                         setTimeout(checkFormState, 0);
                     },
                     change: function (e) {
-                        if (e.target.closest('.hsc-profile')) refreshHscProfiles(container);
+                        var profile = e.target.closest('.hsc-profile');
+                        // An exact copy that changes the lists cannot be undone: asked first.
+                        if (profile && e.target.matches('.chkHscProfileKeepOwn, .chkHscProfileAddToSources, .selHscProfileMode')
+                            && hscProfileMirrors(profile) && !confirmHscMirror(profile)) {
+                            if (e.target.matches('.selHscProfileMode')) e.target.value = 'selected';
+                            else e.target.checked = !e.target.checked;
+                        }
+                        if (profile) refreshHscProfiles(container);
                         setTimeout(checkFormState, 0);
                     },
                     input: function () { setTimeout(checkFormState, 0); }
@@ -12512,7 +12567,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 current = getUiConfig(view, true);
                 dirty = JSON.stringify(current) !== originalConfigState;
             } catch (e) { }
-            writeLeaveState(dirty ? { draft: stripSecrets(current), serverStamp: view._hscServerStamp || '' } : null);
+            writeLeaveState(dirty ? { draft: stripSecrets(current), serverStamp: view._hscServerStamp || '', serverUsers: view._hscLoadedUsers || null } : null);
         });
 
         // Save submits this copy's own form. (A form="…" attribute would submit the first form with
@@ -12627,6 +12682,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 configObj.Tags.forEach(function(t) {
                     var key = t.Name ? t.Name + '\x1F' + t.Tag : t.Tag;
                     var existing = currentGrouped[key];
+                    // Users put on or taken off on the server since the page loaded (Copy & Sync,
+                    // another tab) are kept, as are the user changes made here.
+                    var loadedUsers = (view._hscLoadedUsers || {})[key];
+                    if (existing && loadedUsers) {
+                        t.HomeSectionUserIds = mergeUserIds(t.HomeSectionUserIds, loadedUsers.Home, existing.HomeSectionUserIds);
+                        t.PlaylistUserIds = mergeUserIds(t.PlaylistUserIds, loadedUsers.Playlist, existing.PlaylistUserIds);
+                    }
                     if (existing && existing.HomeSectionTracked && existing.HomeSectionTracked.length > 0
                         && (!t.HomeSectionTracked || t.HomeSectionTracked.length === 0)) {
                         t.HomeSectionTracked = existing.HomeSectionTracked;
@@ -12728,7 +12790,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 writeLeaveState(null);
                 hideDraftBar();
                 // The server now holds what was just saved: that is the new "as fetched" state.
-                window.ApiClient.getPluginConfiguration(pluginId).then(function (c) { view._hscServerStamp = serverStamp(c); }).catch(function () { });
+                window.ApiClient.getPluginConfiguration(pluginId).then(function (c) { view._hscServerStamp = serverStamp(c); view._hscLoadedUsers = sourceUserLists(c); }).catch(function () { });
 
                 // Apply home section settings immediately for existing tracked sections (fire-and-forget)
                 configObj.Tags.forEach(function(tc) {
@@ -12868,6 +12930,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         originalConfigState = null;
                     }
                     view._hscServerStamp = fetchedStamp;
+                    view._hscLoadedUsers = sourceUserLists(config);
                     var restored = false, serverChanged = false;
                     if (leave && leave.draft) {
                         // The draft holds no keys: a connection still on the server gets its key back.
@@ -12880,6 +12943,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         serverChanged = !!leave.serverStamp && leave.serverStamp !== fetchedStamp;
                         // Keep the stamp the draft was based on, so the warning stays until Save/Discard.
                         if (leave.serverStamp) view._hscServerStamp = leave.serverStamp;
+                        if (leave.serverUsers) view._hscLoadedUsers = leave.serverUsers;
                     }
                     view._hscLoading = false;
                     replayLoadEdits(view);

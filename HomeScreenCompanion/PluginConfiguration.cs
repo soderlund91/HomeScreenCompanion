@@ -110,6 +110,12 @@ namespace HomeScreenCompanion
         public string Mode { get; set; } = ModeAll;
         public bool KeepOwnRows { get; set; } = true;
         public List<string> SelectedRows { get; set; } = new List<string>();
+        // The target is also put on the sources and top-lists of the rows it gets (remembered in
+        // HomeSyncAdditions), so the full sync keeps those rows updated and makes its own
+        // playlists, and an exact copy takes it off the lists of rows the source user does not
+        // have. Off (as before 4.4.3): nobody's lists change; the rows are only copied, top-list
+        // rows only to the list's own users.
+        public bool AddToSources { get; set; } = false;
 
         public const string ModeAll = "all";
         public const string ModeSelected = "selected";
@@ -125,6 +131,12 @@ namespace HomeScreenCompanion
         public string List { get; set; } = "";
         public string Key { get; set; } = "";
         public string UserId { get; set; } = "";
+        // The row was ticked in Copy selected (the last run of the profile): unticking it removes
+        // the row. Not for a row only left out by a switch from Copy all, which stays.
+        public bool Picked { get; set; } = false;
+        // "row": the home row Copy & Sync added (its section id), so only that row is updated or
+        // removed, never a row of the user's own with the same title. Empty in older records.
+        public string SectionId { get; set; } = "";
 
         public const string Home = "home";
         public const string Playlist = "playlist";

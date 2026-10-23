@@ -4251,6 +4251,7 @@ public class HomeScreenCompanionService : IService
             LibraryOrder = p.LibraryOrder,
             Mode = string.IsNullOrEmpty(p.Mode) ? HomeSyncProfile.ModeAll : p.Mode,
             KeepOwnRows = p.KeepOwnRows,
+            AddToSources = p.AddToSources,
             SelectedRows = (p.SelectedRows ?? new List<string>()).ToList()
         };
 

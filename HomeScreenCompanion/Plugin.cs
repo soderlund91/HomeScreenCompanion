@@ -49,7 +49,7 @@ namespace HomeScreenCompanion
             if (configuration is PluginConfiguration incoming && Configuration is PluginConfiguration current)
             {
                 incoming.HomeSyncAdditions = (current.HomeSyncAdditions ?? new List<HomeSyncAddition>())
-                    .Select(a => new HomeSyncAddition { List = a.List, Key = a.Key, UserId = a.UserId }).ToList();
+                    .Select(a => new HomeSyncAddition { List = a.List, Key = a.Key, UserId = a.UserId, Picked = a.Picked, SectionId = a.SectionId }).ToList();
                 HomeSectionSyncTask.KeepKeysOfRenamedSources(current, incoming);
             }
             base.UpdateConfiguration(configuration);
