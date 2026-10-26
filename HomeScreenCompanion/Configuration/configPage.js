@@ -35,8 +35,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // ---- Save conflict check ----
     // A fingerprint of the server's settings without what runs write on their own (home-section
     // ids, playlist mappings, art-replaced flags, the AI's last-run date, the Next Watch migration
-    // flag, top-list exclusions in a home section's settings, the top-lists Save re-reads anyway)
-    // and without secrets. Taken when the page loads; Save compares it with the server's current
+    // flag, top-list exclusions in a home section's settings, the top-lists Save re-reads anyway,
+    // Copy & Sync's record of whom it added, which the server always keeps, and a source's user
+    // lists, which Save merges, see mergeUserIds) and without secrets.
+    // Taken when the page loads; Save compares it with the server's current
     // one, so a change made elsewhere (another tab, another admin, an import) is never overwritten,
     // while a run that finished meanwhile does not count.
     function hscServerStamp(config) {
@@ -49,6 +51,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }
         var c = strip(config || {});
         delete c.TopLists;
+        delete c.HomeSyncAdditions;
         c.Tags = (c.Tags || []).map(function (t) {
             var x = Object.assign({}, t);
             delete x.HomeSectionTracked; delete x.PlaylistMappings;
@@ -56,6 +59,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             delete x.CollectionThumbReplaced; delete x.CollectionBannerReplaced;
             delete x.AiLastRunDate; delete x.NextWatchUsersMigrated;
             delete x.LastRunCount; delete x.LastRunLimit;
+            delete x.HomeSectionUserIds; delete x.PlaylistUserIds;
             try {
                 var s = JSON.parse(x.HomeSectionSettings || '{}') || {};
                 delete s._queryExcludeViewIds; delete s.ExcludedFolders;
@@ -66,6 +70,27 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             return x;
         });
         return JSON.stringify(c);
+    }
+    // Each source's user lists as the server has them (by the card key), the base mergeUserIds
+    // compares with.
+    function sourceUserLists(config) {
+        var out = {};
+        (config.Tags || []).forEach(function (t) {
+            var key = t.Name ? t.Name + '\x1F' + t.Tag : t.Tag;
+            if (!out[key]) out[key] = { Home: (t.HomeSectionUserIds || []).slice(), Playlist: (t.PlaylistUserIds || []).slice() };
+        });
+        return out;
+    }
+    // A user list as saved: this page's, plus who was put on it on the server since the page loaded,
+    // minus who was taken off there (Copy & Sync, another tab). A user changed both here and there
+    // follows this page.
+    function mergeUserIds(page, loaded, server) {
+        function norm(u) { return String(u || '').replace(/-/g, '').toLowerCase(); }
+        function has(list, u) { return (list || []).some(function (x) { return norm(x) === norm(u); }); }
+        // Added here, or loaded and still on the server.
+        var out = (page || []).filter(function (u) { return !has(loaded, u) || has(server, u); });
+        (server || []).forEach(function (u) { if (!has(loaded, u) && !has(out, u)) out.push(u); });
+        return out;
     }
     // After this page saved part of the settings itself (saved filters, Clean up): the server's new
     // state is the page's own, so move the fingerprint along — only if nothing else had changed.
@@ -185,6 +210,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     var currentManageSections = [];
     var savedFilters = [];
     var _topListTagNames = new Set();
+    // Tag (lower case) → the server's top-list content type ('Movies' / 'Shows').
+    var _topListTypes = {};
+    function noteTopListTypes(lists) {
+        _topListTypes = {};
+        (lists || []).forEach(function (tl) { if (tl.TagName) _topListTypes[tl.TagName.trim().toLowerCase()] = tl.ContentType || 'Movies'; });
+    }
     // Each group's warnings / error from its last run (Status → GroupIssues), by groupIssueKey.
     var _groupIssues = {};
     var _groupIssuesSig = '';
@@ -682,6 +713,65 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 <button type="button" is="emby-button" class="raised button-submit btnTestUrl hsc-btn-secondary hsc-btn-sm" style="margin-top:12px;" title="Test Source"><span>Test</span></button>
                 <button type="button" is="emby-button" class="raised btnRemoveUrl btn-row-remove" title="Remove URL"><i class="md-icon">remove_circle_outline</i></button>
             </div>`;
+    }
+
+    // One extra tag of a source (TagConfig.ExtraTags), put on the same titles as its Tag Name.
+    function getExtraTagRowHtml(value) {
+        var val = String(value || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        return `
+            <div class="extra-tag-row" style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+                <div style="flex-grow:1;">
+                    <input is="emby-input" class="txtExtraTag" type="text" label="Extra Tag" value="${val}" />
+                </div>
+                <button type="button" is="emby-button" class="raised btnRemoveExtraTag btn-row-remove" title="Remove tag"><i class="md-icon">remove_circle_outline</i></button>
+            </div>`;
+    }
+
+    // The values of tag fields: filled in, trimmed, without repeats (case-insensitive).
+    function uniqueTagValues(inputs) {
+        var seen = {};
+        return Array.from(inputs).map(function (i) { return (i.value || '').trim(); })
+            .filter(function (v) { var k = v.toLowerCase(); if (!v || seen[k]) return false; seen[k] = 1; return true; });
+    }
+
+    // The extra tags of a source card.
+    function readExtraTags(row) {
+        return uniqueTagValues(row.querySelectorAll('.txtExtraTag'));
+    }
+
+    // "Custom tag on collection / playlist": a tag on the collection or playlists the group makes,
+    // not on their titles. kind = 'coll' or 'pl'.
+    function getOutputTagHtml(kind, enabled, value, extras) {
+        var val = String(value || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        var what = kind === 'coll' ? 'collection' : 'playlist';
+        var extraRows = (extras || []).map(function (v) { return getOutExtraTagRowHtml(v); }).join('');
+        return `
+            <div class="checkboxContainer checkboxContainer-withDescription out-tag-box" style="margin-top:12px;">
+                <label>
+                    <input is="emby-checkbox" type="checkbox" class="chkOutTag" data-kind="${kind}" ${enabled ? 'checked' : ''} />
+                    <span>Custom tag on ${what}</span>
+                </label>
+                <div class="fieldDescription">Puts a tag on the ${what}${kind === 'pl' ? 's' : ''} itself, not on the titles in ${kind === 'pl' ? 'them' : 'it'}.<br>Not sure you need it? Leave it off.</div>
+                <div class="inputContainer out-tag-field" style="margin-top:10px; display:${enabled ? 'block' : 'none'};">
+                    <input is="emby-input" type="text" class="txtOutTag" data-kind="${kind}" label="Tag on the ${what}" value="${val}" />
+                    <div class="out-extra-tag-list" style="margin-top:10px;">${extraRows}</div>
+                    <button is="emby-button" type="button" class="raised btnAddOutTag hsc-btn-dashed" style="width:100%;"><i class="md-icon" style="margin-right:5px;">add</i>Add another tag</button>
+                </div>
+            </div>`;
+    }
+
+    // An extra row of a custom collection / playlist tag (removed by the shared btnRemoveExtraTag).
+    function getOutExtraTagRowHtml(value) {
+        return getExtraTagRowHtml(value).replace('class="txtExtraTag"', 'class="txtOutExtraTag"');
+    }
+
+    // { enabled, tag, extras } of a card's custom collection / playlist tag.
+    function readOutputTag(row, kind) {
+        var chk = row.querySelector('.chkOutTag[data-kind="' + kind + '"]');
+        var txt = row.querySelector('.txtOutTag[data-kind="' + kind + '"]');
+        var box = chk ? chk.closest('.out-tag-box') : null;
+        var extras = box ? uniqueTagValues(box.querySelectorAll('.txtOutExtraTag')) : [];
+        return { enabled: !!(chk && chk.checked), tag: txt ? txt.value.trim() : '', extras: extras };
     }
 
     function getLocalRowHtml(type, selectedName, limit) {
@@ -2048,9 +2138,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var aiRecentlyWatchedUserId = (row.querySelector('.selAiWatchedUser') || {}).value || '';
         var aiRecentlyWatchedCount = parseInt((row.querySelector('.txtAiWatchedCount') || {}).value, 10) || 20;
         var aiRefreshIntervalDays = parseInt((row.querySelector('.txtAiRefreshInterval') || {}).value, 10) || 0;
+        var collTag = readOutputTag(row, 'coll'), plTag = readOutputTag(row, 'pl');
 
         return Object.assign({
-            Name: entryLabel, Tag: tagName, Active: active, Blacklist: bl, ActiveIntervals: intervals,
+            Name: entryLabel, Tag: tagName, ExtraTags: readExtraTags(row), Active: active, Blacklist: bl, ActiveIntervals: intervals,
             EnableTag: enableTag, EnableCollection: enableColl, CollectionName: collName, CollectionSortName: collSortName,
             CollectionDescription: collDesc, CollectionPosterPath: collPoster,
             CollectionPosterStyle: readCollectionArt(row).CollectionPosterStyle,
@@ -2086,6 +2177,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             CollectionTargetSeason:  !!(row.querySelector('.chkCollTargetSeason')  || {}).checked,
             CollectionTargetSeries:  !!(row.querySelector('.chkCollTargetSeries')  || {}).checked,
             EnablePlaylist:   !!(row.querySelector('.chkEnablePlaylist') || {}).checked,
+            EnableCollectionTag: collTag.enabled, CollectionTag: collTag.tag, CollectionExtraTags: collTag.extras,
+            EnablePlaylistTag: plTag.enabled, PlaylistTag: plTag.tag, PlaylistExtraTags: plTag.extras,
             PlaylistName:     (row.querySelector('.txtPlaylistName') || { value: '' }).value,
             PlaylistDescription: readPlaylistLook(row).PlaylistDescription, PlaylistPosterPath: readPlaylistLook(row).PlaylistPosterPath,
             PlaylistPosterStyle: readPlaylistLook(row).PlaylistPosterStyle, PlaylistBackgroundStyle: readPlaylistLook(row).PlaylistBackgroundStyle,
@@ -3093,11 +3186,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         <div style="margin-bottom: 15px;">
                             <label class="selectLabel">AI Provider</label>
                             <select is="emby-select" class="selAiProvider" style="width:100%;">
-                                <option value="Claude" ${(tagConfig.AiProvider || 'OpenAI') === 'Claude' ? 'selected' : ''}>Anthropic Claude</option>
-                                <option value="Gemini" ${(tagConfig.AiProvider || 'OpenAI') === 'Gemini' ? 'selected' : ''}>Google Gemini</option>
-                                <option value="Ollama" ${(tagConfig.AiProvider || 'OpenAI') === 'Ollama' ? 'selected' : ''}>Ollama (Local)</option>
-                                <option value="OpenAI" ${(tagConfig.AiProvider || 'OpenAI') === 'OpenAI' ? 'selected' : ''}>OpenAI (ChatGPT)</option>
+                                ${aiProviderOptionsHtml(tagConfig.AiProvider || 'OpenAI')}
                             </select>
+                            <div class="ai-provider-missing" style="display:${aiProviderMissing(tagConfig.AiProvider) ? 'block' : 'none'}; font-size:0.9em; color:var(--hsc-danger-text); margin-top:4px;">Needs a provider</div>
                         </div>
 
                         <div class="ollama-experimental-warning" style="display:${(tagConfig.AiProvider || 'OpenAI') === 'Ollama' ? 'flex' : 'none'}; align-items:flex-start; gap:8px; background:rgba(230,193,90,0.1); border:1px solid rgba(230,193,90,0.35); border-radius:6px; padding:10px 12px; margin-bottom:15px; font-size:0.85em; line-height:1.5;">
@@ -3236,6 +3327,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                                 <input is="emby-input" type="text" class="txtTagName" label="Tag Name" value="${tagName}" placeholder="${labelName}" />
                                 <div class="fieldDescription">Leave empty to use Display Name.</div>
                             </div>
+                            <div class="extra-tag-list">${(tagConfig.ExtraTags || []).map(getExtraTagRowHtml).join('')}</div>
+                            <button is="emby-button" type="button" class="raised btnAddExtraTag hsc-btn-dashed" style="width:100%;"><i class="md-icon" style="margin-right:5px;">add</i>Add another tag</button>
+                            <div class="fieldDescription" style="margin-bottom:12px;">Extra tags go on the same titles. The home row, top-list and tag images use the Tag Name.</div>
                             <div class="mi-tag-target-section" style="margin-top:4px;">
                                 <div style="font-size:0.85em; opacity:0.6; margin-bottom:6px; display:flex; align-items:center; gap:8px;">
                                     <span>For TV shows, choose what level to tag:</span>
@@ -3350,6 +3444,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <input is="emby-input" type="text" class="txtCollectionSortName" label="Sort Title" value="${collSortName}" />
                             <div class="fieldDescription">Optional. Used instead of the name when collections are sorted by name, e.g. "001" to show this collection first. Leave empty to sort by the collection name.</div>
                         </div>
+                        ${getOutputTagHtml('coll', tagConfig.EnableCollectionTag, tagConfig.CollectionTag, tagConfig.CollectionExtraTags)}
 
                         <div class="mi-coll-target-section" style="margin-top:10px;">
                             <div style="font-size:0.85em; opacity:0.6; margin-bottom:6px; display:flex; align-items:center; gap:8px;">
@@ -3484,6 +3579,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <input is="emby-input" type="text" class="txtPlaylistName" label="Playlist Name" value="${playlistName}" placeholder="${labelName}" />
                             <div class="fieldDescription">Leave empty to use Display Name.</div>
                         </div>
+                        ${getOutputTagHtml('pl', tagConfig.EnablePlaylistTag, tagConfig.PlaylistTag, tagConfig.PlaylistExtraTags)}
                         <div class="pl-users-box" style="margin-top:12px;">
                             <p style="margin:0 0 8px 0; font-size:0.9em; font-weight:bold; opacity:0.7;">Target Users</p>
                             <div class="playlist-user-list"><em style="opacity:0.5">Loading users...</em></div>
@@ -3564,7 +3660,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // Screen tab's, whose fields the top-list sets are hidden (tl-mode). Not for Your Next Watch.
     function buildTopListTabHtml(tc) {
         var on = !!tc.EnableTopList;
-        var shows = tc.TopListContentType === 'Shows';
+        // A list that is off starts as Auto when ticked (Movies was only the old default).
+        var content = on && (tc.TopListContentType === 'Shows' || tc.TopListContentType === 'Movies') ? tc.TopListContentType : 'Auto';
         var enc = function (v) { return encodeURIComponent(v || ''); };
         return '<div class="toplist-tab hse-nw-hide" style="margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid var(--line-color);"' +
             ' data-tl-badge="' + enc(tc.TopListBadgeStyle || 'neutral') + '"' +
@@ -3580,8 +3677,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '<div class="tl-settings" style="margin-left:20px;padding-left:15px;border-left:2px solid var(--line-color);margin-top:10px;display:' + (on ? 'block' : 'none') + ';">' +
                 '<div style="margin-bottom:12px;"><label class="selectLabel">Content</label>' +
                     '<select is="emby-select" class="selTopListContent" style="width:100%;">' +
-                        '<option value="Movies"' + (shows ? '' : ' selected') + '>Movies</option>' +
-                        '<option value="Shows"' + (shows ? ' selected' : '') + '>TV Shows</option>' +
+                        '<option value="Auto"' + (content === 'Auto' ? ' selected' : '') + '>Auto (based on the source)</option>' +
+                        '<option value="Movies"' + (content === 'Movies' ? ' selected' : '') + '>Movies</option>' +
+                        '<option value="Shows"' + (content === 'Shows' ? ' selected' : '') + '>TV Shows</option>' +
                     '</select>' +
                     '<div class="fieldDescription">Only titles of this kind are ranked. Switching it later makes the list again (a new library).</div>' +
                 '</div>' +
@@ -3606,8 +3704,18 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         try { return JSON.parse(decodeURIComponent(hseTab.dataset.hseUserids || '%5B%5D')) || []; } catch (e) { return []; }
     }
 
+    // 'Auto' (movies or TV shows by the source's titles, decided by each run), 'Movies' or 'Shows'.
     function topListContentOf(row) {
-        return (row.querySelector('.selTopListContent') || {}).value === 'Shows' ? 'Shows' : 'Movies';
+        var v = (row.querySelector('.selTopListContent') || {}).value;
+        return v === 'Shows' || v === 'Movies' ? v : 'Auto';
+    }
+
+    // The kind the list is now: as set, or for Auto what the server made it (movies until then).
+    function topListKindOf(row) {
+        var c = topListContentOf(row);
+        if (c !== 'Auto') return c;
+        var tag = ((row.querySelector('.txtTagName') || {}).value || (row.querySelector('.txtEntryLabel') || {}).value || '').trim().toLowerCase();
+        return _topListTypes[tag] === 'Shows' ? 'Shows' : 'Movies';
     }
 
     // What the top-list still needs: [tab to open ('' = none), text].
@@ -3677,7 +3785,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
 
     function topListBadgeHtml(row, values) {
-        var shows = topListContentOf(row) === 'Shows';
+        var shows = topListKindOf(row) === 'Shows';
         return buildBadgePickerHtml(values.style, values.options, values.realPoster, shows ? 'shows' : 'movies');
     }
 
@@ -3710,8 +3818,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
 
     // Switched on: Apply Tag goes off (the list is the source's titles, not the tagged ones; the
-    // tag can be switched back on). For a list the server does not have yet, Content starts as
-    // the Home Screen tab's media type when that is only shows.
+    // tag can be switched back on).
     function onTopListToggled(row) {
         var chk = row.querySelector('.chkEnableTopList');
         var tagNote = row.querySelector('.tl-tagnote');
@@ -3732,15 +3839,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             row.dataset.tlTagWasOn = '1';   // after the event: a change by hand forgets it
             if (tagNote) tagNote.style.display = 'block';
         }
-        if (row.dataset.tlSaved === '1') return;
-        var hseTab = row.querySelector('.homescreen-tab');
-        var itemTypes = '';
-        if (hseTab && hseTab.dataset.hseLoaded === '1') itemTypes = (hseTab.querySelector('.selHseItemTypes') || {}).value || '';
-        else {
-            try { itemTypes = (JSON.parse(JSON.parse(decodeURIComponent(hseTab.dataset.hseSettings || '%7B%7D')).ItemTypes || '[]') || []).join(','); } catch (e) { }
-        }
-        var sel = row.querySelector('.selTopListContent');
-        if (sel && itemTypes === 'Series' && sel.value !== 'Shows') { sel.value = 'Shows'; onTopListContentChanged(row); }
     }
 
     // The tab's fields as saved (TagConfig.EnableTopList etc.).
@@ -4066,6 +4164,20 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             updateHseSectionAvailability(row);
         });
 
+        row.querySelectorAll('.chkOutTag').forEach(function (chk) {
+            chk.addEventListener('change', function () {
+                chk.closest('.out-tag-box').querySelector('.out-tag-field').style.display = chk.checked ? 'block' : 'none';
+            });
+        });
+        row.querySelectorAll('.btnAddOutTag').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var list = btn.closest('.out-tag-box').querySelector('.out-extra-tag-list');
+                list.insertAdjacentHTML('beforeend', getOutExtraTagRowHtml(''));
+                var input = list.lastElementChild.querySelector('.txtOutExtraTag');
+                if (input) input.focus();
+            });
+        });
+
         row.querySelector('.chkOverrideWhenActive').addEventListener('change', function () {
             updateBadges(row);
         });
@@ -4096,11 +4208,19 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             selAiProv.addEventListener('change', function () {
                 var warn = row.querySelector('.ollama-experimental-warning');
                 if (warn) warn.style.display = this.value === 'Ollama' ? 'flex' : 'none';
+                updateAiProviderMissing(row);
             });
         }
 
         row.querySelector('.btnAddUrl').addEventListener('click', () => {
             row.querySelector('.url-list-container').insertAdjacentHTML('beforeend', getUrlRowHtml('', 0));
+        });
+
+        row.querySelector('.btnAddExtraTag').addEventListener('click', () => {
+            var list = row.querySelector('.extra-tag-list');
+            list.insertAdjacentHTML('beforeend', getExtraTagRowHtml(''));
+            var input = list.lastElementChild.querySelector('.txtExtraTag');
+            if (input) input.focus();
         });
 
         row.querySelector('.btnAddLocal').addEventListener('click', () => {
@@ -4141,6 +4261,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
             if (e.target.closest('.btnRemoveUrl')) {
                 e.target.closest('.url-row').remove();
+            }
+
+            if (e.target.closest('.btnRemoveExtraTag')) {
+                e.target.closest('.extra-tag-row').remove();
             }
 
             if (e.target.closest('.btnRemoveLocal')) {
@@ -4382,7 +4506,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 btnTestAi.disabled = true;
                 if (resultSpan) resultSpan.textContent = 'Testing...';
-                var aiModal = openSourceTestModal('AI source test', aiProvider + ' · ' + aiPrompt);
+                var aiModal = openSourceTestModal('AI source test', aiProviderLabel(aiProvider) + ' · ' + aiPrompt);
 
                 fetch(window.ApiClient.getUrl('HomeScreenCompanion/TestAiSource'), {
                     method: 'POST',
@@ -6005,9 +6129,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
             clearDefaultCustomName(hseSettings, hseTab);
             var hseTracked = (function() { try { return JSON.parse(decodeURIComponent((hseTab && hseTab.dataset.hseTracked) || '%5B%5D')); } catch { return []; } })();
+            var collTag = readOutputTag(row, 'coll'), plTag = readOutputTag(row, 'pl');
 
             var baseTag = {
-                Name: entryLabel, Tag: name, Active: active, Blacklist: bl, ActiveIntervals: intervals,
+                Name: entryLabel, Tag: name, ExtraTags: readExtraTags(row), Active: active, Blacklist: bl, ActiveIntervals: intervals,
                 EnableTag: enableTagChk, EnableCollection: enableColl, CollectionName: collName, CollectionSortName: collSortName, CollectionDescription: collDescription, CollectionPosterPath: collPoster, OnlyCollection: false, OverrideWhenActive: overrideWhenActive, LastModified: currentLastMod,
                 CollectionPosterStyle: readCollectionArt(row).CollectionPosterStyle,
                 CollectionBackgroundStyle: readCollectionArt(row).CollectionBackgroundStyle,
@@ -6038,6 +6163,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 HomeSectionSettings: JSON.stringify(hseSettings),
                 HomeSectionTracked: hseTracked,
                 EnablePlaylist:   !!(row.querySelector('.chkEnablePlaylist') || {}).checked,
+                EnableCollectionTag: collTag.enabled, CollectionTag: collTag.tag, CollectionExtraTags: collTag.extras,
+                EnablePlaylistTag: plTag.enabled, PlaylistTag: plTag.tag, PlaylistExtraTags: plTag.extras,
                 PlaylistName:     (row.querySelector('.txtPlaylistName') || { value: '' }).value,
                 PlaylistDescription: readPlaylistLook(row).PlaylistDescription, PlaylistPosterPath: readPlaylistLook(row).PlaylistPosterPath,
                 PlaylistPosterStyle: readPlaylistLook(row).PlaylistPosterStyle, PlaylistBackgroundStyle: readPlaylistLook(row).PlaylistBackgroundStyle,
@@ -6108,8 +6235,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         sourceRows.concat(otherRows).forEach(row => { flatTags.push.apply(flatTags, rowToFlatTags(row, forComparison)); });
 
         var hscEnabled      = view.querySelector('#chkHscEnabled');
-        var hscSource       = view.querySelector('#selHscSourceUser');
-        var hscLibraryOrder = view.querySelector('#chkHscLibraryOrder');
         var cwbEnabled      = view.querySelector('#chkCwbEnabled');
         var cwbMode         = view.querySelector('#selCwbMode');
         var cwbAllUsers     = view.querySelector('#chkCwbAllUsers');
@@ -6132,6 +6257,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             ClaudeModel: fieldOr('#txtClaudeModel', 'claude-haiku-4-5-20251001'),
             OllamaBaseUrl: fieldOr('#txtOllamaBaseUrl', 'http://localhost:11434'),
             OllamaModel: (view.querySelector('#txtOllamaModel') || {}).value || '',
+            AiConnections: readAiConnections(view),
             AiSystemPrompt: (view.querySelector('#txtAiSystemPrompt') || {}).value || '',
             ExtendedConsoleOutput: view.querySelector('#chkExtendedConsoleOutput').checked,
             LogMissingItems: view.querySelector('#chkLogMissingItems').checked,
@@ -6146,11 +6272,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             Tags: flatTags,
             SavedFilters: savedFilters,
             HomeSyncEnabled: hscEnabled ? hscEnabled.checked : (lastHscConfig.HomeSyncEnabled || false),
-            HomeSyncLibraryOrder: hscLibraryOrder ? hscLibraryOrder.checked : (lastHscConfig.HomeSyncLibraryOrder || false),
-            HomeSyncSourceUserId: hscSource ? (hscSource.value || '') : (lastHscConfig.HomeSyncSourceUserId || ''),
-            HomeSyncTargetUserIds: hscEnabled
-                ? Array.from(view.querySelectorAll('.hsc-target-chk:checked')).map(function(c) { return c.value; })
-                : (lastHscConfig.HomeSyncTargetUserIds || []),
+            HomeSyncProfiles: hscEnabled ? readHscProfiles(view) : (lastHscConfig.HomeSyncProfiles || []),
+            // Replaced by HomeSyncProfiles (see effectiveHscProfiles): cleared on save.
+            HomeSyncLibraryOrder: false, HomeSyncSourceUserId: '', HomeSyncTargetUserIds: [],
             ContinueWatchingBumpEnabled: cwbEnabled ? cwbEnabled.checked : (lastHscConfig.ContinueWatchingBumpEnabled || false),
             ContinueWatchingBumpMode: cwbMode ? (cwbMode.value || 'AllEpisodes') : (lastHscConfig.ContinueWatchingBumpMode || 'AllEpisodes'),
             ContinueWatchingBumpAllUsers: cwbAllUsers ? cwbAllUsers.checked : (lastHscConfig.ContinueWatchingBumpAllUsers || false),
@@ -6160,20 +6284,168 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         };
     }
 
+    // ---- AI: OpenAI-compatible connections and model lists ----
+    // Settings holds any number of OpenAI-compatible connections (Groq, OpenRouter, LM Studio …).
+    // A source uses one with AiProvider "Compat:<id>", so renaming it keeps the sources on it.
+    var AI_COMPAT = 'Compat:';
+    var _aiConnections = [];   // the connections as they are in Settings now, for the provider menus
+    var AI_BUILTIN_PROVIDERS = [['Claude', 'Anthropic Claude'], ['Gemini', 'Google Gemini'], ['Ollama', 'Ollama (Local)'], ['OpenAI', 'OpenAI (ChatGPT)']];
+
+    function newAiConnId() {
+        return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    }
+    function aiConnName(c) { return (c && (c.Name || '').trim()) || 'OpenAI-compatible'; }
+    function aiProviderMissing(value) {
+        if ((value || '').indexOf(AI_COMPAT) !== 0) return false;
+        var id = value.substring(AI_COMPAT.length);
+        return !_aiConnections.some(function (c) { return c.Id === id; });
+    }
+    function aiProviderLabel(value) {
+        var b = AI_BUILTIN_PROVIDERS.filter(function (p) { return p[0] === value; })[0];
+        if (b) return b[1];
+        var id = (value || '').indexOf(AI_COMPAT) === 0 ? value.substring(AI_COMPAT.length) : null;
+        var c = id && _aiConnections.filter(function (x) { return x.Id === id; })[0];
+        return c ? aiConnName(c) : (id ? 'Missing connection' : (value || ''));
+    }
+    // The AI Provider options of a source: the built-in providers, then each connection by name.
+    // A connection that was removed stays selected as "Missing connection", so a save keeps it
+    // pointing there (and the source shows it needs a provider) instead of moving it to Claude.
+    function aiProviderOptionsHtml(value) {
+        var opts = AI_BUILTIN_PROVIDERS.map(function (p) {
+            return '<option value="' + p[0] + '"' + (p[0] === value ? ' selected' : '') + '>' + p[1] + '</option>';
+        });
+        _aiConnections.slice().sort(function (a, b) { return aiConnName(a).localeCompare(aiConnName(b)); }).forEach(function (c) {
+            var v = AI_COMPAT + c.Id;
+            opts.push('<option value="' + escapeHtml(v) + '"' + (v === value ? ' selected' : '') + '>' + escapeHtml(aiConnName(c)) + '</option>');
+        });
+        if (aiProviderMissing(value))
+            opts.push('<option value="' + escapeHtml(value) + '" selected>Missing connection</option>');
+        return opts.join('');
+    }
+    function updateAiProviderMissing(row) {
+        var sel = row.querySelector('.selAiProvider'), hint = row.querySelector('.ai-provider-missing');
+        if (sel && hint) hint.style.display = aiProviderMissing(sel.value) ? 'block' : 'none';
+    }
+    function refreshAiProviderSelects(view) {
+        _aiConnections = readAiConnections(view);
+        view.querySelectorAll('.tag-row .selAiProvider').forEach(function (sel) {
+            var v = sel.value;
+            sel.innerHTML = aiProviderOptionsHtml(v);
+            sel.value = v;
+            updateAiProviderMissing(sel.closest('.tag-row'));
+        });
+    }
+
+    function aiConnCardHtml(c) {
+        var id = escapeHtml(c.Id);
+        return '<div class="hsc-ai-conn" data-id="' + id + '">' +
+            '<div class="inputContainer"><input is="emby-input" type="text" class="txtAiConnName" label="Name" placeholder="Groq" value="' + escapeHtml(c.Name || '') + '" /></div>' +
+            '<div class="inputContainer"><input is="emby-input" type="text" class="txtAiConnBaseUrl" label="Base URL" placeholder="https://api.groq.com/openai/v1" value="' + escapeHtml(c.BaseUrl || '') + '" /></div>' +
+            '<div class="inputContainer"><input is="emby-input" type="text" class="api-key-field txtAiConnApiKey" autocomplete="off" spellcheck="false" data-lpignore="true" data-1p-ignore id="txtAiConnKey_' + id + '" label="API Key" value="' + escapeHtml(c.ApiKey || '') + '" />' +
+                '<label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">' +
+                '<input type="checkbox" class="chkShowApiKey" data-target="txtAiConnKey_' + id + '" style="margin:0;" /> Show</label></div>' +
+            '<div class="inputContainer hsc-model-field" data-provider="Compat">' +
+                '<label class="selectLabel">Model</label>' +
+                '<div class="hsc-model-row"><div class="hsc-model-sel"><select is="emby-select" class="selAiModel"></select></div>' +
+                '<button type="button" is="emby-button" class="raised hsc-btn-ghost btnAiModelsReload" title="Reload models"><i class="md-icon">refresh</i></button></div>' +
+                '<div class="hsc-model-custom"><input is="emby-input" type="text" class="txtAiConnModel" label="Model name" value="' + escapeHtml(c.Model || '') + '" /></div>' +
+                '<div class="hsc-model-status"></div>' +
+            '</div>' +
+            '<div class="hsc-ai-conn-foot"><button type="button" is="emby-button" class="raised hsc-btn-danger btnRemoveAiConn"><i class="md-icon" style="font-size:1em; margin-right:4px;">delete</i><span>Remove</span></button></div>' +
+            '</div>';
+    }
+    function readAiConnections(view) {
+        return Array.from(view.querySelectorAll('#aiConnList .hsc-ai-conn')).map(function (card) {
+            function val(cls) { return ((card.querySelector(cls) || {}).value || '').trim(); }
+            return { Id: card.dataset.id, Name: val('.txtAiConnName'), BaseUrl: val('.txtAiConnBaseUrl'), ApiKey: val('.txtAiConnApiKey'), Model: val('.txtAiConnModel') };
+        });
+    }
+    function renderAiConnections(view, list) {
+        var box = view.querySelector('#aiConnList');
+        if (!box) return;
+        box.innerHTML = (list || []).filter(function (c) { return c && c.Id; }).map(aiConnCardHtml).join('');
+        _aiConnections = readAiConnections(view);
+        box.querySelectorAll('.hsc-model-field').forEach(function (f) { syncModelField(f); });
+    }
+
+    // ---- Model dropdowns ----
+    // Each Model field is a list read from the provider (HomeScreenCompanion/Ai/Models, the key
+    // stays on the server) plus "Custom…", which shows the text field. The text field holds the
+    // value that is saved; a saved model that is not in the list stays selected.
+    var AI_MODEL_CUSTOM = '__hsc_custom__';
+    function modelFieldInput(field) { return field.querySelector('.hsc-model-custom input'); }
+    function modelFieldRequest(field) {
+        var view = field.closest('#HomeScreenCompanionConfigPage') || document;
+        var card = field.closest('.hsc-ai-conn');
+        function byId(id) { return id ? ((view.querySelector('#' + id) || {}).value || '').trim() : ''; }
+        if (card) return {
+            Provider: 'Compat', ConnectionId: card.dataset.id,
+            BaseUrl: ((card.querySelector('.txtAiConnBaseUrl') || {}).value || '').trim(),
+            ApiKey: ((card.querySelector('.txtAiConnApiKey') || {}).value || '').trim()
+        };
+        return { Provider: field.dataset.provider, ConnectionId: '', BaseUrl: byId(field.dataset.url), ApiKey: byId(field.dataset.key) };
+    }
+    function modelFieldReady(req) {
+        return req.Provider === 'Compat' || req.Provider === 'Ollama' ? !!req.BaseUrl : !!req.ApiKey;
+    }
+    function syncModelField(field) {
+        var sel = field.querySelector('.selAiModel'), input = modelFieldInput(field);
+        if (!sel || !input) return;
+        var models = field._models || [], v = (input.value || '').trim();
+        var custom = field.classList.contains('is-custom');
+        var html = [];
+        if (!v && !custom) html.push('<option value=""></option>');
+        if (v && !custom && models.indexOf(v) < 0) html.push('<option value="' + escapeHtml(v) + '">' + escapeHtml(v) + '</option>');
+        models.forEach(function (m) { html.push('<option value="' + escapeHtml(m) + '">' + escapeHtml(m) + '</option>'); });
+        html.push('<option value="' + AI_MODEL_CUSTOM + '">Custom…</option>');
+        sel.innerHTML = html.join('');
+        sel.value = custom ? AI_MODEL_CUSTOM : v;
+    }
+    function loadModelField(field, force) {
+        var req = modelFieldRequest(field), status = field.querySelector('.hsc-model-status');
+        if (!modelFieldReady(req)) { field._models = []; field._sig = ''; if (status) status.textContent = ''; syncModelField(field); return; }
+        var sig = JSON.stringify(req);
+        if (!force && field._sig === sig) return;
+        field._sig = sig;
+        field.classList.add('is-loading');
+        fetch(window.ApiClient.getUrl('HomeScreenCompanion/Ai/Models'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-MediaBrowser-Token': window.ApiClient.accessToken() },
+            body: JSON.stringify(req)
+        }).then(function (r) { return r.json(); }).then(function (res) {
+            if (field._sig !== sig) return;
+            field._models = res.Success ? (res.Models || []) : [];
+            if (status) status.textContent = res.Success ? (field._models.length ? '' : (res.Message || 'No models')) : (res.Message || 'Failed');
+            syncModelField(field);
+        }).catch(function (err) {
+            if (field._sig !== sig) return;
+            field._models = [];
+            if (status) status.textContent = err && err.message ? err.message : 'Failed';
+            syncModelField(field);
+        }).finally(function () { field.classList.remove('is-loading'); });
+    }
+    function syncModelFields(view) {
+        view.querySelectorAll('.hsc-model-field').forEach(function (f) {
+            f.classList.remove('is-custom');
+            f._sig = '';
+            syncModelField(f);
+            if (f.offsetParent) loadModelField(f);
+        });
+    }
+
     // ---- What is unsaved, in words ----
     // Compares two getUiConfig(view, true) results (saved, current) and returns
     // { settings: [label], sources: [{ name, what }] } for the unsaved-changes popup.
     var _settingLabels = {
         OpenAiModel: 'OpenAI model', GeminiModel: 'Gemini model', ClaudeModel: 'Claude model',
-        OllamaBaseUrl: 'Ollama URL', OllamaModel: 'Ollama model', AiSystemPrompt: 'AI system prompt',
+        OllamaBaseUrl: 'Ollama URL', OllamaModel: 'Ollama model', AiConnections: 'OpenAI-compatible connections', AiSystemPrompt: 'AI system prompt',
         ExtendedConsoleOutput: 'Extended log', LogMissingItems: 'Log missing movies and shows',
         DryRunMode: 'Dry Run Mode', PreserveTagsOnEmptyResult: 'Preserve tags and collections on empty result',
         IgnoreMarkedAsWatched: 'Ignore titles only marked as watched',
         TopListMirrorCollections: 'Show collections on top-list items', HideTopListLibraries: 'Hide HSC libraries',
         ShowCopyPasteButtons: 'Copy & paste sources', ShowImportCollectionButton: 'Import collection',
         RankedCollectionsEnabled: 'Ranked collections', SavedFilters: 'Saved filters',
-        HomeSyncEnabled: 'Home Screen sync: on/off', HomeSyncLibraryOrder: 'Home Screen sync: library order',
-        HomeSyncSourceUserId: 'Home Screen sync: source user', HomeSyncTargetUserIds: 'Home Screen sync: target users',
+        HomeSyncEnabled: 'Home Screen sync: on/off', HomeSyncProfiles: 'Home Screen sync: profiles',
         ContinueWatchingBumpEnabled: 'Continue Watching bump: on/off', ContinueWatchingBumpMode: 'Continue Watching bump: mode',
         ContinueWatchingBumpAllUsers: 'Continue Watching bump: all users', ContinueWatchingBumpUserIds: 'Continue Watching bump: users'
     };
@@ -6501,7 +6773,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var key = t.Name ? t.Name + '\x1F' + t.Tag : t.Tag;
             if (!grouped[key]) {
                 grouped[key] = {
-                    Tag: t.Tag, Name: t.Name || '', Urls: [], LocalSources: [], Active: t.Active !== false, Blacklist: t.Blacklist, ActiveIntervals: t.ActiveIntervals,
+                    Tag: t.Tag, ExtraTags: t.ExtraTags || [], Name: t.Name || '', Urls: [], LocalSources: [], Active: t.Active !== false, Blacklist: t.Blacklist, ActiveIntervals: t.ActiveIntervals,
                     EnableTag: t.EnableTag !== false, EnableCollection: t.EnableCollection, CollectionName: t.CollectionName, CollectionSortName: t.CollectionSortName || '', CollectionDescription: t.CollectionDescription || '', CollectionPosterPath: t.CollectionPosterPath || '',
                     CollectionPosterStyle: t.CollectionPosterStyle || '', CollectionBackgroundStyle: t.CollectionBackgroundStyle || '',
                     CollectionBackgroundPath: t.CollectionBackgroundPath || '', CollectionKeepOrder: !!t.CollectionKeepOrder, CollectionImported: !!t.CollectionImported,
@@ -6533,6 +6805,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     CollectionTargetSeason:  t.CollectionTargetSeason  || false,
                     CollectionTargetSeries:  t.CollectionTargetSeries  || false,
                     EnablePlaylist:   t.EnablePlaylist   || false,
+                    EnableCollectionTag: !!t.EnableCollectionTag, CollectionTag: t.CollectionTag || '', CollectionExtraTags: t.CollectionExtraTags || [],
+                    EnablePlaylistTag: !!t.EnablePlaylistTag, PlaylistTag: t.PlaylistTag || '', PlaylistExtraTags: t.PlaylistExtraTags || [],
                     PlaylistName:     t.PlaylistName     || '',
                     PlaylistDescription: t.PlaylistDescription || '', PlaylistPosterPath: t.PlaylistPosterPath || '',
                     PlaylistPosterStyle: t.PlaylistPosterStyle || '', PlaylistBackgroundStyle: t.PlaylistBackgroundStyle || '',
@@ -6542,7 +6816,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     PlaylistMappings: t.PlaylistMappings || [],
                     NextWatchUsersMigrated: !!t.NextWatchUsersMigrated,
                     NextWatchSeedDays: t.NextWatchSeedDays > 0 ? t.NextWatchSeedDays : 90, NextWatchUseTaste: t.NextWatchUseTaste !== false,
-                    EnableTopList: !!t.EnableTopList, TopListContentType: t.TopListContentType === 'Shows' ? 'Shows' : 'Movies',
+                    EnableTopList: !!t.EnableTopList, TopListContentType: (t.TopListContentType === 'Shows' || t.TopListContentType === 'Movies') ? t.TopListContentType : 'Auto',
                     TopListMaxItems: t.TopListMaxItems || 0, TopListBadgeStyle: t.TopListBadgeStyle || 'neutral',
                     TopListBadgeOptions: t.TopListBadgeOptions || '', TopListRealPoster: t.TopListRealPoster || '',
                     LastRuns: [],
@@ -6591,75 +6865,287 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         });
     }
 
-    function renderHscTab(container, config, users) {
-        var sourceOptions = users.map(function (u) {
-            return '<option value="' + u.Id + '"' + (config.HomeSyncSourceUserId === u.Id ? ' selected' : '') + '>' + escapeHtml(u.Name + userRatingSuffix(u)) + '</option>';
-        }).join('');
+    // Copy & Sync profiles as the page edits them: HomeSyncProfiles, or the old single source
+    // user (HomeSyncSourceUserId …) as one profile. Saving writes profiles and clears the old fields.
+    function effectiveHscProfiles(config) {
+        if ((config.HomeSyncProfiles || []).length) {
+            return config.HomeSyncProfiles.map(function (p) {
+                return {
+                    Active: p.Active !== false, SourceUserId: p.SourceUserId || '', TargetUserIds: (p.TargetUserIds || []).slice().sort(), LibraryOrder: !!p.LibraryOrder,
+                    Mode: p.Mode === 'selected' ? 'selected' : 'all', KeepOwnRows: p.KeepOwnRows !== false, AddToSources: !!p.AddToSources, SelectedRows: (p.SelectedRows || []).slice().sort()
+                };
+            });
+        }
+        if (!config.HomeSyncSourceUserId) return [];
+        return [{
+            Active: true, SourceUserId: config.HomeSyncSourceUserId, TargetUserIds: (config.HomeSyncTargetUserIds || []).slice().sort(), LibraryOrder: !!config.HomeSyncLibraryOrder,
+            Mode: 'all', KeepOwnRows: true, AddToSources: false, SelectedRows: []
+        }];
+    }
 
+    // The profiles in the Copy & Sync tab, in page order.
+    function readHscProfiles(view) {
+        return Array.from(view.querySelectorAll('#hscContainer .hsc-profile')).map(function (el) {
+            return {
+                Active: !!(el.querySelector('.chkHscProfileActive') || {}).checked,
+                SourceUserId: (el.querySelector('.selHscProfileSource') || {}).value || '',
+                TargetUserIds: Array.from(el.querySelectorAll('.hsc-target-chk:checked')).map(function (c) { return c.value; }).sort(),  // sorted: the dirty check compares with effectiveHscProfiles
+                LibraryOrder: !!(el.querySelector('.chkHscProfileLibraryOrder') || {}).checked,
+                Mode: (el.querySelector('.selHscProfileMode') || {}).value === 'selected' ? 'selected' : 'all',
+                KeepOwnRows: !!(el.querySelector('.chkHscProfileKeepOwn') || {}).checked,
+                AddToSources: !!(el.querySelector('.chkHscProfileAddToSources') || {}).checked,
+                SelectedRows: hscSelectedRows(el)
+            };
+        });
+    }
+
+    // The rows a profile copies with Copy selected (sorted, like effectiveHscProfiles): the ticked
+    // boxes once the source user's rows are listed, else what was saved.
+    function hscSelectedRows(el) {
+        var list = el.querySelector('.hsc-profile-row-list');
+        if (!list || !list.dataset.source) return (el._hscSavedRows || []).slice().sort();
+        return Array.from(list.querySelectorAll('.hsc-row-chk:checked')).map(function (c) { return c.value; }).sort();
+    }
+
+    // Copy selected: the source user's home rows to tick (GET Hsc/SourceRows). Rows ticked before
+    // that are not on that home screen now stay listed (and ticked), so a save keeps them.
+    function loadHscProfileRows(el, users) {
+        var list = el.querySelector('.hsc-profile-row-list');
+        var source = (el.querySelector('.selHscProfileSource') || {}).value || '';
+        if (!list || list.dataset.loading === source) return;
+        var keep = hscSelectedRows(el);
+        el._hscSavedRows = keep;
+        delete list.dataset.source;
+        if (!source) {
+            list.innerHTML = '<p class="textMuted" style="font-size:0.85em;">Select a source user first.</p>';
+            return;
+        }
+        list.dataset.loading = source;
+        list.innerHTML = '<p class="textMuted" style="font-size:0.85em;">Loading rows…</p>';
+        var sourceUser = (users || []).filter(function (u) { return u.Id === source; })[0];
+        var sourceName = sourceUser ? sourceUser.Name : 'the source user';
+        window.ApiClient.getJSON(window.ApiClient.getUrl('HomeScreenCompanion/Hsc/SourceRows', { UserId: source }))
+            .then(function (rows) { return rows || []; }, function () { return null; })
+            .then(function (rows) {
+                if (list.dataset.loading !== source) return;   // the source user was changed meanwhile
+                delete list.dataset.loading;
+                if (rows === null) {
+                    list.innerHTML = '<p class="textMuted" style="font-size:0.85em;">Could not load the rows of ' + escapeHtml(sourceName) + '.</p>';
+                    return;
+                }
+                var kinds = { source: 'Source', playlist: 'Playlist', toplist: 'Top-list' };
+                function rowHtml(key, title, kind, missing) {
+                    var chip = kinds[kind] ? '<span style="margin-left:8px;font-size:0.75em;padding:1px 8px;border-radius:10px;border:1px solid var(--line-color);color:var(--theme-text-secondary);">' + kinds[kind] + '</span>' : '';
+                    var note = missing ? '<span style="margin-left:auto;font-size:0.8em;color:var(--theme-text-secondary);">Not on ' + escapeHtml(sourceName) + '\'s home screen</span>' : '';
+                    return '<div class="hsc-user-row"' + (missing ? ' style="opacity:0.6;"' : '') + '><label style="display:flex;align-items:center;gap:10px;cursor:pointer;width:100%;">' +
+                        '<input is="emby-checkbox" type="checkbox" class="hsc-row-chk" value="' + escapeHtml(key) + '"' + (keep.indexOf(key) >= 0 ? ' checked' : '') + ' />' +
+                        '<span>' + escapeHtml(title) + chip + '</span>' + note + '</label></div>';
+                }
+                var keys = rows.map(function (r) { return r.Key; });
+                var missing = keep.filter(function (k) { return keys.indexOf(k) < 0; });
+                list.dataset.source = source;
+                list.innerHTML = rows.length || missing.length
+                    ? buildSelectAllRowHtml('hsc-user-row') +
+                      rows.map(function (r) { return rowHtml(r.Key, r.Title, r.Kind, false); }).join('') +
+                      missing.map(function (k) { return rowHtml(k, hscRowKeyLabel(k), '', true); }).join('')
+                    : '<p class="textMuted" style="font-size:0.85em;">' + escapeHtml(sourceName) + ' has no home screen rows.</p>';
+                list._syncAll = wireSelectAll(list, '.hsc-row-chk');
+                var container = el.closest('#hscContainer');
+                if (container) refreshHscProfiles(container);
+                setTimeout(checkFormState, 0);
+            });
+    }
+
+    // A saved row key the source user does not have now, as a readable name.
+    function hscRowKeyLabel(key) {
+        var k = key.replace(/^(src|tl|row):/, '');
+        if (key.indexOf('src:') === 0) {
+            // "src:<name>/<tag>", each URI-escaped (HomeSectionSyncTask.SourceKey).
+            var parts = k.split('/').map(function (x) { try { return decodeURIComponent(x); } catch (e) { return x; } });
+            return parts[0] || parts[1] || k;
+        }
+        if (k.indexOf('name:') === 0) return k.substring(5);
+        if (k.indexOf('type:') === 0) return k.substring(5).split('|')[0] + ' row';
+        return k;
+    }
+
+    // One profile: its header names the source user and who it copies to; the body holds its settings.
+    function hscProfileHtml(p, users, open) {
+        var sourceOptions = users.map(function (u) {
+            return '<option value="' + u.Id + '"' + (p.SourceUserId === u.Id ? ' selected' : '') + '>' + escapeHtml(u.Name + userRatingSuffix(u)) + '</option>';
+        }).join('');
         var targetRows = users.map(function (u) {
-            var checked = (config.HomeSyncTargetUserIds || []).indexOf(u.Id) >= 0 ? ' checked' : '';
+            var checked = (p.TargetUserIds || []).indexOf(u.Id) >= 0 ? ' checked' : '';
             return '<div class="hsc-user-row"><label style="display:flex;align-items:center;gap:10px;cursor:pointer;width:100%;">' +
                 '<input is="emby-checkbox" type="checkbox" class="hsc-target-chk" value="' + u.Id + '" data-restricted="' + (isUserRestricted(u) ? '1' : '0') + '"' + checked + ' />' +
                 '<span>' + escapeHtml(u.Name) + userRatingChipHtml(u) + '</span>' +
+                '<span class="hsc-target-note" style="margin-left:auto;font-size:0.8em;color:var(--theme-text-secondary);"></span>' +
                 '</label></div>';
         }).join('');
+        return [
+            '<div class="advanced-section settings-panel hsc-profile">',
+            '<div class="advanced-header settings-panel-toggle">',
+            '<i class="md-icon hsc-panel-icon">person</i>',
+            '<div style="min-width:0; flex:1;">',
+            '<div class="hsc-title hsc-profile-source"></div>',
+            '<div class="hsc-profile-targets" style="font-size:0.85em; color:var(--theme-text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>',
+            '</div>',
+            '<span class="hsc-profile-off" style="display:none; margin-left:8px; font-size:0.75em; padding:1px 8px; border-radius:10px; border:1px solid var(--line-color); color:var(--theme-text-secondary);">Off</span>',
+            '<button type="button" is="emby-button" class="raised btnRemoveHscProfile btn-row-remove" title="Remove profile" style="margin:0 0 0 8px;"><i class="md-icon">delete</i></button>',
+            '<i class="md-icon settings-panel-chevron" style="margin-left:4px; transition:transform 0.2s;' + (open ? ' transform:rotate(180deg);' : '') + '">expand_more</i>',
+            '</div>',
+            '<div class="advanced-body settings-panel-body" style="display:' + (open ? 'block' : 'none') + '; padding-top:4px;">',
+            '<div class="checkboxContainer checkboxContainer-withDescription">',
+            '<label><input is="emby-checkbox" type="checkbox" class="chkHscProfileActive"' + (p.Active !== false ? ' checked' : '') + ' /><span>Sync this profile</span></label>',
+            '<div class="fieldDescription">Untick to pause this profile: its users keep the home screen they have, and stay on the sources and top-lists Copy & Sync added them to.</div>',
+            '</div>',
+            '<div class="inputContainer" style="margin-top:16px;">',
+            '<select is="emby-select" class="selHscProfileSource" label="Source User">',
+            '<option value="">— Select source user —</option>',
+            sourceOptions,
+            '</select>',
+            '<div class="fieldDescription">Home screen sections are copied FROM this user to the users selected below.</div>',
+            '</div>',
+            '<div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:8px;">',
+            '<label><input is="emby-checkbox" type="checkbox" class="chkHscProfileLibraryOrder"' + (p.LibraryOrder ? ' checked' : '') + ' /><span>Also copy library order</span></label>',
+            '<div class="fieldDescription">Also copies the order of media libraries in the navigation sidebar.</div>',
+            '</div>',
+            '<div class="inputContainer" style="margin-top:16px;">',
+            '<select is="emby-select" class="selHscProfileMode" label="What to copy">',
+            '<option value="all"' + (p.Mode !== 'selected' ? ' selected' : '') + '>Everything (replaces the home screen)</option>',
+            '<option value="selected"' + (p.Mode === 'selected' ? ' selected' : '') + '>Selected rows only</option>',
+            '</select>',
+            '</div>',
+            '<div class="hsc-mode-all"' + (p.Mode === 'selected' ? ' style="display:none;"' : '') + '>',
+            '<div class="checkboxContainer checkboxContainer-withDescription">',
+            '<label><input is="emby-checkbox" type="checkbox" class="chkHscProfileKeepOwn"' + (p.KeepOwnRows !== false ? ' checked' : '') + ' /><span>Keep each user\'s own rows</span></label>',
+            '</div>',
+            '<div class="hsc-callout" style="margin-top:4px;"><i class="md-icon">info</i><span>',
+            'Each user\'s home screen is replaced by the source user\'s.<br>',
+            '<strong>On:</strong> rows from sources and top-lists the user is selected on, that the source user doesn\'t have, stay where they are.<br>',
+            '<strong>Off:</strong> an exact copy. Everything else is removed. With "Also add users to the sources and top-lists" on, the user is also taken off those sources and top-lists; without it, rows from their own sources come back with the next full sync.',
+            '</span></div>',
+            '</div>',
+            '<div class="hsc-mode-selected"' + (p.Mode === 'selected' ? '' : ' style="display:none;"') + '>',
+            '<div class="hsc-callout" style="margin-bottom:8px;"><i class="md-icon">info</i><span>',
+            'Only the ticked rows are copied: updated where a user already has them, else added at the same place as on the source user\'s home screen. Each user\'s other rows stay.<br>',
+            'Unticking a row later removes it again.',
+            '</span></div>',
+            '<div class="hsc-user-list hsc-profile-row-list"></div>',
+            '</div>',
+            '<div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:16px;">',
+            '<label><input is="emby-checkbox" type="checkbox" class="chkHscProfileAddToSources"' + (p.AddToSources ? ' checked' : '') + ' /><span>Also add users to the sources and top-lists of copied rows</span></label>',
+            '<div class="fieldDescription">Each user is added to the source or top-list of every row they get, so the full sync keeps that row updated for them and makes their own playlist rows (such as Your Next Watch). They show up in its user list. Copy & Sync takes them off again when the row is no longer copied or the user leaves the profile, and the row stays as a plain copy (a personal playlist row goes). Users you added yourself stay. Off: the rows are only copied, and a top-list row only goes to the list\'s own users, as before 4.4.3.</div>',
+            '</div>',
+            '<div class="hsc-eyebrow" style="margin:16px 0 8px;">Copy to</div>',
+            (targetRows ? userListSelectLinksHtml() : ''),
+            '<div class="hsc-user-list hsc-profile-target-list">',
+            targetRows ? buildSelectAllRowHtml('hsc-user-row') + targetRows : '<p class="textMuted" style="font-size:0.85em;">No users found.</p>',
+            '</div>',
+            '</div>',
+            '</div>'
+        ].join('');
+    }
 
-        var enabled      = config.HomeSyncEnabled ? ' checked' : '';
-        var libOrderChk  = config.HomeSyncLibraryOrder ? ' checked' : '';
-
+    function renderHscTab(container, config, users) {
+        var profiles = config.HomeSyncProfiles || [];
         var syncDisplay = config.HomeSyncEnabled ? '' : 'none';
-
+        container._hscUsers = users;
         container.innerHTML = [
             '<div class="hsc-card">',
             '<h3 class="hsc-section-title">Configuration</h3>',
             '<div class="checkboxContainer checkboxContainer-withDescription">',
-            '<label><input is="emby-checkbox" type="checkbox" id="chkHscEnabled"' + enabled + ' /><span>Enable Home Screen sync</span></label>',
-            '<div class="fieldDescription">When enabled, the plugin syncs all Home Sections from the target user and applies it to those selected. When disabled, the task always skips — even if triggered manually.</div>',
-            '</div>',
-            '<div id="hscSyncConfig" style="display:' + syncDisplay + '">',
-            '<div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:8px;">',
-            '<label><input is="emby-checkbox" type="checkbox" id="chkHscLibraryOrder"' + libOrderChk + ' /><span>Also copy library order</span></label>',
-            '<div class="fieldDescription">Also syncs the order of media libraries in the navigation sidebar.</div>',
-            '</div>',
-            '<div class="inputContainer" style="margin-top:16px;">',
-            '<select is="emby-select" id="selHscSourceUser" label="Source User">',
-            '<option value="">— Select source user —</option>',
-            sourceOptions,
-            '</select>',
-            '<div class="fieldDescription">Home screen sections will be copied FROM this user to all users selected below.</div>',
+            '<label><input is="emby-checkbox" type="checkbox" id="chkHscEnabled"' + (config.HomeSyncEnabled ? ' checked' : '') + ' /><span>Enable Home Screen sync</span></label>',
+            '<div class="fieldDescription">When enabled, each profile copies its source user\'s home screen (everything, or the rows you select) to the users it lists. When disabled, nothing changes, even if the task is triggered manually: users keep their home screens and stay on the sources and top-lists Copy & Sync added them to. Delete a profile to take its users off those again.</div>',
             '</div>',
             '</div>',
+            '<div id="hscProfilesWrap" class="hsc-card" style="display:' + syncDisplay + '">',
+            '<h3 class="hsc-section-title">Profiles</h3>',
+            '<p class="textMuted" style="font-size:0.88em; margin-bottom:12px;">Each profile copies one user\'s home screen to other users, e.g. one for the adults and one for the children. Several profiles can use the same source user, e.g. to copy different rows to different users. A user can get their home screen from one profile only.</p>',
+            '<p class="hsc-profile-empty textMuted" style="font-size:0.85em; display:' + (profiles.length ? 'none' : 'block') + ';">No profiles yet.</p>',
+            '<div class="hsc-profile-list">',
+            profiles.map(function (p) { return hscProfileHtml(p, users, false); }).join(''),
             '</div>',
-
-            '<div class="hsc-card" id="hscSyncToCard" style="display:' + syncDisplay + '">',
-            '<h3 class="hsc-section-title">Sync to</h3>',
-            '<p class="textMuted" style="font-size:0.88em;margin-bottom:12px;">These users will receive the source user\'s home screen layout on each sync.</p>',
-            (targetRows ? userListSelectLinksHtml() : ''),
-            '<div class="hsc-user-list" id="hscTargetList">',
-            targetRows ? buildSelectAllRowHtml('hsc-user-row') + targetRows : '<p class="textMuted" style="font-size:0.85em;">No users found.</p>',
-            '</div>',
-            '</div>',
-
+            '<button type="button" is="emby-button" class="raised btnAddHscProfile hsc-btn-dashed" style="width:100%;"><i class="md-icon" style="margin-right:5px;">add</i>Add profile</button>',
+            '</div>'
         ].join('');
-
         container.dataset.loaded = '1';
     }
 
-    function enforceHscSourceTargetConflict(container) {
-        var sourceId = (container.querySelector('#selHscSourceUser') || {}).value || '';
-        container.querySelectorAll('.hsc-target-chk').forEach(function (chk) {
-            var isConflict = sourceId && chk.value === sourceId;
-            if (isConflict) {
-                chk.checked = false;
-                chk.disabled = true;
-                chk.closest('.hsc-user-row').title = 'Cannot sync a user to themselves';
-                chk.closest('.hsc-user-row').style.opacity = '0.45';
-            } else {
-                chk.disabled = false;
-                chk.closest('.hsc-user-row').title = '';
-                chk.closest('.hsc-user-row').style.opacity = '';
-            }
+    // Select-all and the Unrestricted / Restricted links of one profile's target list.
+    function wireHscProfile(el) {
+        var list = el.querySelector('.hsc-profile-target-list');
+        if (!list) return;
+        list._syncAll = wireSelectAll(list, '.hsc-target-chk');
+        wireUserListSelectLinks(list.previousElementSibling, list);
+    }
+
+    // Locks what would make two profiles write the same user: a source user is never a target,
+    // and a user is the target of one profile only (the first that has them). Several profiles
+    // may share a source user (e.g. different rows to different users). Then the headers.
+    function refreshHscProfiles(container) {
+        var users = container._hscUsers || [];
+        function nameOf(id) { var u = users.filter(function (x) { return x.Id === id; })[0]; return u ? u.Name : id; }
+        var els = Array.from(container.querySelectorAll('.hsc-profile'));
+        var sources = els.map(function (el) { return (el.querySelector('.selHscProfileSource') || {}).value || ''; });
+        var owner = {};
+        els.forEach(function (el, i) {
+            el.querySelectorAll('.hsc-target-chk').forEach(function (chk) {
+                if (chk.checked && sources.indexOf(chk.value) < 0 && !(chk.value in owner)) owner[chk.value] = i;
+            });
         });
+        els.forEach(function (el, i) {
+            el.querySelectorAll('.hsc-target-chk').forEach(function (chk) {
+                var why = '';
+                if (chk.value === sources[i]) why = 'Source user of this profile';
+                else if (sources.indexOf(chk.value) >= 0) why = 'Source user of another profile';
+                else if ((chk.value in owner) && owner[chk.value] !== i) why = 'Copied from ' + (sources[owner[chk.value]] ? nameOf(sources[owner[chk.value]]) : 'another profile');
+                var row = chk.closest('.hsc-user-row');
+                if (why) chk.checked = false;
+                chk.disabled = !!why;
+                row.title = why;
+                row.style.opacity = why ? '0.45' : '';
+                var note = row.querySelector('.hsc-target-note');
+                if (note) note.textContent = why;
+            });
+            var sel = el.querySelector('.selHscProfileSource');
+            if (sel) Array.from(sel.options).forEach(function (o) {
+                if (!o.value) return;
+                o.disabled = o.value !== sources[i] && (o.value in owner);
+            });
+            var list = el.querySelector('.hsc-profile-target-list');
+            if (list && list._syncAll) list._syncAll();
+
+            var targets = Array.from(el.querySelectorAll('.hsc-target-chk:checked')).map(function (c) { return nameOf(c.value); });
+            var selectedMode = (el.querySelector('.selHscProfileMode') || {}).value === 'selected';
+            el.querySelector('.hsc-mode-all').style.display = selectedMode ? 'none' : '';
+            el.querySelector('.hsc-mode-selected').style.display = selectedMode ? '' : 'none';
+            var rowList = el.querySelector('.hsc-profile-row-list');
+            if (selectedMode && rowList && (rowList.dataset.source || '') !== sources[i] && rowList.dataset.loading !== sources[i]) loadHscProfileRows(el, users);
+            var nSelected = hscSelectedRows(el).length;
+            var what = selectedMode ? nSelected + ' selected row' + (nSelected === 1 ? '' : 's')
+                : (el.querySelector('.chkHscProfileKeepOwn') || {}).checked ? '' : 'exact copy';
+            el.querySelector('.hsc-profile-source').textContent = sources[i] ? nameOf(sources[i]) : 'No source user';
+            el.querySelector('.hsc-profile-targets').textContent = (targets.length ? '→ ' + targets.join(', ') : 'Copies to nobody yet') + (what ? '  ·  ' + what : '');
+            el.querySelector('.hsc-profile-off').style.display = (el.querySelector('.chkHscProfileActive') || {}).checked ? 'none' : '';
+        });
+        var empty = container.querySelector('.hsc-profile-empty');
+        if (empty) empty.style.display = els.length ? 'none' : 'block';
+    }
+
+    // A profile set to an exact copy (Everything, own rows not kept) that also changes the lists.
+    function hscProfileMirrors(el) {
+        return (el.querySelector('.selHscProfileMode') || {}).value !== 'selected'
+            && !(el.querySelector('.chkHscProfileKeepOwn') || {}).checked
+            && !!(el.querySelector('.chkHscProfileAddToSources') || {}).checked;
+    }
+
+    function confirmHscMirror(el) {
+        var n = el.querySelectorAll('.hsc-target-chk:checked').length;
+        return confirm('Exact copy with "Also add users to the sources and top-lists" on takes '
+            + (n === 1 ? 'this user' : 'these ' + n + ' users')
+            + ' off every source and top-list the source user isn\'t on, also those you selected them on yourself. '
+            + 'Turning it off again later does not put them back. Continue?');
     }
 
     function loadHscUsers(view) {
@@ -6669,46 +7155,64 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         getHseUsers()
             .then(function (users) {
                 renderHscTab(container, lastHscConfig, users || []);
+                var savedProfiles = lastHscConfig.HomeSyncProfiles || [];
+                container.querySelectorAll('.hsc-profile').forEach(function (el, i) {
+                    el._hscSavedRows = ((savedProfiles[i] || {}).SelectedRows || []).slice();
+                    wireHscProfile(el);
+                });
+                refreshHscProfiles(container);
 
-                enforceHscSourceTargetConflict(container);
-                var syncTargetSelectAll = wireSelectAll(container.querySelector('#hscTargetList'), '.hsc-target-chk');
-
-                var enableChk = container.querySelector('#chkHscEnabled');
-                if (enableChk) {
-                    enableChk.addEventListener('change', function () {
-                        var show = this.checked;
-                        var syncConfig = container.querySelector('#hscSyncConfig');
-                        var syncToCard = container.querySelector('#hscSyncToCard');
-                        if (syncConfig) syncConfig.style.display = show ? '' : 'none';
-                        if (syncToCard) syncToCard.style.display = show ? '' : 'none';
-                        setTimeout(checkFormState, 0);
-                    });
-                }
-
-                var sourceSelect = container.querySelector('#selHscSourceUser');
-                if (sourceSelect) {
-                    sourceSelect.addEventListener('change', function () {
-                        enforceHscSourceTargetConflict(container);
-                        syncTargetSelectAll();
-                        setTimeout(checkFormState, 0);
-                    });
-                }
-
-                container.querySelectorAll('.hsc-target-chk').forEach(function (chk) {
-                    chk.addEventListener('change', function () {
-                        enforceHscSourceTargetConflict(container);
-                        setTimeout(checkFormState, 0);
-                    });
+                container.querySelector('#chkHscEnabled').addEventListener('change', function () {
+                    container.querySelector('#hscProfilesWrap').style.display = this.checked ? '' : 'none';
+                    setTimeout(checkFormState, 0);
                 });
 
-                var hscList = container.querySelector('#hscTargetList');
-                wireUserListSelectLinks(hscList && hscList.previousElementSibling, hscList);
-
-                container.querySelectorAll('input:not(.hsc-target-chk), select:not(#selHscSourceUser)').forEach(function (el) {
-                    el.addEventListener('change', function () { setTimeout(checkFormState, 0); });
-                    el.addEventListener('input',  function () { setTimeout(checkFormState, 0); });
+                container.querySelector('.btnAddHscProfile').addEventListener('click', function () {
+                    var list = container.querySelector('.hsc-profile-list');
+                    list.insertAdjacentHTML('beforeend', hscProfileHtml({ Active: true, SourceUserId: '', TargetUserIds: [], LibraryOrder: false, Mode: 'all', KeepOwnRows: true, AddToSources: false, SelectedRows: [] }, container._hscUsers || [], true));
+                    wireHscProfile(list.lastElementChild);
+                    refreshHscProfiles(container);
+                    setTimeout(checkFormState, 0);
                 });
 
+                // On the container, which outlives a reload (a backup restore loads the tab
+                // again): the earlier handlers go first, so each runs once.
+                if (container._hscHandlers) {
+                    container.removeEventListener('click', container._hscHandlers.click);
+                    container.removeEventListener('change', container._hscHandlers.change);
+                    container.removeEventListener('input', container._hscHandlers.input);
+                }
+                container._hscHandlers = {
+                    // Before the page's own panel toggle (on the view): removing must not fold the panel.
+                    click: function (e) {
+                        var del = e.target.closest('.btnRemoveHscProfile');
+                        if (!del) return;
+                        e.stopPropagation();
+                        var gone = del.closest('.hsc-profile');
+                        var src = (gone.querySelector('.hsc-profile-source') || {}).textContent || 'this user';
+                        var n = gone.querySelectorAll('.hsc-target-chk:checked').length;
+                        if (!confirm('Delete the profile that copies from ' + src + ' to ' + n + ' user' + (n === 1 ? '' : 's') + '? '
+                            + 'After saving, they are taken off the sources and top-lists Copy & Sync added them to. Their home screens stay as they are, except a personal playlist row.')) return;
+                        gone.remove();
+                        refreshHscProfiles(container);
+                        setTimeout(checkFormState, 0);
+                    },
+                    change: function (e) {
+                        var profile = e.target.closest('.hsc-profile');
+                        // An exact copy that changes the lists cannot be undone: asked first.
+                        if (profile && e.target.matches('.chkHscProfileKeepOwn, .chkHscProfileAddToSources, .selHscProfileMode')
+                            && hscProfileMirrors(profile) && !confirmHscMirror(profile)) {
+                            if (e.target.matches('.selHscProfileMode')) e.target.value = 'selected';
+                            else e.target.checked = !e.target.checked;
+                        }
+                        if (profile) refreshHscProfiles(container);
+                        setTimeout(checkFormState, 0);
+                    },
+                    input: function () { setTimeout(checkFormState, 0); }
+                };
+                container.addEventListener('click', container._hscHandlers.click);
+                container.addEventListener('change', container._hscHandlers.change);
+                container.addEventListener('input', container._hscHandlers.input);
             })
             .catch(function () {
                 container.innerHTML = '<p class="textMuted" style="padding:20px;">Failed to load users. Check server connection.</p>';
@@ -9871,7 +10375,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var name  = tag.Name || '';
                     var count = isShows ? (tag.SeriesCount || 0)
                         : (tag.MovieCount != null ? tag.MovieCount : (tag.ItemCount != null ? tag.ItemCount : 0));
-                    var countText = count + (isShows ? ' shows' : ' movies');
+                    var countText = count + (isShows ? (count === 1 ? ' show' : ' shows') : (count === 1 ? ' movie' : ' movies'));
                     var hasTopList = existingTopLists.has(sanitizeName(name).toLowerCase());
                     var badge = hasTopList
                         ? '<span class="tag-indicator toplist" style="margin-left:6px;font-size:0.72em;">top-list</span>'
@@ -9937,11 +10441,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // sync tasks generate (tags, collections, playlists, top-list files, images) is rebuilt on run.
     var _backupSections = [
         { key: 'Settings',     label: 'General settings',          desc: 'AI models, system prompt, logging, dry run, preserve-on-empty.' },
-        { key: 'ApiKeys',      label: 'API keys',                  desc: 'Trakt, MDBList, TMDB, OpenAI, Gemini, Claude. Stored in plain text in the file.' },
+        { key: 'ApiKeys',      label: 'API keys',                  desc: 'Trakt, MDBList, TMDB, OpenAI, Gemini, Claude, OpenAI-compatible. Stored in plain text in the file.' },
         { key: 'Tags',         label: 'Tag & collection groups',   desc: 'All source groups incl. schedules, blacklists, filters, collection settings, home sections and playlists.' },
         { key: 'SavedFilters', label: 'Saved media-info filters',  desc: 'Your saved filter presets.' },
         { key: 'TopLists',     label: 'Top lists',                 desc: 'Top-list settings and the movie and show lists of manual top-lists.' },
-        { key: 'HomeSync',     label: 'Home screen sync',          desc: 'Source user, target users, library-order sync and Continue Watching bump.' }
+        { key: 'HomeSync',     label: 'Home screen sync',          desc: 'Copy & Sync profiles (source and target users, library order) and Continue Watching bump.' }
     ];
 
     function buildBackupModalShell() {
@@ -10571,7 +11075,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '</details>' +
             '<div class="hsc-callout" style="margin:12px 0 16px;">' +
             '<i class="md-icon">lock</i>' +
-            '<span><strong>API keys are always hidden.</strong> Keys and tokens (Trakt, MDBList, TMDb, OpenAI, Gemini, Claude, and keys in list URLs) are replaced by *** in every file, whether or not names are anonymised. Titles, source and library names stay as they are.</span>' +
+            '<span><strong>API keys are always hidden.</strong> Keys and tokens (Trakt, MDBList, TMDb, OpenAI, Gemini, Claude, OpenAI-compatible, and keys in list URLs) are replaced by *** in every file, whether or not names are anonymised. Titles, source and library names stay as they are.</span>' +
             '</div>' +
             '<div class="logs-error" style="color:var(--hsc-danger-text);font-size:0.85em;min-height:1.2em;margin-bottom:6px;"></div>' +
             '<div style="display:flex;gap:10px;justify-content:flex-end;align-items:center;">' +
@@ -10871,8 +11375,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var k = (t.Tag || '').trim().toLowerCase();
                 if (t.EnableTopList && k && !sourceNameByTag[k]) sourceNameByTag[k] = (t.Name || '').trim() || (t.Tag || '').trim();
             });
+            // Every list, also one whose folder is gone (the sync then asks to open it and Save; the
+            // card says so).
             var allExistingTopLists = (pluginConfig.TopLists || []).filter(function (tl) {
-                return tl.TagName && (tl.FromSource || existingTopLists.has(sanitizeTlName(tl.TagName).toLowerCase()));
+                return !!tl.TagName;
             }).map(function (tl) {
                 var key = sanitizeTlName(tl.TagName || '').toLowerCase();
                 var settings = {};
@@ -10943,7 +11449,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         '<div style="display:flex;align-items:center;flex-wrap:wrap;row-gap:4px;min-width:0;">' +
                         '<span class="tag-title" style="margin-left:0;">' + escHtml(item.displayName) + '</span>' +
                         contentBadge + typeBadge +
-                        '<span class="tag-indicator" style="flex-shrink:0;font-variant-numeric:tabular-nums;">' + item.count + (isShows ? ' shows' : ' movies') + '</span>' +
+                        '<span class="tag-indicator" style="flex-shrink:0;font-variant-numeric:tabular-nums;">' + item.count + (isShows ? (item.count === 1 ? ' show' : ' shows') : (item.count === 1 ? ' movie' : ' movies')) + '</span>' +
+                        (!item.fromSource && item.count === 0 ? '<span class="hsc-run-issue"><i class="md-icon" style="font-size:1.3em;" title="This list has no titles: its folder is empty or gone. Open it, add titles and click Save to make it again, or delete it.">warning</i></span>' : '') +
                         '</div>' +
                         '<i class="md-icon expand-icon" style="flex-shrink:0;margin-left:12px;">expand_more</i>' +
                         '</div>' +
@@ -11530,7 +12037,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             form.addEventListener('click', (e) => {
                 var dayBtn = e.target.closest('.day-toggle');
                 if (dayBtn) dayBtn.classList.toggle('active');
-                if (e.target.closest('.btnRemoveUrl, .btnAddUrl, .btnRemoveLocal, .btnAddLocal, .btnRemoveDate, .btnAddDate, .btnRemoveFilterGroup, .btnAddMediaInfoFilter, .btnClearAllFilters, .btnGroupOpChoice, .btnGroupInnerOpChoice, .btnAddMiRule, .btnRemoveMiRule, .btnRemoveGroup, .day-toggle, .btnRemovePoster, .btnApplyMiPreset, .btnApplySchedulePreset')) {
+                if (e.target.closest('.btnRemoveUrl, .btnAddUrl, .btnRemoveExtraTag, .btnAddExtraTag, .btnAddOutTag, .btnRemoveLocal, .btnAddLocal, .btnRemoveDate, .btnAddDate, .btnRemoveFilterGroup, .btnAddMediaInfoFilter, .btnClearAllFilters, .btnGroupOpChoice, .btnGroupInnerOpChoice, .btnAddMiRule, .btnRemoveMiRule, .btnRemoveGroup, .day-toggle, .btnRemovePoster, .btnApplyMiPreset, .btnApplySchedulePreset')) {
                     changeHandler();
                 }
             }, { signal: _signal });
@@ -12060,7 +12567,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 current = getUiConfig(view, true);
                 dirty = JSON.stringify(current) !== originalConfigState;
             } catch (e) { }
-            writeLeaveState(dirty ? { draft: stripSecrets(current), serverStamp: view._hscServerStamp || '' } : null);
+            writeLeaveState(dirty ? { draft: stripSecrets(current), serverStamp: view._hscServerStamp || '', serverUsers: view._hscLoadedUsers || null } : null);
         });
 
         // Save submits this copy's own form. (A form="…" attribute would submit the first form with
@@ -12175,6 +12682,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 configObj.Tags.forEach(function(t) {
                     var key = t.Name ? t.Name + '\x1F' + t.Tag : t.Tag;
                     var existing = currentGrouped[key];
+                    // Users put on or taken off on the server since the page loaded (Copy & Sync,
+                    // another tab) are kept, as are the user changes made here.
+                    var loadedUsers = (view._hscLoadedUsers || {})[key];
+                    if (existing && loadedUsers) {
+                        t.HomeSectionUserIds = mergeUserIds(t.HomeSectionUserIds, loadedUsers.Home, existing.HomeSectionUserIds);
+                        t.PlaylistUserIds = mergeUserIds(t.PlaylistUserIds, loadedUsers.Playlist, existing.PlaylistUserIds);
+                    }
                     if (existing && existing.HomeSectionTracked && existing.HomeSectionTracked.length > 0
                         && (!t.HomeSectionTracked || t.HomeSectionTracked.length === 0)) {
                         t.HomeSectionTracked = existing.HomeSectionTracked;
@@ -12246,6 +12760,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }).then(r => {
                 window.Dashboard.processPluginConfigurationUpdateResult(r);
                 _topListTagNames = new Set((configObj.TopLists || []).map(function (tl) { return (tl.TagName || '').toLowerCase(); }).filter(Boolean));
+                noteTopListTypes(configObj.TopLists);
 
                 var newGrouped = groupConfigTags(configObj.Tags);
                 view.querySelectorAll('.tag-row').forEach(row => {
@@ -12275,7 +12790,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 writeLeaveState(null);
                 hideDraftBar();
                 // The server now holds what was just saved: that is the new "as fetched" state.
-                window.ApiClient.getPluginConfiguration(pluginId).then(function (c) { view._hscServerStamp = serverStamp(c); }).catch(function () { });
+                window.ApiClient.getPluginConfiguration(pluginId).then(function (c) { view._hscServerStamp = serverStamp(c); view._hscLoadedUsers = sourceUserLists(c); }).catch(function () { });
 
                 // Apply home section settings immediately for existing tracked sections (fire-and-forget)
                 configObj.Tags.forEach(function(tc) {
@@ -12415,13 +12930,20 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         originalConfigState = null;
                     }
                     view._hscServerStamp = fetchedStamp;
+                    view._hscLoadedUsers = sourceUserLists(config);
                     var restored = false, serverChanged = false;
                     if (leave && leave.draft) {
+                        // The draft holds no keys: a connection still on the server gets its key back.
+                        if (Array.isArray(leave.draft.AiConnections)) leave.draft.AiConnections.forEach(function (c) {
+                            var s = (config.AiConnections || []).filter(function (x) { return x.Id === c.Id; })[0];
+                            if (c.ApiKey === undefined) c.ApiKey = s ? (s.ApiKey || '') : '';
+                        });
                         renderConfig(view, Object.assign({}, config, leave.draft));
                         restored = true;
                         serverChanged = !!leave.serverStamp && leave.serverStamp !== fetchedStamp;
                         // Keep the stamp the draft was based on, so the warning stays until Save/Discard.
                         if (leave.serverStamp) view._hscServerStamp = leave.serverStamp;
+                        if (leave.serverUsers) view._hscLoadedUsers = leave.serverUsers;
                     }
                     view._hscLoading = false;
                     replayLoadEdits(view);
@@ -12447,9 +12969,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         function renderConfig(view, config) {
                 lastHscConfig = {
                     HomeSyncEnabled:       config.HomeSyncEnabled       || false,
-                    HomeSyncLibraryOrder:  config.HomeSyncLibraryOrder  || false,
-                    HomeSyncSourceUserId:  config.HomeSyncSourceUserId  || '',
-                    HomeSyncTargetUserIds: config.HomeSyncTargetUserIds || [],
+                    HomeSyncProfiles:      effectiveHscProfiles(config),
                     ContinueWatchingBumpEnabled:  config.ContinueWatchingBumpEnabled  || false,
                     ContinueWatchingBumpMode:     config.ContinueWatchingBumpMode     || 'AllEpisodes',
                     ContinueWatchingBumpAllUsers: config.ContinueWatchingBumpAllUsers || false,
@@ -12469,6 +12989,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var clmElInit = view.querySelector('#txtClaudeModel'); if (clmElInit) clmElInit.value = config.ClaudeModel || 'claude-haiku-4-5-20251001';
                 var olElInit = view.querySelector('#txtOllamaBaseUrl'); if (olElInit) olElInit.value = config.OllamaBaseUrl || 'http://localhost:11434';
                 var omElInit = view.querySelector('#txtOllamaModel'); if (omElInit) omElInit.value = config.OllamaModel || '';
+                renderAiConnections(view, config.AiConnections || []);
+                syncModelFields(view);
                 var spElInit = view.querySelector('#txtAiSystemPrompt'); if (spElInit) spElInit.value = config.AiSystemPrompt || ''; updateSystemPromptResetBtn(view);
                 view.querySelector('#chkExtendedConsoleOutput').checked = config.ExtendedConsoleOutput || false;
                 view.querySelector('#chkLogMissingItems').checked = config.LogMissingItems || false;
@@ -12492,6 +13014,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var btn = view.querySelector('#btnFilterDropdown'); if (btn) btn.classList.remove('active');
 
                 _topListTagNames = new Set((config.TopLists || []).map(function (tl) { return (tl.TagName || '').toLowerCase(); }).filter(Boolean));
+                noteTopListTypes(config.TopLists);
 
                 var grouped = groupConfigTags(config.Tags);
 
@@ -12552,6 +13075,61 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 if (wasDirty) { writeLeaveState(null); hideDraftBar(); loadConfig(); }
                 showPageTab(target);
             });
+        });
+
+        // AI: OpenAI-compatible connections (Add / Remove) and the Model dropdowns.
+        view.addEventListener('click', function (e) {
+            if (e.target.closest('#btnAddAiConn')) {
+                var box = view.querySelector('#aiConnList');
+                box.insertAdjacentHTML('beforeend', aiConnCardHtml({ Id: newAiConnId() }));
+                syncModelField(box.lastElementChild.querySelector('.hsc-model-field'));
+                refreshAiProviderSelects(view);
+                var nm = box.lastElementChild.querySelector('.txtAiConnName'); if (nm) nm.focus();
+                setTimeout(checkFormState, 0);
+                return;
+            }
+            var rm = e.target.closest('.btnRemoveAiConn');
+            if (rm) {
+                rm.closest('.hsc-ai-conn').remove();
+                refreshAiProviderSelects(view);
+                setTimeout(checkFormState, 0);
+                return;
+            }
+            var rl = e.target.closest('.btnAiModelsReload');
+            if (rl) { loadModelField(rl.closest('.hsc-model-field'), true); return; }
+            // Opening a provider's panel loads its models (once per key / URL).
+            var hd = e.target.closest('.settings-panel-toggle');
+            if (hd) setTimeout(function () {
+                var panel = hd.closest('.settings-panel');
+                if (panel) panel.querySelectorAll('.hsc-model-field').forEach(function (f) { if (f.offsetParent) loadModelField(f); });
+            }, 0);
+        });
+        view.addEventListener('change', function (e) {
+            var sel = e.target.closest('.selAiModel');
+            if (sel) {
+                var field = sel.closest('.hsc-model-field'), input = modelFieldInput(field);
+                if (sel.value === AI_MODEL_CUSTOM) {
+                    field.classList.add('is-custom');
+                    syncModelField(field);
+                    if (input) input.focus();
+                } else if (input) {
+                    field.classList.remove('is-custom');
+                    input.value = sel.value;
+                    syncModelField(field);
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                return;
+            }
+            // A key or URL filled in or changed: read that provider's models again.
+            var t = e.target;
+            if (t.matches && t.matches('.txtAiConnBaseUrl, .txtAiConnApiKey')) {
+                loadModelField(t.closest('.hsc-ai-conn').querySelector('.hsc-model-field'), true);
+                return;
+            }
+            if (t.id) view.querySelectorAll('.hsc-model-field[data-key="' + t.id + '"], .hsc-model-field[data-url="' + t.id + '"]').forEach(function (f) { loadModelField(f, true); });
+        });
+        view.addEventListener('input', function (e) {
+            if (e.target.closest && e.target.closest('.txtAiConnName')) refreshAiProviderSelects(view);
         });
 
         view.addEventListener('change', function (e) {

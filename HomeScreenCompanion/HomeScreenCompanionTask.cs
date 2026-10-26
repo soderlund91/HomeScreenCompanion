@@ -98,6 +98,7 @@ namespace HomeScreenCompanion
             public int MatchCount;
             public string? LimitShort;   // "9 of 10": the run put fewer titles in than Limit
             public bool EnableTag;
+            public List<string> Tags = new List<string>();   // TagName and the source's extra tags
             public int TagsAdded;
             public int TagsRemoved;
             public bool EnableCollection;
@@ -290,7 +291,7 @@ namespace HomeScreenCompanion
                 {
                     if (tc.EnableCollection && !string.IsNullOrWhiteSpace(tc.Tag))
                     {
-                        string cn = string.IsNullOrWhiteSpace(tc.CollectionName) ? tc.Tag.Trim() : tc.CollectionName.Trim();
+                        string cn = CollectionNameOf(tc);
                         if (!previouslyManagedCollections.Contains(cn))
                             previouslyManagedCollections.Add(cn);
                     }
@@ -435,7 +436,7 @@ namespace HomeScreenCompanion
                     activeTagOverrides.Add(tc.Tag.Trim());
                     if (tc.EnableCollection)
                     {
-                        var overrideCName = string.IsNullOrWhiteSpace(tc.CollectionName) ? tc.Tag.Trim() : tc.CollectionName.Trim();
+                        var overrideCName = CollectionNameOf(tc);
                         activeCollectionOverrides.Add(overrideCName);
                     }
                 }
@@ -568,8 +569,13 @@ namespace HomeScreenCompanion
                 {
                     if (string.IsNullOrWhiteSpace(tagConfig.Tag)) continue;
                     string tagName = tagConfig.Tag.Trim();
-                    managedTags.Add(tagName); // track all groups (active or inactive) so cleanup always runs
-                    configuredTags.Add(tagName);
+                    // Tag and the source's extra tags, all put on the same titles.
+                    var outTags = tagConfig.AllTags();
+                    foreach (var t in outTags)
+                    {
+                        managedTags.Add(t); // track all groups (active or inactive) so cleanup always runs
+                        configuredTags.Add(t);
+                    }
                     NormalizeNextWatch(tagConfig);
 
                     if (!tagConfig.Active) continue;
@@ -594,6 +600,7 @@ namespace HomeScreenCompanion
                         EnableHomeSection = SourceTopLists.PlainRow(tagConfig),
                         BoxSetHse = IsBoxSetHomeSectionEntry(tagConfig),
                         TagName = tagName,
+                        Tags = outTags,
                         GroupIndex = activeGroupIdx,
                         GroupTotal = activeGroupTotal,
                         SourceLabel = DescribeSource(tagConfig),
@@ -752,7 +759,7 @@ namespace HomeScreenCompanion
                                     }
 
                                     if (tagConfig.EnableTag && !tagConfig.OnlyCollection && !HasFilterConditions(tagConfig))
-                                        TagCacheManager.Instance.AddToCache($"imdb_{extItem.Imdb}", tagName);
+                                        foreach (var t in outTags) TagCacheManager.Instance.AddToCache($"imdb_{extItem.Imdb}", t);
 
                                     if (imdbLookup.TryGetValue(extItem.Imdb, out var localItems))
                                     {
@@ -996,6 +1003,7 @@ namespace HomeScreenCompanion
                                 config.ClaudeModel,
                                 config.OllamaBaseUrl,
                                 config.OllamaModel,
+                                config.AiConnections,
                                 config.AiSystemPrompt,
                                 recentlyWatchedContext,
                                 AiAskCount(effectiveLimit),
@@ -1024,7 +1032,7 @@ namespace HomeScreenCompanion
                                     }
 
                                     if (tagConfig.EnableTag && !tagConfig.OnlyCollection && !HasFilterConditions(tagConfig))
-                                        TagCacheManager.Instance.AddToCache($"imdb_{imdbId}", tagName);
+                                        foreach (var t in outTags) TagCacheManager.Instance.AddToCache($"imdb_{imdbId}", t);
 
                                     if (imdbLookup.TryGetValue(imdbId, out var localItems))
                                     {
@@ -1070,7 +1078,7 @@ namespace HomeScreenCompanion
                                 }
                             }
 
-                            _log.Debug($"  AI ({tagConfig.AiProvider}) returned {gs.ListCount} items in {fetchTimer.ElapsedMilliseconds} ms  ·  {matchedLocalItems.Count} matched ({_aiTitleMatched} by title only)  ·  {gs.MissingItems.Count} not in library  ·  {_aiBlacklisted} blacklisted");
+                            _log.Debug($"  AI ({AiConnection.Label(tagConfig.AiProvider)}) returned {gs.ListCount} items in {fetchTimer.ElapsedMilliseconds} ms  ·  {matchedLocalItems.Count} matched ({_aiTitleMatched} by title only)  ·  {gs.MissingItems.Count} not in library  ·  {_aiBlacklisted} blacklisted");
                             if (tagConfig.AiRefreshIntervalDays > 0 && aiItems.Count > 0)
                             {
                                 tagConfig.AiLastRunDate = DateTime.UtcNow;
@@ -1190,7 +1198,7 @@ namespace HomeScreenCompanion
                             {
                                 if (!desiredTagsMap.ContainsKey(localItem.Id))
                                     desiredTagsMap[localItem.Id] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                                desiredTagsMap[localItem.Id].Add(tagName);
+                                foreach (var t in outTags) desiredTagsMap[localItem.Id].Add(t);
 
                                 // The real-time tag cache is keyed by IMDb id, so only list sources belong in
                                 // it (cached from the list itself above, unless the source has filter
@@ -1201,7 +1209,7 @@ namespace HomeScreenCompanion
                                 var imdb = localItem.GetProviderId("Imdb");
                                 bool listSource = IsListSource(tagConfig);
                                 if (!string.IsNullOrEmpty(imdb) && listSource)
-                                    TagCacheManager.Instance.AddToCache($"imdb_{imdb}", tagName);
+                                    foreach (var t in outTags) TagCacheManager.Instance.AddToCache($"imdb_{imdb}", t);
                             }
                         }
 
@@ -1258,6 +1266,9 @@ namespace HomeScreenCompanion
                     progress.Report(currentProgress);
                 }
                 foreach (var key in heldFetchLines.Keys.ToList()) FlushFetchLines(key);
+                // A failed group keeps its extra tags too, like its Tag above.
+                foreach (var tc in config.Tags.Where(t => failedGroups.Contains(GroupKey(t))))
+                    foreach (var t in tc.AllTags()) failedFetches.Add(t);
                 _log.Debug($"Fetch phase done in {RunLog.Elapsed(phaseTimer.Elapsed)}");
 
                 // Playlist sync — once per group, with the union of all its sources.
@@ -1459,8 +1470,10 @@ namespace HomeScreenCompanion
                 {
                     if (gs.TagName != null)
                     {
-                        gs.TagsAdded = tagAddedByTag.GetValueOrDefault(gs.TagName);
-                        gs.TagsRemoved = tagRemovedByTag.GetValueOrDefault(gs.TagName);
+                        // The group's extra tags count with its Tag.
+                        var _gsTags = gs.Tags.Count > 0 ? gs.Tags : new List<string> { gs.TagName };
+                        gs.TagsAdded = _gsTags.Sum(t => tagAddedByTag.GetValueOrDefault(t));
+                        gs.TagsRemoved = _gsTags.Sum(t => tagRemovedByTag.GetValueOrDefault(t));
                     }
                 }
 
@@ -1662,6 +1675,7 @@ namespace HomeScreenCompanion
                     _log.Info($"    {statsList.Count(g => g.HomeSectionSynced)} synced, {statsList.Count(g => g.HomeSectionRemoved) + _deletedGroupRowsRemoved} removed  ·  {RunLog.Elapsed(phaseTimer.Elapsed)}");
 
                 CleanupDisabledPlaylists(config, dryRun);
+                SyncPlaylistTags(config, dryRun);
                 bool _hasTopLists = (config.TopLists ?? new List<TopListHomeSection>()).Any(t => !string.IsNullOrWhiteSpace(t.TagName));
                 if (_hasTopLists) { _log.Blank(); _log.Info("» Top-lists"); }
                 SyncTopListFolders(config, dryRun);
@@ -2065,6 +2079,7 @@ namespace HomeScreenCompanion
                 PlaylistUsersTotal = tagConfig.PlaylistUserIds?.Count ?? 0,
                 BoxSetHse = IsBoxSetHomeSectionEntry(tagConfig),
                 TagName = tagConfig.Tag.Trim(),
+                Tags = tagConfig.AllTags(),
                 CollectionName = string.IsNullOrWhiteSpace(tagConfig.CollectionName) ? tagConfig.Tag.Trim() : tagConfig.CollectionName.Trim(),
                 GroupIndex = 1,
                 GroupTotal = 1
@@ -2323,8 +2338,12 @@ namespace HomeScreenCompanion
             // Another group in schedule with the same tag: its titles keep the tag. This run only adds
             // the tag; taking it off titles this source no longer has is left to the full sync, which
             // knows every group's titles.
-            bool _tagShared = _preview == null && TagUsedElsewhereInSchedule(config, tagConfig);
-            if (_preview == null && !_tagShared) TagCacheManager.Instance.RemoveTagFromAllEntries(tagName);
+            // The same goes for each of the source's extra tags (outTags: the Tag and its extra tags).
+            var outTags = tagConfig.AllTags();
+            var _sharedTags = new HashSet<string>(outTags.Where(t => _preview == null && TagUsedElsewhereInSchedule(config, tagConfig, t)), StringComparer.OrdinalIgnoreCase);
+            bool _tagShared = _sharedTags.Contains(tagName);
+            if (_preview == null)
+                foreach (var t in outTags.Where(t => !_sharedTags.Contains(t))) TagCacheManager.Instance.RemoveTagFromAllEntries(t);
             var matchedLocalItems = new List<BaseItem>();
             var _srcTitles = new Dictionary<TagConfig, int>();   // per URL / local source of the group
             List<BaseItem> tagOutputItems = matchedLocalItems;
@@ -2391,7 +2410,7 @@ namespace HomeScreenCompanion
                             if (string.IsNullOrEmpty(extItem.Imdb)) continue;
                             if (blacklist.Contains(extItem.Imdb)) { _srcBlacklisted++; _log.Debug($"    Blacklisted: {extItem.Name} ({extItem.Imdb})"); continue; }
                             if (_preview == null && tagConfig.EnableTag && !tagConfig.OnlyCollection && !HasFilterConditions(tagConfig))
-                                TagCacheManager.Instance.AddToCache($"imdb_{extItem.Imdb}", tagName);
+                                foreach (var t in outTags) TagCacheManager.Instance.AddToCache($"imdb_{extItem.Imdb}", t);
                             if (imdbLookup.TryGetValue(extItem.Imdb, out var localItems))
                             {
                                 _srcMatched++;
@@ -2582,6 +2601,7 @@ namespace HomeScreenCompanion
                         config.ClaudeModel,
                         config.OllamaBaseUrl,
                         config.OllamaModel,
+                        config.AiConnections,
                         config.AiSystemPrompt,
                         recentlyWatchedContext,
                         AiAskCount(effectiveLimit),
@@ -2589,7 +2609,7 @@ namespace HomeScreenCompanion
                     fetchTimer.Stop();
 
                     _listCount = aiItems.Count;
-                    if (aiItems.Count == 0) _emptySources.Add((string.IsNullOrWhiteSpace(tagConfig.AiProvider) ? "the AI" : tagConfig.AiProvider) + (fetcher.LastError != null ? $" ({fetcher.LastError})" : ""));
+                    if (aiItems.Count == 0) _emptySources.Add((string.IsNullOrWhiteSpace(tagConfig.AiProvider) ? "the AI" : AiConnection.Label(tagConfig.AiProvider)) + (fetcher.LastError != null ? $" ({fetcher.LastError})" : ""));
                     if (aiItems.Count == 0 && ListFetcher.IsFailure(fetcher.LastError)) _failedSources.Add(_emptySources[_emptySources.Count - 1]);
                     int _aiTitleMatched = 0, _aiBlacklisted = 0;
 
@@ -2605,7 +2625,7 @@ namespace HomeScreenCompanion
                             var imdbId = aiItem.imdb_id!.Trim();
                             if (blacklist.Contains(imdbId)) { _aiBlacklisted++; _log.Debug($"    Blacklisted: {_aiLabel} ({imdbId})"); continue; }
                             if (_preview == null && tagConfig.EnableTag && !tagConfig.OnlyCollection && !HasFilterConditions(tagConfig))
-                                TagCacheManager.Instance.AddToCache($"imdb_{imdbId}", tagName);
+                                foreach (var t in outTags) TagCacheManager.Instance.AddToCache($"imdb_{imdbId}", t);
                             if (imdbLookup.TryGetValue(imdbId, out var localItems))
                             {
                                 foreach (var localItem in localItems)
@@ -2638,10 +2658,10 @@ namespace HomeScreenCompanion
                             }
                         }
                     }
-                    _log.Debug($"  AI ({tagConfig.AiProvider}) returned {_listCount} items in {fetchTimer.ElapsedMilliseconds} ms  ·  {matchedLocalItems.Count} matched ({_aiTitleMatched} by title only)  ·  {gs.MissingItems.Count} not in library  ·  {_aiBlacklisted} blacklisted");
+                    _log.Debug($"  AI ({AiConnection.Label(tagConfig.AiProvider)}) returned {_listCount} items in {fetchTimer.ElapsedMilliseconds} ms  ·  {matchedLocalItems.Count} matched ({_aiTitleMatched} by title only)  ·  {gs.MissingItems.Count} not in library  ·  {_aiBlacklisted} blacklisted");
 
                     if (_preview != null)
-                        _preview.Note = $"Asked {(string.IsNullOrWhiteSpace(tagConfig.AiProvider) ? "the AI" : tagConfig.AiProvider)} once; the result may differ next time.";
+                        _preview.Note = $"Asked {(string.IsNullOrWhiteSpace(tagConfig.AiProvider) ? "the AI" : AiConnection.Label(tagConfig.AiProvider))} once; the result may differ next time.";
                     else if (tagConfig.AiRefreshIntervalDays > 0 && aiItems.Count > 0)
                     {
                         tagConfig.AiLastRunDate = DateTime.UtcNow;
@@ -2795,31 +2815,43 @@ namespace HomeScreenCompanion
             // HasFilterConditions) — before the tags are written, as the full run does.
             if (!dryRun && tagConfig.EnableTag && !tagConfig.OnlyCollection && !_isBoxSetHse && IsListSource(tagConfig) && HasFilterConditions(tagConfig))
                 foreach (var _imdb in tagOutputItems.Select(i => i.GetProviderId("Imdb")).Where(id => !string.IsNullOrEmpty(id)))
-                    TagCacheManager.Instance.AddToCache($"imdb_{_imdb}", tagName);
+                    foreach (var t in outTags) TagCacheManager.Instance.AddToCache($"imdb_{_imdb}", t);
             int updateCount = 0;
+            // Which of outTags an item gains (shouldHave) or loses. A tag another group in schedule
+            // also writes is only ever added (see _tagShared).
+            List<string> TagChanges(BaseItem it, bool shouldHave)
+            {
+                var existing = new HashSet<string>(it.Tags, StringComparer.OrdinalIgnoreCase);
+                return outTags.Where(ot => existing.Contains(ot) != shouldHave && (shouldHave || !_sharedTags.Contains(ot))).ToList();
+            }
+            void LogTagChanges(List<string> changes, bool added, string label)
+            {
+                var dbg = added ? _dbgTagAdded! : _dbgTagRemoved!;
+                foreach (var ct in changes) { if (!dbg.ContainsKey(ct)) dbg[ct] = new List<string>(); dbg[ct].Add(label); }
+            }
+            void ApplyTagChanges(BaseItem it, List<string> changes, bool add)
+            {
+                foreach (var ct in changes) { if (add) it.AddTag(ct); else it.RemoveTag(ct); }
+            }
             foreach (var item in allItems)
             {
-                var existingTags = new HashSet<string>(item.Tags, StringComparer.OrdinalIgnoreCase);
                 bool shouldHave = tagConfig.EnableTag && !tagConfig.OnlyCollection && !_isBoxSetHse && matchedIds.Contains(item.Id);
-                bool hasTag = existingTags.Contains(tagName);
-                if (shouldHave == hasTag) continue;
-                if (!shouldHave && _tagShared) continue;
+                var changes = TagChanges(item, shouldHave);
+                if (changes.Count == 0) continue;
                 if (debug)
                 {
                     var _tagYr = item.ProductionYear.HasValue ? $" ({item.ProductionYear})" : "";
                     var _tagTp = item.GetType().Name.Contains("Series") ? "Series" : "Movie";
-                    string _itemLabel = $"{item.Name}{_tagYr}  [{_tagTp}]";
-                    if (shouldHave) { if (!_dbgTagAdded!.ContainsKey(tagName)) _dbgTagAdded[tagName] = new List<string>(); _dbgTagAdded[tagName].Add(_itemLabel); }
-                    else { if (!_dbgTagRemoved!.ContainsKey(tagName)) _dbgTagRemoved[tagName] = new List<string>(); _dbgTagRemoved[tagName].Add(_itemLabel); }
+                    LogTagChanges(changes, shouldHave, $"{item.Name}{_tagYr}  [{_tagTp}]");
                 }
                 if (!dryRun)
                 {
-                    if (shouldHave) item.AddTag(tagName); else item.RemoveTag(tagName);
+                    ApplyTagChanges(item, changes, shouldHave);
                     try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); }
                     catch (Exception ex) { _log.Warn($"Could not save tags for '{item.Name}': {ex.Message}"); }
                     if (++updateCount % 25 == 0) await Task.Yield();
                 }
-                if (shouldHave) tagsAdded++; else tagsRemoved++;
+                if (shouldHave) tagsAdded += changes.Count; else tagsRemoved += changes.Count;
             }
 
             // Episode cleanup: remove stale tags from episodes; also tag matching episodes when episode-level targeting is active
@@ -2853,29 +2885,27 @@ namespace HomeScreenCompanion
                         }
                     }
                 }
-                foreach (var ep in _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Episode" }, Tags = new[] { tagName }, Recursive = true, IsVirtualItem = false }))
-                    allEpisodeItemsMap.TryAdd(ep.Id, ep);
+                foreach (var ot in outTags)
+                    foreach (var ep in _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Episode" }, Tags = new[] { ot }, Recursive = true, IsVirtualItem = false }))
+                        allEpisodeItemsMap.TryAdd(ep.Id, ep);
                 foreach (var ep in allEpisodeItemsMap.Values)
                 {
                     bool shouldHaveEp = tagConfig.EnableTag && !tagConfig.OnlyCollection && matchedEpisodeIds.Contains(ep.Id);
-                    bool hasTagEp = new HashSet<string>(ep.Tags, StringComparer.OrdinalIgnoreCase).Contains(tagName);
-                    if (shouldHaveEp == hasTagEp) continue;
-                    if (!shouldHaveEp && _tagShared) continue;
+                    var changesEp = TagChanges(ep, shouldHaveEp);
+                    if (changesEp.Count == 0) continue;
                     if (debug)
                     {
                         var _epYr = ep.ProductionYear.HasValue ? $" ({ep.ProductionYear})" : "";
-                        string _epLabel = $"{ep.Name}{_epYr}  [Episode]";
-                        if (shouldHaveEp) { if (!_dbgTagAdded!.ContainsKey(tagName)) _dbgTagAdded[tagName] = new List<string>(); _dbgTagAdded[tagName].Add(_epLabel); }
-                        else { if (!_dbgTagRemoved!.ContainsKey(tagName)) _dbgTagRemoved[tagName] = new List<string>(); _dbgTagRemoved[tagName].Add(_epLabel); }
+                        LogTagChanges(changesEp, shouldHaveEp, $"{ep.Name}{_epYr}  [Episode]");
                     }
                     if (!dryRun)
                     {
-                        if (shouldHaveEp) ep.AddTag(tagName); else ep.RemoveTag(tagName);
+                        ApplyTagChanges(ep, changesEp, shouldHaveEp);
                         try { _libraryManager.UpdateItem(ep, ep.Parent, ItemUpdateType.MetadataEdit, null); }
                         catch (Exception ex) { _log.Warn($"Could not save tags for episode '{ep.Name}': {ex.Message}"); }
                         if (++updateCount % 25 == 0) await Task.Yield();
                     }
-                    if (shouldHaveEp) tagsAdded++; else tagsRemoved++;
+                    if (shouldHaveEp) tagsAdded += changesEp.Count; else tagsRemoved += changesEp.Count;
                 }
             }
 
@@ -2911,29 +2941,27 @@ namespace HomeScreenCompanion
                         }
                     }
                 }
-                foreach (var s in _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Season" }, Tags = new[] { tagName }, Recursive = true, IsVirtualItem = false }))
-                    allSeasonItemsMap.TryAdd(s.Id, s);
+                foreach (var ot in outTags)
+                    foreach (var s in _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Season" }, Tags = new[] { ot }, Recursive = true, IsVirtualItem = false }))
+                        allSeasonItemsMap.TryAdd(s.Id, s);
                 foreach (var season in allSeasonItemsMap.Values)
                 {
                     bool shouldHaveSeason = tagConfig.EnableTag && !tagConfig.OnlyCollection && matchedSeasonIds.Contains(season.Id);
-                    bool hasTagSeason = new HashSet<string>(season.Tags, StringComparer.OrdinalIgnoreCase).Contains(tagName);
-                    if (shouldHaveSeason == hasTagSeason) continue;
-                    if (!shouldHaveSeason && _tagShared) continue;
+                    var changesSeason = TagChanges(season, shouldHaveSeason);
+                    if (changesSeason.Count == 0) continue;
                     if (debug)
                     {
                         var _sYr = season.ProductionYear.HasValue ? $" ({season.ProductionYear})" : "";
-                        string _sLabel = $"{season.Name}{_sYr}  [Season]";
-                        if (shouldHaveSeason) { if (!_dbgTagAdded!.ContainsKey(tagName)) _dbgTagAdded[tagName] = new List<string>(); _dbgTagAdded[tagName].Add(_sLabel); }
-                        else { if (!_dbgTagRemoved!.ContainsKey(tagName)) _dbgTagRemoved[tagName] = new List<string>(); _dbgTagRemoved[tagName].Add(_sLabel); }
+                        LogTagChanges(changesSeason, shouldHaveSeason, $"{season.Name}{_sYr}  [Season]");
                     }
                     if (!dryRun)
                     {
-                        if (shouldHaveSeason) season.AddTag(tagName); else season.RemoveTag(tagName);
+                        ApplyTagChanges(season, changesSeason, shouldHaveSeason);
                         try { _libraryManager.UpdateItem(season, season.Parent, ItemUpdateType.MetadataEdit, null); }
                         catch (Exception ex) { _log.Warn($"Could not save tags for season '{season.Name}': {ex.Message}"); }
                         if (++updateCount % 25 == 0) await Task.Yield();
                     }
-                    if (shouldHaveSeason) tagsAdded++; else tagsRemoved++;
+                    if (shouldHaveSeason) tagsAdded += changesSeason.Count; else tagsRemoved += changesSeason.Count;
                 }
             }
 
@@ -2944,8 +2972,9 @@ namespace HomeScreenCompanion
             if (_preview == null)
             {
                 var orphanTags = LoadFileHistory("homescreencompanion_history.txt")
-                    .Where(t => !string.Equals(t, tagName, StringComparison.OrdinalIgnoreCase)
-                        && !config.Tags.Any(c => !string.IsNullOrWhiteSpace(c.Tag) && string.Equals(c.Tag.Trim(), t, StringComparison.OrdinalIgnoreCase)))
+                    .Where(t => !outTags.Contains(t, StringComparer.OrdinalIgnoreCase)
+                        && !config.Tags.Any(c => !string.IsNullOrWhiteSpace(c.Tag) && (c.AllTags().Contains(t, StringComparer.OrdinalIgnoreCase)
+                            || c.ActiveCollectionTags().Contains(t, StringComparer.OrdinalIgnoreCase) || c.ActivePlaylistTags().Contains(t, StringComparer.OrdinalIgnoreCase))))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
                 foreach (var orphan in orphanTags)
@@ -3156,12 +3185,13 @@ namespace HomeScreenCompanion
                 TagCacheManager.Instance.Save();
                 // Add this tag to the history file so a future full run can clean it up
                 // if the group is later deleted or disabled.
-                if (!string.IsNullOrEmpty(tagName))
+                if (outTags.Count > 0)
                 {
                     var _hist = LoadFileHistory("homescreencompanion_history.txt");
-                    if (!_hist.Any(t => string.Equals(t, tagName, StringComparison.OrdinalIgnoreCase)))
+                    var _newHist = outTags.Where(ot => !_hist.Any(t => string.Equals(t, ot, StringComparison.OrdinalIgnoreCase))).ToList();
+                    if (_newHist.Count > 0)
                     {
-                        _hist.Add(tagName);
+                        _hist.AddRange(_newHist);
                         SaveFileHistory("homescreencompanion_history.txt", _hist);
                     }
                 }
@@ -3216,6 +3246,7 @@ namespace HomeScreenCompanion
             else if (!dryRun)
                 RemoveDeletedGroupLeftovers(cancellationToken);
             CleanupDisabledPlaylists(config, dryRun);
+            SyncPlaylistTags(config, dryRun);
             // Only this group's own top-list (other lists are not fed by this tag).
             SyncTopListFolders(config, dryRun, tagName);
             // Made with the group's Create as top-list: its rows too (the group has no other row).
@@ -3267,30 +3298,37 @@ namespace HomeScreenCompanion
             _log.Blank();
             _log.Info("» Applying tags");
             int tagsRemoved = 0;
-            if (others.Any(t => string.Equals(t.Tag?.Trim(), tagName, StringComparison.OrdinalIgnoreCase)))
-                _log.Skip($"Tag \"{tagName}\" kept — another group in schedule uses it");
-            else
+            bool anyRemovable = false;
+            // The Tag and each extra tag on their own: one another group in schedule uses is kept.
+            foreach (var offTag in tagConfig.AllTags())
             {
-                if (!dryRun) { TagCacheManager.Instance.RemoveTagFromAllEntries(tagName); TagCacheManager.Instance.Save(); }
+                if (others.Any(t => t.AllTags().Contains(offTag, StringComparer.OrdinalIgnoreCase)))
+                {
+                    _log.Skip($"Tag \"{offTag}\" kept — another group in schedule uses it");
+                    continue;
+                }
+                anyRemovable = true;
+                if (!dryRun) { TagCacheManager.Instance.RemoveTagFromAllEntries(offTag); TagCacheManager.Instance.Save(); }
                 foreach (var item in _libraryManager.GetItemList(new InternalItemsQuery
                 {
                     IncludeItemTypes = new[] { "Movie", "Series", "Season", "Episode" },
-                    Tags = new[] { tagName },
+                    Tags = new[] { offTag },
                     Recursive = true
                 }))
                 {
                     if (debug) _log.Debug($"    - {item.Name}{(item.ProductionYear.HasValue ? $" ({item.ProductionYear})" : "")}  [{item.GetType().Name}]");
                     if (!dryRun)
                     {
-                        item.RemoveTag(tagName);
+                        item.RemoveTag(offTag);
                         try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); }
                         catch (Exception ex) { _log.Warn($"Could not save tags for '{item.Name}': {ex.Message}"); }
                     }
                     tagsRemoved++;
                 }
+            }
+            if (anyRemovable)
                 _log.Info(tagsRemoved == 0 ? "    No tag changes needed"
                     : dryRun ? $"    Would remove {tagsRemoved} tags" : $"    -{tagsRemoved} removed ({why})");
-            }
             // A collection that carried the tag itself (home row of collections) loses it too.
             tagsRemoved += CleanupBoxSetTags(config, dryRun, cancellationToken);
             gs.TagsRemoved = tagsRemoved;
@@ -3324,6 +3362,7 @@ namespace HomeScreenCompanion
                 _log.Info("» Playlists");
             }
             CleanupDisabledPlaylists(config, dryRun);
+            SyncPlaylistTags(config, dryRun);
 
             // A top-list built from the tag loses this group's titles, as the tag does.
             if (!dryRun && TopListMembers.Wanted(config, tagName))
@@ -3402,14 +3441,15 @@ namespace HomeScreenCompanion
         private static string RankFilePath(string tagName)
             => Path.Combine(Plugin.Instance!.DataFolderPath, "tag_ranks", SanitizeTopListFolderName(tagName) + ".json");
 
-        // Another group in schedule (not this one) writes the same tag.
-        private static bool TagUsedElsewhereInSchedule(PluginConfiguration config, TagConfig tc)
+        // Another group in schedule (not this one) writes the same tag (default: tc's Tag), as its
+        // Tag or as one of its extra tags.
+        private static bool TagUsedElsewhereInSchedule(PluginConfiguration config, TagConfig tc, string? tagName = null)
         {
-            var tag = (tc.Tag ?? "").Trim();
+            var tag = (tagName ?? tc.Tag ?? "").Trim();
             return tag.Length > 0 && (config.Tags ?? new List<TagConfig>()).Any(t => t.Active && t.EnableTag && !t.OnlyCollection
                 && IsScheduleActive(t.ActiveIntervals, DateTime.Now)
                 && !string.Equals(GroupKey(t), GroupKey(tc), StringComparison.OrdinalIgnoreCase)
-                && string.Equals((t.Tag ?? "").Trim(), tag, StringComparison.OrdinalIgnoreCase));
+                && t.AllTags().Contains(tag, StringComparer.OrdinalIgnoreCase));
         }
 
         // Called when the settings page saves. A deleted group leaves nothing in the config, so
@@ -3428,7 +3468,7 @@ namespace HomeScreenCompanion
                 var deleted = oldConfig.Tags.Where(t => !newKeys.Contains(GroupKey(t))).ToList();
                 if (deleted.Count == 0) return;
 
-                var newTags = new HashSet<string>(newConfig.Tags.Where(t => !string.IsNullOrWhiteSpace(t.Tag)).Select(t => t.Tag.Trim()), StringComparer.OrdinalIgnoreCase);
+                var newTags = new HashSet<string>(newConfig.Tags.Where(t => !string.IsNullOrWhiteSpace(t.Tag)).SelectMany(t => t.AllTags()), StringComparer.OrdinalIgnoreCase);
                 var newCollections = new HashSet<string>(newConfig.Tags.Where(t => t.EnableCollection).Select(CollectionNameOf), StringComparer.OrdinalIgnoreCase);
                 var stillTracked = new HashSet<string>(newConfig.Tags
                     .SelectMany(t => t.HomeSectionTracked ?? new List<HomeSectionTracking>())
@@ -3448,12 +3488,14 @@ namespace HomeScreenCompanion
                         var tag = (t.Tag ?? "").Trim();
                         var groupName = !string.IsNullOrWhiteSpace(t.Name) ? $"{t.Name} [{tag}]" : tag;
 
-                        if (t.EnableTag && tag.Length > 0 && !newTags.Contains(tag)
-                            && !tagHist.Any(h => string.Equals(h, tag, StringComparison.OrdinalIgnoreCase)))
-                        {
-                            tagHist.Add(tag);
-                            tagHistChanged = true;
-                        }
+                        // Its extra tags go the same way as its Tag.
+                        foreach (var gone in t.AllTags())
+                            if (t.EnableTag && !newTags.Contains(gone)
+                                && !tagHist.Any(h => string.Equals(h, gone, StringComparison.OrdinalIgnoreCase)))
+                            {
+                                tagHist.Add(gone);
+                                tagHistChanged = true;
+                            }
                         if (tag.Length > 0 && !newTags.Contains(tag))
                             try { var rf = RankFilePath(tag); if (File.Exists(rf)) File.Delete(rf); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
 
@@ -3921,7 +3963,7 @@ namespace HomeScreenCompanion
             var total = System.Diagnostics.Stopwatch.StartNew();
             if (_nextWatch == null)
             {
-                var ignoredTags = (config.Tags ?? new List<TagConfig>()).Select(t => (t.Tag ?? "").Trim())
+                var ignoredTags = (config.Tags ?? new List<TagConfig>()).SelectMany(t => t.AllTags())
                     .Concat((config.TopLists ?? new List<TopListHomeSection>()).Select(t => (t.TagName ?? "").Trim()))
                     .Where(t => t.Length > 0);
                 _popularity ??= new PopularityCounter(_libraryManager, _userManager, _userDataManager);
@@ -4097,16 +4139,19 @@ namespace HomeScreenCompanion
             {
                 var groups = TopListMembers.GroupsOf(config, tag);
                 memberItemsByGroup.TryGetValue(tag, out var ran);
+                bool saved = true;
                 foreach (var g in groups)
                 {
                     if (ran != null && ran.TryGetValue(g, out var items))
-                        TopListMembers.SavePart(tag, g, items, _jsonSerializer, keepOld: failedGroups.Contains(g));
+                        saved &= TopListMembers.SavePart(tag, g, items, _jsonSerializer, keepOld: failedGroups.Contains(g));
                     else if (!failedGroups.Contains(g) && (config.Tags ?? new List<TagConfig>())
                         .Where(t => string.Equals(GroupKey(t), g, StringComparison.OrdinalIgnoreCase))
                         .All(t => !t.Active || !IsScheduleActive(t.ActiveIntervals)))
-                        TopListMembers.SavePart(tag, g, new List<BaseItem>(), _jsonSerializer);
+                        saved &= TopListMembers.SavePart(tag, g, new List<BaseItem>(), _jsonSerializer);
                 }
-                TopListMembers.Combine(tag, groups, _jsonSerializer);
+                // A part that could not be written: the list keeps its last titles.
+                if (!saved || !TopListMembers.Combine(tag, groups, _jsonSerializer))
+                    _log.Warn($"Top-list '{tag}': its titles could not be saved — it keeps its last titles (see the plugin log)");
             }
         }
 
@@ -4115,8 +4160,9 @@ namespace HomeScreenCompanion
         private void SaveTopListPart(PluginConfiguration config, TagConfig tagConfig, string tagName, IEnumerable<BaseItem> items)
         {
             if (!TopListMembers.Wanted(config, tagName)) return;
-            TopListMembers.SavePart(tagName, GroupKey(tagConfig), items, _jsonSerializer);
-            TopListMembers.Combine(tagName, TopListMembers.GroupsOf(config, tagName), _jsonSerializer);
+            if (!TopListMembers.SavePart(tagName, GroupKey(tagConfig), items, _jsonSerializer)
+                || !TopListMembers.Combine(tagName, TopListMembers.GroupsOf(config, tagName), _jsonSerializer))
+                _log.Warn($"Top-list '{tagName}': its titles could not be saved — it keeps its last titles (see the plugin log)");
         }
 
         // Playlist sync for a single group — one individual playlist per user in PlaylistUserIds.
@@ -5144,7 +5190,7 @@ namespace HomeScreenCompanion
         private HashSet<string> BuildWrittenTags(PluginConfiguration config) => new HashSet<string>(
             (config.Tags ?? new List<TagConfig>())
                 .Where(t => !string.IsNullOrWhiteSpace(t.Tag) && t.EnableTag && !t.OnlyCollection && !IsBoxSetHomeSectionEntry(t))
-                .Select(t => t.Tag.Trim()),
+                .SelectMany(t => t.AllTags()),
             StringComparer.OrdinalIgnoreCase);
 
         private bool IsBoxSetHomeSectionEntry(TagConfig tc)
@@ -5266,30 +5312,101 @@ namespace HomeScreenCompanion
                 }
             }
 
-            if (allHseTags.Count == 0) return 0;
+            // Custom tag on collection: on the collection the group creates. Only HSC's own collections
+            // lose such a tag (a collection made by hand may carry the same tag on purpose). The
+            // history keeps a tag that was switched off or renamed until it has been taken off.
+            var customTags = new HashSet<string>(LoadFileHistory(CollectionTagHistoryFile), StringComparer.OrdinalIgnoreCase);
+            var configuredCustom = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var hscCollections = new HashSet<string>(LoadFileHistory("homescreencompanion_collections.txt"), StringComparer.OrdinalIgnoreCase);
+            foreach (var tc in config.Tags)
+            {
+                if (tc.EnableCollection && !string.IsNullOrWhiteSpace(tc.Tag))
+                    hscCollections.Add(CollectionNameOf(tc));
+                if (string.IsNullOrWhiteSpace(tc.Tag)) continue;
+                var cts = tc.ActiveCollectionTags();
+                configuredCustom.UnionWith(cts);
+                if (!tc.Active || !IsScheduleActive(tc.ActiveIntervals)) continue;
+                foreach (var ct in cts)
+                {
+                    if (!activeTags.ContainsKey(ct)) activeTags[ct] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    activeTags[ct].Add(CollectionNameOf(tc));
+                }
+            }
+            customTags.UnionWith(configuredCustom);
+
+            if (allHseTags.Count == 0 && customTags.Count == 0) return 0;
 
             int removed = 0;
+            bool incomplete = false;   // a collection could not be updated: its old custom tags are kept in the history
             var allBoxSets = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Recursive = true });
             foreach (var boxSet in allBoxSets)
             {
                 if (TagAnchor.IsAnchor(boxSet, _jsonSerializer)) continue;   // holds the tag rows' tags
-                bool updated = false;
-                foreach (var tagName in allHseTags)
+                var toAdd = new List<string>();
+                var toRemove = new List<string>();
+                foreach (var tagName in allHseTags.Concat(customTags).Distinct(StringComparer.OrdinalIgnoreCase))
                 {
+                    if (!allHseTags.Contains(tagName) && !hscCollections.Contains(boxSet.Name ?? "")) continue;
                     var hasTag    = (boxSet.Tags ?? Array.Empty<string>()).Any(t => string.Equals(t, tagName, StringComparison.OrdinalIgnoreCase));
                     activeTags.TryGetValue(tagName, out var targets);
                     var shouldHave = targets != null && targets.Any(n => string.Equals(n, boxSet.Name, StringComparison.OrdinalIgnoreCase));
                     if (shouldHave == hasTag) continue;
-                    if (shouldHave) boxSet.AddTag(tagName); else { boxSet.RemoveTag(tagName); removed++; }
-                    updated = true;
+                    if (shouldHave) toAdd.Add(tagName); else toRemove.Add(tagName);
                 }
-                if (updated && !dryRun)
+                removed += toRemove.Count;
+                // A dry run only counts: the collection (a cached item) is not touched.
+                if (dryRun || (toAdd.Count == 0 && toRemove.Count == 0)) continue;
+                foreach (var t in toAdd) boxSet.AddTag(t);
+                foreach (var t in toRemove) boxSet.RemoveTag(t);
+                try { _libraryManager.UpdateItem(boxSet, boxSet.Parent, ItemUpdateType.MetadataEdit, null); }
+                catch (Exception ex) { incomplete = true; _log.Warn($"Could not update tags on collection '{boxSet.Name}': {ex.Message}"); }
+            }
+            // A tag switched off or renamed stays in the history until every collection has lost it.
+            if (!dryRun) SaveFileHistory(CollectionTagHistoryFile, (incomplete ? customTags : configuredCustom).ToList());
+            return removed;
+        }
+
+        private const string CollectionTagHistoryFile = "homescreencompanion_collection_tags.txt";
+        private const string PlaylistTagHistoryFile = "homescreencompanion_playlist_tags.txt";
+
+        // Custom tag on playlist: put on every playlist the group made (PlaylistMappings), and taken
+        // off them when it is switched off or renamed. Only HSC's own playlists are touched.
+        private int SyncPlaylistTags(PluginConfiguration config, bool dryRun)
+        {
+            var managed = new HashSet<string>(LoadFileHistory(PlaylistTagHistoryFile), StringComparer.OrdinalIgnoreCase);
+            var configured = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var tc in config.Tags ?? new List<TagConfig>())
+                configured.UnionWith(tc.ActivePlaylistTags());
+            managed.UnionWith(configured);
+            int changed = 0;
+            bool incomplete = false;   // a playlist could not be read or updated: old tags stay in the history
+            if (managed.Count > 0)
+            {
+                foreach (var tc in config.Tags ?? new List<TagConfig>())
                 {
-                    try { _libraryManager.UpdateItem(boxSet, boxSet.Parent, ItemUpdateType.MetadataEdit, null); }
-                    catch (Exception ex) { _log.Warn($"Could not update tags on collection '{boxSet.Name}': {ex.Message}"); }
+                    var want = new HashSet<string>(tc.ActivePlaylistTags(), StringComparer.OrdinalIgnoreCase);
+                    foreach (var m in tc.PlaylistMappings ?? new List<PlaylistMapping>())
+                    {
+                        if (!Guid.TryParse(m.PlaylistId, out var plId)) continue;
+                        if (!(_libraryManager.GetItemById(plId) is BaseItem pl)) { incomplete = true; continue; }
+                        var has = new HashSet<string>(pl.Tags ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+                        var toRemove = has.Where(t => managed.Contains(t) && !want.Contains(t)).ToList();
+                        var toAdd = want.Where(t => !has.Contains(t)).ToList();
+                        if (toRemove.Count == 0 && toAdd.Count == 0) continue;
+                        changed += toRemove.Count + toAdd.Count;
+                        _log.Debug($"  Playlist '{pl.Name}' {(dryRun ? "would get" : "got")} tags{string.Concat(toAdd.Select(t => $" +{t}"))}{string.Concat(toRemove.Select(t => $" -{t}"))}");
+                        // A dry run only says what would change: the playlist (a cached item) is not touched.
+                        if (dryRun) continue;
+                        foreach (var t in toRemove) pl.RemoveTag(t);
+                        foreach (var t in toAdd) pl.AddTag(t);
+                        try { _libraryManager.UpdateItem(pl, pl.Parent, ItemUpdateType.MetadataEdit, null); }
+                        catch (Exception ex) { incomplete = true; _log.Warn($"Could not update tags on playlist '{pl.Name}': {ex.Message}"); }
+                    }
                 }
             }
-            return removed;
+            // A tag switched off or renamed stays in the history until every playlist has lost it.
+            if (!dryRun) SaveFileHistory(PlaylistTagHistoryFile, (incomplete ? managed : configured).ToList());
+            return changed;
         }
 
         internal static int UpdateUntrackedSections(
@@ -5985,10 +6102,10 @@ namespace HomeScreenCompanion
                 catch { }
             }
 
-            // Never let the group's own output tag satisfy its Tag: criteria (see _writtenTags).
-            var ownTag = tagConfig.Tag?.Trim();
-            if (!string.IsNullOrEmpty(ownTag) && _writtenTags.Contains(ownTag!))
-                itemTags = itemTags.Where(t => !string.Equals(t, ownTag, StringComparison.OrdinalIgnoreCase)).ToArray();
+            // Never let the group's own output tags satisfy its Tag: criteria (see _writtenTags).
+            var ownTags = tagConfig.AllTags().Where(t => _writtenTags.Contains(t)).ToList();
+            if (ownTags.Count > 0)
+                itemTags = itemTags.Where(t => !ownTags.Contains(t, StringComparer.OrdinalIgnoreCase)).ToArray();
 
             if (hasFilters)
             {
@@ -6671,7 +6788,7 @@ namespace HomeScreenCompanion
                 case "LocalPlaylist":   return "Local playlist";
                 case "Manual":          return "Manual list";
                 case "NextWatch":       return "Your Next Watch";
-                case "AI":              return "AI · " + (string.IsNullOrWhiteSpace(tc.AiProvider) ? "unknown provider" : tc.AiProvider);
+                case "AI":              return "AI · " + (string.IsNullOrWhiteSpace(tc.AiProvider) ? "unknown provider" : AiConnection.Label(tc.AiProvider));
                 default:
                     var url = tc.Url ?? "";
                     if (url.IndexOf("mdblist.com", StringComparison.OrdinalIgnoreCase) >= 0) return "MDBList";
@@ -6805,9 +6922,10 @@ namespace HomeScreenCompanion
 
             if (gs.EnableTag && !gs.BoxSetHse && FirstShown("tag:" + gs.TagName))
             {
-                if (dryRun) _log.Skip($"Tag \"{gs.TagName}\": would add {gs.TagsAdded}, remove {gs.TagsRemoved} (dry run)");
-                else if (gs.TagsAdded == 0 && gs.TagsRemoved == 0) _log.Ok($"Tag \"{gs.TagName}\": up to date");
-                else _log.Ok($"Tag \"{gs.TagName}\": +{gs.TagsAdded} added, -{gs.TagsRemoved} removed");
+                var tagLabel = gs.Tags.Count > 1 ? "Tags " + string.Join(", ", gs.Tags.Select(t => $"\"{t}\"")) : $"Tag \"{gs.TagName}\"";
+                if (dryRun) _log.Skip($"{tagLabel}: would add {gs.TagsAdded}, remove {gs.TagsRemoved} (dry run)");
+                else if (gs.TagsAdded == 0 && gs.TagsRemoved == 0) _log.Ok($"{tagLabel}: up to date");
+                else _log.Ok($"{tagLabel}: +{gs.TagsAdded} added, -{gs.TagsRemoved} removed");
             }
 
             if (gs.EnableCollection && FirstShown("coll:" + gs.CollectionName))
@@ -7474,6 +7592,11 @@ namespace HomeScreenCompanion
         {
             var dataPath = Plugin.Instance.DataFolderPath;
             var topListsPath = Path.Combine(dataPath, "toplists");
+
+            // Content Auto: a list whose source's titles turned out to be the other kind is queued
+            // here and made again below.
+            if (!dryRun && SourceTopLists.ResolveAutoTypes(config, _libraryManager, _log, onlyTag))
+                Plugin.Instance.SaveConfiguration();
 
             // Lists switched off in their source: rows, library and copies go first (a list made
             // again in the same folder is written below).

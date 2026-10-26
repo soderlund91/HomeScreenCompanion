@@ -61,10 +61,14 @@ namespace HomeScreenCompanion
             catch (Exception swallowed) { PluginLog.Swallowed(swallowed); return null; }
         }
 
+        // Written next to it first: a failed write never leaves a cut-off list behind.
         private static void WriteIds(string file, IEnumerable<string> ids, IJsonSerializer json)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(file)!);
-            json.SerializeToFile(ids.ToList(), file);
+            var tmp = file + ".tmp";
+            json.SerializeToFile(ids.ToList(), tmp);
+            if (File.Exists(file)) File.Replace(tmp, file, null);
+            else File.Move(tmp, file);
         }
 
         /// <summary>The ids of the saved list, in order (null = no list saved yet).</summary>
@@ -104,8 +108,9 @@ namespace HomeScreenCompanion
         /// <summary>
         /// One group's titles (duplicates dropped). keepOld: one of the group's sources failed and its
         /// titles were kept, so the group's saved titles not in the new list stay, after it.
+        /// False when it could not be written (the list should then not be combined).
         /// </summary>
-        internal static void SavePart(string tag, string groupKey, IEnumerable<BaseItem> items, IJsonSerializer json, bool keepOld = false)
+        internal static bool SavePart(string tag, string groupKey, IEnumerable<BaseItem> items, IJsonSerializer json, bool keepOld = false)
         {
             try
             {
@@ -121,16 +126,17 @@ namespace HomeScreenCompanion
                     foreach (var id in ReadIds(file, json) ?? new List<string>())
                         if (seen.Add(id)) ids.Add(id);
                 WriteIds(file, ids, json);
+                return true;
             }
-            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+            catch (Exception ex) { PluginLog.Write("WRN", "Top-lists", $"Top-list '{tag}': titles could not be saved — " + PluginLog.Describe(ex)); return false; }
         }
 
         /// <summary>
         /// The list: the parts of the tag's groups in their order. Parts of groups that no longer write
         /// the tag are removed. Nothing is written while none of the groups has a part yet (the
-        /// list stays as it was).
+        /// list stays as it was). False when it could not be written (the list stays as it was).
         /// </summary>
-        internal static void Combine(string tag, IReadOnlyList<string> groupKeys, IJsonSerializer json)
+        internal static bool Combine(string tag, IReadOnlyList<string> groupKeys, IJsonSerializer json)
         {
             try
             {
@@ -152,8 +158,9 @@ namespace HomeScreenCompanion
                         if (seen.Add(id)) ids.Add(id);
                 }
                 if (any) WriteIds(PathFor(tag), ids, json);
+                return true;
             }
-            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+            catch (Exception ex) { PluginLog.Write("WRN", "Top-lists", $"Top-list '{tag}': titles could not be saved — " + PluginLog.Describe(ex)); return false; }
         }
 
         /// <summary>The list was removed: its saved titles and parts go too.</summary>

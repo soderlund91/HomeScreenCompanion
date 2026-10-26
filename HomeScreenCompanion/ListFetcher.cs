@@ -556,6 +556,7 @@ namespace HomeScreenCompanion
             string claudeModel,
             string ollamaBaseUrl,
             string ollamaModel,
+            IList<AiConnection>? aiConnections,
             string systemPrompt,
             string recentlyWatchedContext,
             int limit,
@@ -595,11 +596,23 @@ namespace HomeScreenCompanion
                         throw new InvalidOperationException("Ollama model is not configured.");
                     rawJson = await CallOllama(ollamaBaseUrl, ollamaModel, systemPrompt, userMessage, cancellationToken);
                 }
+                else if (AiConnection.IsCompat(provider))
+                {
+                    // A removed connection must not fall through to OpenAI below.
+                    var conn = AiConnection.Find(aiConnections, provider)
+                        ?? throw new InvalidOperationException("AI connection not found");
+                    if (string.IsNullOrWhiteSpace(conn.BaseUrl))
+                        throw new InvalidOperationException($"{conn.Name}: base URL is not configured.");
+                    if (string.IsNullOrWhiteSpace(conn.Model))
+                        throw new InvalidOperationException($"{conn.Name}: model is not configured.");
+                    rawJson = await CallOpenAi(conn.BaseUrl.Trim().TrimEnd('/') + "/chat/completions", conn.ApiKey, conn.Model.Trim(),
+                        systemPrompt, userMessage, true, string.IsNullOrWhiteSpace(conn.Name) ? "AI" : conn.Name, cancellationToken, timeoutSeconds: 120);
+                }
                 else
                 {
                     if (string.IsNullOrWhiteSpace(openAiApiKey))
                         throw new InvalidOperationException("OpenAI API key is not configured.");
-                    rawJson = await CallOpenAi(openAiApiKey, openAiModel ?? "gpt-4o-mini", systemPrompt, userMessage, cancellationToken);
+                    rawJson = await CallOpenAi("https://api.openai.com/v1/chat/completions", openAiApiKey, openAiModel ?? "gpt-4o-mini", systemPrompt, userMessage, false, "OpenAI", cancellationToken);
                 }
 
                 var cleaned = CleanAiJsonOutput(rawJson);
@@ -615,27 +628,45 @@ namespace HomeScreenCompanion
             }
         }
 
-        private async Task<string> CallOpenAi(string apiKey, string model, string systemPrompt, string userMessage, CancellationToken cancellationToken)
+        // OpenAI's chat API, also spoken by the OpenAI-compatible services. jsonMode asks for a JSON
+        // object (response_format json_object); a service that rejects that is asked again without it.
+        // timeoutSeconds: OpenAI-compatible services are often local models, so they get longer
+        // (also when asked again without JSON mode).
+        private async Task<string> CallOpenAi(string url, string apiKey, string model, string systemPrompt, string userMessage, bool jsonMode, string name, CancellationToken cancellationToken, int timeoutSeconds = 30)
         {
+            // JSON mode only allows an object: the system prompt's array goes inside one, said in
+            // the system prompt itself so the two instructions do not disagree.
+            var system = jsonMode
+                ? systemPrompt + "\n\nThis answer must be a JSON object: put the JSON array described above in it as \"items\", like {\"items\": [ ... ]}, and nothing else."
+                : systemPrompt;
             var requestBody = $"{{" +
                 $"\"model\":{EscapeJsonString(model)}," +
                 $"\"messages\":[" +
-                $"{{\"role\":\"system\",\"content\":{EscapeJsonString(systemPrompt)}}}," +
+                $"{{\"role\":\"system\",\"content\":{EscapeJsonString(system)}}}," +
                 $"{{\"role\":\"user\",\"content\":{EscapeJsonString(userMessage)}}}" +
-                $"]}}";
+                $"]" + (jsonMode ? ",\"response_format\":{\"type\":\"json_object\"}" : "") + "}";
 
-            var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, "https://api.openai.com/v1/chat/completions");
-            request.Headers.Add("Authorization", $"Bearer {apiKey}");
+            var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, url);
+            if (!string.IsNullOrWhiteSpace(apiKey))
+                request.Headers.Add("Authorization", $"Bearer {apiKey.Trim()}");
             request.Content = new System.Net.Http.StringContent(requestBody, Encoding.UTF8, "application/json");
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(TimeSpan.FromSeconds(30));
+            cts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
 
             var response = await _netHttpClient.SendAsync(request, cts.Token);
             var responseBody = await response.Content.ReadAsStringAsync();
 
+            // A service without JSON mode says so about response_format / json_object: asked again
+            // without it (any other 400 is a real error and shown as one).
+            if (jsonMode && ((int)response.StatusCode == 400 || (int)response.StatusCode == 422)
+                && (responseBody.IndexOf("response_format", StringComparison.OrdinalIgnoreCase) >= 0
+                    || responseBody.IndexOf("json_object", StringComparison.OrdinalIgnoreCase) >= 0
+                    || responseBody.IndexOf("json mode", StringComparison.OrdinalIgnoreCase) >= 0))
+                return await CallOpenAi(url, apiKey, model, systemPrompt, userMessage, false, name, cancellationToken, timeoutSeconds);
+
             if (!response.IsSuccessStatusCode)
-                throw new InvalidOperationException($"OpenAI API error {(int)response.StatusCode}: {responseBody}");
+                throw new InvalidOperationException($"{name} API error {(int)response.StatusCode}: {responseBody}");
 
             var parsed = _jsonSerializer.DeserializeFromString<OpenAiResponse>(responseBody);
             return parsed?.choices?.FirstOrDefault()?.message?.content ?? "";
@@ -643,13 +674,15 @@ namespace HomeScreenCompanion
 
         private async Task<string> CallGemini(string apiKey, string model, string systemPrompt, string userMessage, CancellationToken cancellationToken)
         {
-            var url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent";
             var requestBody = $"{{" +
                 $"\"systemInstruction\":{{\"parts\":[{{\"text\":{EscapeJsonString(systemPrompt)}}}]}}," +
                 $"\"contents\":[{{\"role\":\"user\",\"parts\":[{{\"text\":{EscapeJsonString(userMessage)}}}]}}]" +
                 $"}}";
 
             var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, url);
+            // The key in a header, not in the URL (a proxy may log URLs).
+            request.Headers.Add("x-goog-api-key", apiKey);
             request.Content = new System.Net.Http.StringContent(requestBody, Encoding.UTF8, "application/json");
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -724,7 +757,7 @@ namespace HomeScreenCompanion
 
         private static string CleanAiJsonOutput(string raw)
         {
-            var trimmed = raw.Trim();
+            var trimmed = (raw ?? "").Trim();
             if (trimmed.StartsWith("```"))
             {
                 var firstNewline = trimmed.IndexOf('\n');
@@ -732,7 +765,47 @@ namespace HomeScreenCompanion
                 if (firstNewline > 0 && lastFence > firstNewline)
                     trimmed = trimmed.Substring(firstNewline + 1, lastFence - firstNewline - 1).Trim();
             }
+            // The array inside a JSON object ({"items":[…]}) or inside text around it: the first
+            // complete array of objects or strings (so "[5] picks: [ … ]" gives the list, not "[5]").
+            if (!trimmed.StartsWith("["))
+            {
+                var found = FirstItemArray(trimmed);
+                if (found != null) trimmed = found;
+            }
             return trimmed;
+        }
+
+        // The first [ … ] in text whose first element is an object or a string, up to its own
+        // closing bracket (brackets inside strings and nested arrays are skipped). Null: none.
+        private static string? FirstItemArray(string text)
+        {
+            for (int start = text.IndexOf('['); start >= 0; start = text.IndexOf('[', start + 1))
+            {
+                int i = start + 1;
+                while (i < text.Length && char.IsWhiteSpace(text[i])) i++;
+                if (i >= text.Length) continue;
+                if (text[i] == ']') return text.Substring(start, i - start + 1);   // [] — no picks: an empty list, not a failure
+                if (text[i] != '{' && text[i] != '"') continue;
+                int depth = 0, end = -1;
+                bool inString = false, escaped = false;
+                for (int j = start; j < text.Length && end < 0; j++)
+                {
+                    char c = text[j];
+                    if (inString)
+                    {
+                        if (escaped) escaped = false;
+                        else if (c == '\\') escaped = true;
+                        else if (c == '"') inString = false;
+                        continue;
+                    }
+                    if (c == '"') inString = true;
+                    else if (c == '[' || c == '{') depth++;
+                    else if ((c == ']' || c == '}') && --depth == 0) end = c == ']' ? j : int.MaxValue;
+                }
+                if (end >= 0 && end != int.MaxValue) return text.Substring(start, end - start + 1);
+                if (end < 0) return null;   // not closed: a cut-off answer
+            }
+            return null;
         }
 
         private static string EscapeJsonString(string value)

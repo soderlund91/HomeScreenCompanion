@@ -44,6 +44,14 @@ namespace HomeScreenCompanion
             // Groups deleted on the settings page: their tag and home rows are cleaned up by the next full run.
             HomeScreenCompanionTask.RecordDeletedGroups(Configuration, configuration as PluginConfiguration);
             LegacyForkCleanup.KeepCleanupDone(Configuration, configuration as PluginConfiguration);
+            // What Copy & Sync added for its target users is the task's own record (the page never
+            // edits it). A copy: a running Copy & Sync keeps working on the old one (see SaveRunChanges).
+            if (configuration is PluginConfiguration incoming && Configuration is PluginConfiguration current)
+            {
+                incoming.HomeSyncAdditions = (current.HomeSyncAdditions ?? new List<HomeSyncAddition>())
+                    .Select(a => new HomeSyncAddition { List = a.List, Key = a.Key, UserId = a.UserId, Picked = a.Picked, SectionId = a.SectionId }).ToList();
+                HomeSectionSyncTask.KeepKeysOfRenamedSources(current, incoming);
+            }
             base.UpdateConfiguration(configuration);
             HomeScreenCompanionTask.RecordImportedCollections(Configuration);
             // Toggling the collection mirror adds (or removes) memberships for all existing copies.
@@ -58,6 +66,14 @@ namespace HomeScreenCompanion
             base.SaveConfiguration();
             HomeScreenCompanionTask.RecordImportedCollections(Configuration);
             RealPosterBadges.ConfigSaved();
+        }
+
+        // A save that cannot change any badge: only who is on which source or top-list and where
+        // their rows are (Copy & Sync, which saves on most runs since Copy all makes new rows).
+        internal void SaveUsersAndRows()
+        {
+            base.SaveConfiguration();
+            HomeScreenCompanionTask.RecordImportedCollections(Configuration);
         }
 
         public IEnumerable<PluginPageInfo> GetPages()
