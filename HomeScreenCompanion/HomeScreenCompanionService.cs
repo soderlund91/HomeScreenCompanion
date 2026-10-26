@@ -681,6 +681,8 @@ namespace HomeScreenCompanion
         public bool ShowCopyPasteButtons { get; set; }
         public bool ShowImportCollectionButton { get; set; }
         public bool RankedCollectionsEnabled { get; set; }
+        // Null in backups made before the settings level: the current level is kept.
+        public string? SettingsLevel { get; set; }
     }
 
     public class BackupApiKeys
@@ -3895,7 +3897,8 @@ public class HomeScreenCompanionService : IService
                     TopListMirrorCollections  = config.TopListMirrorCollections,
                     ShowCopyPasteButtons      = config.ShowCopyPasteButtons,
                     ShowImportCollectionButton = config.ShowImportCollectionButton,
-                    RankedCollectionsEnabled  = config.RankedCollectionsEnabled
+                    RankedCollectionsEnabled  = config.RankedCollectionsEnabled,
+                    SettingsLevel             = config.SettingsLevel ?? ""
                 };
                 file.Sections.Add("Settings");
             }
@@ -4033,6 +4036,7 @@ public class HomeScreenCompanionService : IService
                     config.ShowCopyPasteButtons      = s.ShowCopyPasteButtons;
                     config.ShowImportCollectionButton = s.ShowImportCollectionButton;
                     config.RankedCollectionsEnabled  = s.RankedCollectionsEnabled;
+                    if (s.SettingsLevel != null) config.SettingsLevel = s.SettingsLevel;
                     response.Applied.Add("Settings");
                 }
 

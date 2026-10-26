@@ -46,6 +46,9 @@ namespace HomeScreenCompanion
         public bool ShowImportCollectionButton { get; set; } = false;
         // Settings > Features (experimental): offers "Keep the list order" on each source's Collection tab.
         public bool RankedCollectionsEnabled { get; set; } = false;
+        // The page's settings level: "Basic" hides the power-user settings that are not in use,
+        // "Advanced" shows them all. "" = not chosen yet (the page picks one from what is in use).
+        public string SettingsLevel { get; set; } = "";
         public List<TagConfig> Tags { get; set; } = new List<TagConfig>();
         public List<TopListHomeSection> TopLists { get; set; } = new List<TopListHomeSection>();
         public List<SavedMediaInfoFilter> SavedFilters { get; set; } = new List<SavedMediaInfoFilter>();
