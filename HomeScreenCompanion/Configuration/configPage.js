@@ -722,12 +722,21 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     var ADV_BADGE = '<span class="hsc-adv-badge">Advanced</span>';
 
     // Whether an .hsc-adv element is set to something other than its default. data-adv says how to
-    // tell: extra-tags (any filled in), check (its checkbox ticked), target (other than Series
-    // only); otherwise its select's value is not one of data-adv-def ("|"-separated).
+    // tell: check (its checkbox ticked), target (other than Series only), tag-art (a generated or
+    // uploaded tag image), blacklist (the card's blacklist has ids); otherwise its select's value
+    // is not one of data-adv-def ("|"-separated).
     function advInUse(el) {
         var kind = el.getAttribute('data-adv') || '';
-        if (kind === 'extra-tags') return uniqueTagValues(el.querySelectorAll('.txtExtraTag')).length > 0;
         if (kind === 'check') return !!el.querySelector('input[type="checkbox"]:checked');
+        if (kind === 'tag-art') {
+            var poster = el.querySelector('.coll-style-picker[data-kind="poster"] input:checked');
+            var bg = el.querySelector('.coll-style-picker[data-kind="background"] input:checked');
+            return !!((poster && poster.value) || (bg && bg.value) || (el.querySelector('.hiddenBgPath') || {}).value);
+        }
+        if (kind === 'blacklist') {
+            var row = el.closest('.tag-row');
+            return !!(row && ((row.querySelector('.txtTagBlacklist') || {}).value || '').trim());
+        }
         if (kind === 'target') {
             var c = el.querySelectorAll('input[type="checkbox"]');   // Series, Season, Episode
             return c.length === 3 && !(c[0].checked && !c[1].checked && !c[2].checked);
@@ -742,7 +751,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     function refreshAdvanced(root) {
         if (!root) return;
         root.querySelectorAll('.hsc-adv').forEach(function (el) {
-            el.classList.toggle('hsc-adv-hidden', settingsLevel !== 'Advanced' && !advInUse(el));
+            var hide = settingsLevel !== 'Advanced' && !advInUse(el);
+            el.classList.toggle('hsc-adv-hidden', hide);
+            // A card tab that is hidden while open (Blacklist): show the Source tab instead.
+            if (hide && el.classList.contains('tag-tab') && el.classList.contains('active')) {
+                var first = el.parentElement.querySelector('.tag-tab[data-tab="general"]');
+                if (first) first.click();
+            }
         });
     }
 
@@ -750,21 +765,21 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     function hseSettingsUseAdvanced(json) {
         var s = {};
         try { s = JSON.parse(json || '{}') || {}; } catch (e) { }
-        var img = s.ImageType || '';
-        return !!(s.DisplayMode || s.SortBy || s.SortOrder || s.ScrollDirection || normCardSize(s.CardSizeOffset) !== '0'
-            || (img && !(img === 'Primary' && s.SectionType === 'playlist')));
+        return !!(s.DisplayMode || s.ScrollDirection || normCardSize(s.CardSizeOffset) !== '0');
     }
 
     // The level for a configuration saved before there was one: Advanced when it already uses a
     // power-user setting, else Basic.
     function initialSettingsLevel(config) {
         var used = (config.Tags || []).some(function (t) {
-            return (t.ExtraTags || []).some(function (x) { return (x || '').trim(); })
-                || t.TagTargetSeason || t.TagTargetEpisode || t.CollectionTargetSeason || t.CollectionTargetEpisode
+            return t.TagTargetSeason || t.TagTargetEpisode || t.CollectionTargetSeason || t.CollectionTargetEpisode
                 || t.MediaInfoTargetSeason || t.MediaInfoTargetEpisode
                 || t.EnableCollectionTag || t.EnablePlaylistTag || t.CollectionKeepOrder
+                || t.TagPosterStyle || t.TagBackgroundStyle || t.TagBackgroundPath
+                || t.OverrideWhenActive || (t.Blacklist || []).length > 0
                 || hseSettingsUseAdvanced(t.HomeSectionSettings);
-        }) || (config.TopLists || []).some(function (tl) { return hseSettingsUseAdvanced(tl.HomeSectionSettings); });
+        }) || (config.TopLists || []).some(function (tl) { return hseSettingsUseAdvanced(tl.HomeSectionSettings); })
+          || (config.HomeSyncProfiles || []).some(function (p) { return p && p.AddToSources; });
         return used ? 'Advanced' : 'Basic';
     }
 
@@ -3202,7 +3217,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     <div class="tag-tab" data-tab="collection">Collection</div>
                     <div class="tag-tab" data-tab="playlist">Playlist</div>
                     <div class="tag-tab" data-tab="schedule">Schedule</div>
-                    <div class="tag-tab" data-tab="advanced">Blacklist</div>
+                    <div class="tag-tab hsc-adv" data-adv="blacklist" data-tab="advanced">Blacklist${ADV_BADGE}</div>
                     <div class="tag-tab" data-tab="homescreen">Home Screen</div>
                 </div>
                 
@@ -3408,11 +3423,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                                 <input is="emby-input" type="text" class="txtTagName" label="Tag Name" value="${tagName}" placeholder="${labelName}" />
                                 <div class="fieldDescription">Leave empty to use Display Name.</div>
                             </div>
-                            <div class="hsc-adv" data-adv="extra-tags">
                             <div class="extra-tag-list">${(tagConfig.ExtraTags || []).map(getExtraTagRowHtml).join('')}</div>
-                            <button is="emby-button" type="button" class="raised btnAddExtraTag hsc-btn-dashed" style="width:100%;"><i class="md-icon" style="margin-right:5px;">add</i>Add another tag${ADV_BADGE}</button>
+                            <button is="emby-button" type="button" class="raised btnAddExtraTag hsc-btn-dashed" style="width:100%;"><i class="md-icon" style="margin-right:5px;">add</i>Add another tag</button>
                             <div class="fieldDescription" style="margin-bottom:12px;">Extra tags go on the same titles. The home row, top-list and tag images use the Tag Name.</div>
-                            </div>
                             <div class="mi-tag-target-section hsc-adv" data-adv="target" style="margin-top:4px;">
                                 <div style="font-size:0.85em; opacity:0.6; margin-bottom:6px; display:flex; align-items:center; gap:8px;">
                                     <span>For TV shows, choose what level to tag:${ADV_BADGE}</span>
@@ -3434,8 +3447,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                                 </div>
                             </div>
 
-                            <details class="tag-art-more"${tagConfig.TagPosterStyle || tagConfig.TagBackgroundStyle || tagConfig.TagBackgroundPath ? ' data-custom="1"' : ''}>
-                            <summary><span><i class="md-icon" style="margin-right:5px;">image</i>Customize tag images<span class="tag-art-custom-chip">customized</span></span><i class="md-icon tag-art-chevron">expand_more</i></summary>
+                            <details class="tag-art-more hsc-adv" data-adv="tag-art"${tagConfig.TagPosterStyle || tagConfig.TagBackgroundStyle || tagConfig.TagBackgroundPath ? ' data-custom="1"' : ''}>
+                            <summary><span><i class="md-icon" style="margin-right:5px;">image</i>Customize tag images${ADV_BADGE}<span class="tag-art-custom-chip">customized</span></span><i class="md-icon tag-art-chevron">expand_more</i></summary>
                             <div class="fieldDescription" style="margin-top:8px;">Images for the <strong>tag itself</strong>: the poster and background of the tag's own page in Emby, the page that opens when you click the tag on a movie or show. Not the posters of the movies or shows: those are never changed here.</div>
                             <div style="margin-top:15px;">
                                 <p style="margin:0 0 8px 0; font-size:0.9em; font-weight:bold; opacity:0.7;">Tag Poster</p>
@@ -3497,10 +3510,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             }).join('')}
                         </div>
                     </div>
-                    <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:16px; ${intervals.length === 0 ? 'opacity:0.4;' : ''}">
+                    <div class="checkboxContainer checkboxContainer-withDescription hsc-adv" data-adv="check" style="margin-top:16px; ${intervals.length === 0 ? 'opacity:0.4;' : ''}">
                         <label>
                             <input is="emby-checkbox" type="checkbox" class="chkOverrideWhenActive" ${overrideChecked} ${intervals.length === 0 ? 'disabled' : ''} />
-                            <span>Priority override when active</span>
+                            <span>Priority override when active${ADV_BADGE}</span>
                         </label>
                         <div class="fieldDescription">When this entry is in schedule, all other entries sharing the same tag or collection are suppressed — only this entry's items keep the tag and collection. If several priority entries are in schedule at once, the one highest in the list wins.</div>
                     </div>
@@ -5743,8 +5756,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         // Your Next Watch: Primary = show cards use the show's poster (Auto would show the episode image).
         var imgTypeVal = s.ImageType || (st === 'playlist' ? 'Primary' : '');
         var imgTypeDisabled = viewTypeVal === 'spotlight';
-        // A playlist row's Auto shows the poster too, so Primary is its default as well.
-        html += '<div class="hsc-adv" data-adv-def="' + (st === 'playlist' ? '|Primary' : '') + '" style="margin-bottom:12px;"><label class="selectLabel">Image Type' + ADV_BADGE + '</label>';
+        html += '<div style="margin-bottom:12px;"><label class="selectLabel">Image Type</label>';
         html += '<select is="emby-select" class="selHseImageType hse-field-str" data-field="ImageType" style="width:100%;"' + (imgTypeDisabled ? ' disabled' : '') + '><option value=""' + (imgTypeVal === '' ? ' selected' : '') + '>Auto</option>';
         ['Primary','Thumb'].forEach(function(o) { html += '<option value="' + o + '"' + (imgTypeVal === o ? ' selected' : '') + '>' + o + '</option>'; });
         html += '</select>';
@@ -5755,7 +5767,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         html += '<select is="emby-select" class="selHseCardSize hse-field-str" data-field="CardSizeOffset" style="width:100%;">' + cardSizeOptionsHtml(s.CardSizeOffset) + '</select></div>';
 
         var sortByVal = s.SortBy || '';
-        html += '<div class="hse-nw-hide hse-tl-hide hsc-adv" data-adv-def="" style="margin-bottom:12px;"><label class="selectLabel">Sort By' + ADV_BADGE + '</label>';
+        html += '<div class="hse-nw-hide hse-tl-hide" style="margin-bottom:12px;"><label class="selectLabel">Sort By</label>';
         html += '<select is="emby-select" class="hse-field-str" data-field="SortBy" style="width:100%;">';
         html += '<option value=""' + (sortByVal === '' ? ' selected' : '') + '>(Default)</option>';
         [
@@ -5774,7 +5786,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         html += '</div>';
 
         var sortOrderVal = s.SortOrder || '';
-        html += '<div class="hse-nw-hide hse-tl-hide hsc-adv" data-adv-def="" style="margin-bottom:12px;"><label class="selectLabel">Sort Order' + ADV_BADGE + '</label>';
+        html += '<div class="hse-nw-hide hse-tl-hide" style="margin-bottom:12px;"><label class="selectLabel">Sort Order</label>';
         html += '<select is="emby-select" class="hse-field-str" data-field="SortOrder" style="width:100%;">';
         html += '<option value=""' + (sortOrderVal === '' ? ' selected' : '') + '>(Default)</option>';
         [['Ascending','Ascending'],['Descending','Descending']].forEach(function(o) { html += '<option value="' + o[0] + '"' + (sortOrderVal === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; });
@@ -7125,8 +7137,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '</span></div>',
             '<div class="hsc-user-list hsc-profile-row-list"></div>',
             '</div>',
-            '<div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:16px;">',
-            '<label><input is="emby-checkbox" type="checkbox" class="chkHscProfileAddToSources"' + (p.AddToSources ? ' checked' : '') + ' /><span>Also add users to the sources and top-lists of copied rows</span></label>',
+            '<div class="checkboxContainer checkboxContainer-withDescription hsc-adv" data-adv="check" style="margin-top:16px;">',
+            '<label><input is="emby-checkbox" type="checkbox" class="chkHscProfileAddToSources"' + (p.AddToSources ? ' checked' : '') + ' /><span>Also add users to the sources and top-lists of copied rows' + ADV_BADGE + '</span></label>',
             '<div class="fieldDescription">Each user is added to the source or top-list of every row they get, so the full sync keeps that row updated for them and makes their own playlist rows (such as Your Next Watch). They show up in its user list. Copy & Sync takes them off again when the row is no longer copied or the user leaves the profile, and the row stays as a plain copy (a personal playlist row goes). Users you added yourself stay. Off: the rows are only copied, and a top-list row only goes to the list\'s own users, as before 4.4.3.</div>',
             '</div>',
             '<div class="hsc-eyebrow" style="margin:16px 0 8px;">Copy to</div>',
@@ -7162,6 +7174,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '</div>'
         ].join('');
         container.dataset.loaded = '1';
+        refreshAdvanced(container);
     }
 
     // Select-all and the Unrestricted / Restricted links of one profile's target list.
@@ -7263,6 +7276,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var list = container.querySelector('.hsc-profile-list');
                     list.insertAdjacentHTML('beforeend', hscProfileHtml({ Active: true, SourceUserId: '', TargetUserIds: [], LibraryOrder: false, Mode: 'all', KeepOwnRows: true, AddToSources: false, SelectedRows: [] }, container._hscUsers || [], true));
                     wireHscProfile(list.lastElementChild);
+                    refreshAdvanced(list.lastElementChild);
                     refreshHscProfiles(container);
                     setTimeout(checkFormState, 0);
                 });
@@ -9411,8 +9425,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 '<div style="' + fieldStyle + '">' + positionFieldHtml(preset ? preset.position : '', '', labelStyle, HSC_POSITION_DESC) + '</div>' +
 
-                '<div class="hsc-adv" data-adv-def="" style="' + fieldStyle + '">' +
-                '<label style="' + labelStyle + '">Image Type' + ADV_BADGE + '</label>' +
+                '<div style="' + fieldStyle + '">' +
+                '<label style="' + labelStyle + '">Image Type</label>' +
                 '<select is="emby-select" class="tlm-image-type" style="width:100%;">' +
                 '<option value="">Auto</option>' +
                 '<option value="Primary">Primary</option>' +
@@ -9625,8 +9639,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<label style="' + labelStyle + '">Show this section' + ADV_BADGE + '</label>' +
                 '<select is="emby-select" class="mtlDisplayMode" style="width:100%;">' + displayOptions + '</select></div>' +
 
-                '<div class="hsc-adv" data-adv-def="" style="' + fieldStyle + '">' +
-                '<label style="' + labelStyle + '">Image Type' + ADV_BADGE + '</label>' +
+                '<div style="' + fieldStyle + '">' +
+                '<label style="' + labelStyle + '">Image Type</label>' +
                 '<select is="emby-select" class="mtlImageType" style="width:100%;">' + imageOptions + '</select></div>' +
                 '<div class="hsc-adv" data-adv-def="0" style="' + fieldStyle + '">' +
                 '<label style="' + labelStyle + '">Card Size' + ADV_BADGE + '</label>' +
@@ -10003,8 +10017,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     '<label style="' + labelStyle + '">Show this section' + ADV_BADGE + '</label>' +
                     '<select is="emby-select" class="mtlDisplayMode" style="width:100%;">' + displayOptions + '</select></div>' +
 
-                    '<div class="hsc-adv" data-adv-def="" style="' + fieldStyle + '">' +
-                    '<label style="' + labelStyle + '">Image Type' + ADV_BADGE + '</label>' +
+                    '<div style="' + fieldStyle + '">' +
+                    '<label style="' + labelStyle + '">Image Type</label>' +
                     '<select is="emby-select" class="mtlImageType" style="width:100%;">' + imageOptions + '</select></div>' +
                 '<div class="hsc-adv" data-adv-def="0" style="' + fieldStyle + '">' +
                 '<label style="' + labelStyle + '">Card Size' + ADV_BADGE + '</label>' +
@@ -10230,8 +10244,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     '<input type="text" class="tlm-custom-name" style="' + inputStyle + '" placeholder="' + escAttr(displayName) + '" />' +
                     '</div>' +
 
-                    '<div class="hsc-adv" data-adv-def="" style="' + fieldStyle + '">' +
-                    '<label style="' + labelStyle + '">Image Type' + ADV_BADGE + '</label>' +
+                    '<div style="' + fieldStyle + '">' +
+                    '<label style="' + labelStyle + '">Image Type</label>' +
                     '<select is="emby-select" class="tlm-image-type" style="width:100%;">' +
                     '<option value="">Auto</option>' +
                     '<option value="Primary">Primary</option>' +
