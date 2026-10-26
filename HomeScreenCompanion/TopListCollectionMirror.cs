@@ -30,7 +30,7 @@ namespace HomeScreenCompanion
     {
         private static ILibraryManager? _libraryManager;
         private static ICollectionManager? _collectionManager;
-        private static ILogger? _logger;
+        private static PluginLogger? _logger;
         private static readonly SemaphoreSlim _mirrorLock = new SemaphoreSlim(1, 1);
 
         // Collection events are collected and reconciled in one pass once they go quiet — the
@@ -42,7 +42,7 @@ namespace HomeScreenCompanion
 
         internal static bool Enabled => Plugin.Instance?.Configuration?.TopListMirrorCollections == true;
 
-        internal static void Initialize(ILibraryManager libraryManager, ICollectionManager collectionManager, ILogger logger)
+        internal static void Initialize(ILibraryManager libraryManager, ICollectionManager collectionManager, PluginLogger logger)
         {
             _libraryManager = libraryManager;
             _collectionManager = collectionManager;

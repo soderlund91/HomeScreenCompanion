@@ -127,9 +127,9 @@ namespace HomeScreenCompanion
                         userManager.UpdateHomeSection(user.InternalId, section, CancellationToken.None);
                     }
                     dynamic policy = TopListSyncTask.GetPolicy(mgr, user, user.InternalId);
-                    if (policy != null && !(bool)policy.EnableAllFolders)
+                    if (policy != null && !(bool)policy!.EnableAllFolders)
                     {
-                        var folders = (string[])policy.EnabledFolders ?? Array.Empty<string>();
+                        var folders = (string[])policy!.EnabledFolders ?? Array.Empty<string>();
                         var kept = folders.Where(f => !ids.Contains(f.Replace("-", ""), StringComparer.OrdinalIgnoreCase)).ToArray();
                         if (kept.Length != folders.Length)
                         {

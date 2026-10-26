@@ -36,7 +36,7 @@ namespace HomeScreenCompanion
         internal static bool IsAnchor(BaseItem? item, IJsonSerializer json)
         {
             if (item == null) return false;
-            if (_anchorId == 0) { try { _anchorId = Load(json).AnchorId; } catch { } }
+            if (_anchorId == 0) { try { _anchorId = Load(json).AnchorId; } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); } }
             return _anchorId != 0 ? item.InternalId == _anchorId
                 : string.Equals(item.Name, AnchorName, StringComparison.Ordinal) && item.GetType().Name == "BoxSet";
         }
@@ -129,13 +129,13 @@ namespace HomeScreenCompanion
                 if (File.Exists(StateFile))
                     return json.DeserializeFromFile<State>(StateFile) ?? new State();
             }
-            catch { }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             return new State();
         }
 
         private static void Save(IJsonSerializer json, State state)
         {
-            try { json.SerializeToFile(state, StateFile); } catch { }
+            try { json.SerializeToFile(state, StateFile); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
         }
     }
 }

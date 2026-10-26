@@ -17,12 +17,12 @@ namespace HomeScreenCompanion
     public class ScheduleSwitchTask : IScheduledTask, IConfigurableScheduledTask
     {
         private readonly ITaskManager _taskManager;
-        private readonly ILogger _logger;
+        private readonly PluginLogger _logger;
 
         public ScheduleSwitchTask(ITaskManager taskManager, ILogManager logManager)
         {
             _taskManager = taskManager;
-            _logger = logManager.GetLogger("HomeScreenCompanion_Schedule");
+            _logger = PluginLog.Wrap(logManager.GetLogger("HomeScreenCompanion_Schedule"), "Schedule");
         }
 
         public string Key => "HomeScreenCompanionScheduleSwitch";
@@ -51,7 +51,7 @@ namespace HomeScreenCompanion
             var state = CurrentState(config, DateTime.Now);
             var statePath = Path.Combine(Plugin.Instance!.DataFolderPath, "schedule-state.txt");
             string? previous = null;
-            try { if (File.Exists(statePath)) previous = File.ReadAllText(statePath); } catch { }
+            try { if (File.Exists(statePath)) previous = File.ReadAllText(statePath); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
 
             // First run: remember the state; the daily sync already matches it.
             if (previous == null) { Save(statePath, state); return Task.CompletedTask; }

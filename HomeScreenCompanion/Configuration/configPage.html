@@ -10,6 +10,7 @@
             --hsc-primary-hover: #5fc458;
             --hsc-primary-pressed: #3a8c34;
             --hsc-primary-text: #52B54B;
+            --hsc-info-text: #5aa9e6;
             --hsc-activity: #00a4dc;
             --hsc-activity-hover: #22b4e6;
             --hsc-activity-text: #00a4dc;
@@ -39,6 +40,7 @@
         }
         html[data-plugin-theme="light"] {
             --hsc-primary-text: #3a8c34;
+            --hsc-info-text: #2b6cb0;
             --hsc-activity-text: #007ba8;
             --hsc-warning-text: #9a7a12;
             --hsc-danger-text: #cc3333;
@@ -73,6 +75,18 @@
         /* API keys are plain text fields shown masked: a type="password" field makes the browser
            offer to save a password every time the settings are saved. "Show" unmasks them. */
         .api-key-field:not(.api-key-shown) { -webkit-text-security: disc; text-security: disc; }
+        /* AI model: a list from the provider, "Custom…" shows the text field. */
+        .hsc-model-row { display: flex; align-items: center; gap: 8px; }
+        .hsc-model-sel { flex: 1; min-width: 0; position: relative; }
+        .hsc-model-row .btnAiModelsReload { min-width: 0; padding: 0 10px; margin: 0; }
+        .hsc-model-field:not(.is-custom) .hsc-model-custom { display: none; }
+        .hsc-model-custom { margin-top: 10px; }
+        .hsc-model-status:not(:empty) { font-size: 0.85em; margin-top: 6px; color: var(--hsc-danger-text); }
+        .hsc-model-field.is-loading .btnAiModelsReload .md-icon { animation: hsc-spin 1s linear infinite; }
+        @keyframes hsc-spin { to { transform: rotate(360deg); } }
+        .hsc-ai-conn { border: 1px solid var(--hsc-hairline); border-radius: 8px; padding: 4px 14px 14px; margin-bottom: 10px; }
+        .hsc-ai-conn .inputContainer { margin-top: 12px; margin-bottom: 0; }
+        .hsc-ai-conn-foot { display: flex; justify-content: flex-end; margin-top: 12px; }
         /* Collapsible rows (sources, top-lists): surface-1 + hairline, no coloured border, no shadow */
         .tag-row {
             position: relative;
@@ -734,6 +748,15 @@
         mark.help-hit.current { background: var(--hsc-warning); color: #1a1a1a; }
 
         /* Setup Guide: long detail lists fold away under a "Show details" line */
+        /* "Customize tag images" in a source's Tag tab: styled like the Premade filters / Holiday presets buttons. */
+        details.tag-art-more { margin-top: 15px; }
+        details.tag-art-more > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border: 1px solid var(--line-color); border-radius: 4px; color: var(--theme-text-secondary); font-size: 0.9em; user-select: none; }
+        details.tag-art-more > summary::-webkit-details-marker { display: none; }
+        details.tag-art-more > summary > span { display: flex; align-items: center; }
+        details.tag-art-more .tag-art-chevron { font-size: 1.2em; transition: transform 0.2s; }
+        details.tag-art-more[open] .tag-art-chevron { transform: rotate(180deg); }
+        details.tag-art-more .tag-art-custom-chip { display: none; margin-left: 8px; font-size: 0.75em; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--line-color); opacity: 0.8; }
+        details.tag-art-more[data-custom="1"] .tag-art-custom-chip { display: inline-block; }
         details.help-more { margin-top: 4px; }
         details.help-more > summary {
             cursor: pointer;
@@ -778,6 +801,10 @@
         .hsc-callout.warning { background: rgba(230,193,90,0.08); border-color: rgba(230,193,90,0.3); }
         .hsc-callout.warning > .md-icon { color: var(--hsc-warning-text); }
         .hsc-callout.danger { background: rgba(229,115,115,0.08); border-color: rgba(229,115,115,0.3); }
+        /* Source shown as a top-list (Top-List tab): the Home Screen tab hides what the top-list sets. */
+        .homescreen-tab.tl-mode .hse-tl-hide { display: none !important; }
+        .homescreen-tab .hse-st-single { display: none !important; }
+        .homescreen-tab.hse-empty .hse-details > :not(.toplist-tab) { display: none !important; }
         .hsc-callout.danger > .md-icon { color: var(--hsc-danger-text); }
         .hsc-callout.success { background: rgba(82,181,75,0.08); border-color: rgba(82,181,75,0.3); }
         .hsc-callout.success > .md-icon { color: var(--hsc-primary-text); }
@@ -1147,6 +1174,39 @@
         .run-dial-item:hover {
             background: var(--plugin-popup-hover, rgba(128,128,128,0.15));
         }
+        .run-dial-sub { display: none; flex-direction: column; gap: 6px; }
+        .run-dial-sub.open { display: flex; }
+        .run-dial-sub .run-dial-item { margin-left: 16px; }
+        .run-dial-other-chevron { margin-left: auto; transition: transform 0.18s ease; font-size: 1em !important; opacity: 0.7; color: inherit !important; }
+        #btnDialOther[aria-expanded="true"] .run-dial-other-chevron { transform: rotate(180deg); }
+        /* What the run does: a tooltip to the left of the item, on hover or keyboard focus. */
+        .run-dial-item { position: relative; }
+        .run-dial-item[data-tip]::after {
+            content: attr(data-tip);
+            position: absolute;
+            right: calc(100% + 10px);
+            top: 50%;
+            transform: translateY(-50%);
+            width: max-content;
+            max-width: 280px;
+            white-space: normal;
+            text-align: left;
+            background: var(--plugin-popup-bg, #2a2a2a);
+            color: var(--plugin-popup-color, #e8e8e8);
+            border: 1px solid var(--plugin-popup-border, rgba(255,255,255,0.12));
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 0.92em;
+            font-weight: 400;
+            line-height: 1.4;
+            box-shadow: var(--hsc-shadow-float);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.12s ease;
+            z-index: 2000;
+        }
+        .run-speed-dial-menu.open .run-dial-item:hover::after,
+        .run-speed-dial-menu.open .run-dial-item:focus-visible::after { opacity: 1; transition-delay: 0.25s; }
         .run-dial-item .md-icon { color: var(--hsc-activity-text); font-size: 1.15em; }
 
         .run-dial-chevron {
@@ -1492,8 +1552,11 @@
                                         Used for AI created lists via Google Gemini. Get your key at <a href="https://aistudio.google.com/app/apikey" target="_blank" class="help-link">Google AI Studio</a>.
                                     </div>
                                 </div>
-                                <div class="inputContainer" style="margin-top: 12px;">
-                                    <input is="emby-input" type="text" id="txtGeminiModel" label="Model" placeholder="gemini-2.5-flash-lite" />
+                                <div class="inputContainer hsc-model-field" data-provider="Gemini" data-key="txtGeminiApiKey" style="margin-top: 12px;">
+                                    <label class="selectLabel">Model</label>
+                                    <div class="hsc-model-row"><div class="hsc-model-sel"><select is="emby-select" class="selAiModel"></select></div><button type="button" is="emby-button" class="raised hsc-btn-ghost btnAiModelsReload" title="Reload models"><i class="md-icon">refresh</i></button></div>
+                                    <div class="hsc-model-custom"><input is="emby-input" type="text" id="txtGeminiModel" label="Model name" placeholder="gemini-2.5-flash-lite" /></div>
+                                    <div class="hsc-model-status"></div>
                                     <div class="fieldDescription">
                                         Model to use, e.g. <code>gemini-2.5-flash-lite</code> or <code>gemini-1.5-pro</code>. See current models at <a href="https://ai.google.dev/gemini-api/docs/models" target="_blank" class="help-link">ai.google.dev/gemini-api/docs/models</a>.
                                     </div>
@@ -1518,8 +1581,11 @@
                                         Used for AI created lists via ChatGPT. Get your key at <a href="https://platform.openai.com/api-keys" target="_blank" class="help-link">platform.openai.com</a>.
                                     </div>
                                 </div>
-                                <div class="inputContainer" style="margin-top: 12px;">
-                                    <input is="emby-input" type="text" id="txtOpenAiModel" label="Model" placeholder="gpt-4o-mini" />
+                                <div class="inputContainer hsc-model-field" data-provider="OpenAI" data-key="txtOpenAiApiKey" style="margin-top: 12px;">
+                                    <label class="selectLabel">Model</label>
+                                    <div class="hsc-model-row"><div class="hsc-model-sel"><select is="emby-select" class="selAiModel"></select></div><button type="button" is="emby-button" class="raised hsc-btn-ghost btnAiModelsReload" title="Reload models"><i class="md-icon">refresh</i></button></div>
+                                    <div class="hsc-model-custom"><input is="emby-input" type="text" id="txtOpenAiModel" label="Model name" placeholder="gpt-4o-mini" /></div>
+                                    <div class="hsc-model-status"></div>
                                     <div class="fieldDescription">
                                         Model to use, e.g. <code>gpt-4o-mini</code> or <code>gpt-4o</code>. See current models at <a href="https://platform.openai.com/docs/models" target="_blank" class="help-link">platform.openai.com/docs/models</a>.
                                     </div>
@@ -1544,8 +1610,11 @@
                                         Used for AI created lists via Anthropic Claude. Get your key at <a href="https://console.anthropic.com/settings/keys" target="_blank" class="help-link">console.anthropic.com</a>.
                                     </div>
                                 </div>
-                                <div class="inputContainer" style="margin-top: 12px;">
-                                    <input is="emby-input" type="text" id="txtClaudeModel" label="Model" placeholder="claude-haiku-4-5-20251001" />
+                                <div class="inputContainer hsc-model-field" data-provider="Claude" data-key="txtClaudeApiKey" style="margin-top: 12px;">
+                                    <label class="selectLabel">Model</label>
+                                    <div class="hsc-model-row"><div class="hsc-model-sel"><select is="emby-select" class="selAiModel"></select></div><button type="button" is="emby-button" class="raised hsc-btn-ghost btnAiModelsReload" title="Reload models"><i class="md-icon">refresh</i></button></div>
+                                    <div class="hsc-model-custom"><input is="emby-input" type="text" id="txtClaudeModel" label="Model name" placeholder="claude-haiku-4-5-20251001" /></div>
+                                    <div class="hsc-model-status"></div>
                                     <div class="fieldDescription">
                                         Model to use, e.g. <code>claude-haiku-4-5-20251001</code> or <code>claude-sonnet-4-6</code>. See current models at <a href="https://docs.anthropic.com/en/docs/about-claude/models" target="_blank" class="help-link">docs.anthropic.com/en/docs/about-claude/models</a>.
                                     </div>
@@ -1567,12 +1636,28 @@
                                         Full URL to your local Ollama instance — e.g. <code>http://localhost:11434</code> or <code>http://192.168.1.100:11434</code>. See <a href="https://ollama.com" target="_blank" class="help-link">ollama.com</a>.
                                     </div>
                                 </div>
-                                <div class="inputContainer" style="margin-top: 12px;">
-                                    <input is="emby-input" type="text" id="txtOllamaModel" label="Model" placeholder="llama3.2" />
+                                <div class="inputContainer hsc-model-field" data-provider="Ollama" data-url="txtOllamaBaseUrl" style="margin-top: 12px;">
+                                    <label class="selectLabel">Model</label>
+                                    <div class="hsc-model-row"><div class="hsc-model-sel"><select is="emby-select" class="selAiModel"></select></div><button type="button" is="emby-button" class="raised hsc-btn-ghost btnAiModelsReload" title="Reload models"><i class="md-icon">refresh</i></button></div>
+                                    <div class="hsc-model-custom"><input is="emby-input" type="text" id="txtOllamaModel" label="Model name" placeholder="llama3.2" /></div>
+                                    <div class="hsc-model-status"></div>
                                     <div class="fieldDescription">
                                         The model to use, e.g. <code>llama3.2</code>, <code>mistral</code>, <code>gemma3</code>. Must be pulled first: <code>ollama pull llama3.2</code>.
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+
+                        <!-- OpenAI-compatible (Groq, OpenRouter, LM Studio …): any number of connections -->
+                        <div class="advanced-section settings-panel" style="margin-bottom: 8px;">
+                            <div class="advanced-header settings-panel-toggle" style="padding: 10px 14px;">
+                                <i class="md-icon" style="margin-right: 8px; font-size: 1.1em; opacity: 0.65;">hub</i>
+                                <span style="font-size: 0.95em; font-weight: 600;">OpenAI-compatible</span>
+                                <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s; font-size: 1.1em; opacity: 0.65;">expand_more</i>
+                            </div>
+                            <div class="settings-panel-body" style="display:none; padding: 0 14px 14px;">
+                                <div id="aiConnList"></div>
+                                <button type="button" is="emby-button" id="btnAddAiConn" class="raised btn-neutral"><i class="md-icon" style="margin-right:5px;">add</i><span>Add connection</span></button>
                             </div>
                         </div>
 
@@ -1617,7 +1702,7 @@
                                 <input is="emby-checkbox" type="checkbox" id="chkExtendedConsoleOutput" />
                                 <span>Extended log</span>
                             </label>
-                            <div class="fieldDescription">Adds source details, per-item changes, timings and error details to the log. Useful when something goes wrong or when reporting a bug.</div>
+                            <div class="fieldDescription">Shows source details, per-item changes, timings and error details in the log window. The plugin's own log file (<em>Download logs</em> in the log window) always has them, also with this off.</div>
                         </div>
 
                         <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
@@ -1747,7 +1832,7 @@
             </div>
 
             <div id="tabCleanup" class="page-tab-content" style="display:none;">
-                <div id="tcManageContainer"></div>
+                <div id="tcManageContainer" style="max-width:900px;"></div>
             </div>
 
             <div id="tabTopLists" class="page-tab-content" style="display:none;">
@@ -1777,23 +1862,29 @@
                 </button>
                 <div class="run-speed-dial" id="runSpeedDial">
                     <div class="run-speed-dial-menu" id="runSyncMenu">
-                        <button type="button" class="run-dial-item" id="btnDialFullSync">
-                            <i class="md-icon">sync</i><span>Full sync</span>
+                        <!-- Other: the runs that also start by themselves; opens above the button. -->
+                        <div class="run-dial-sub" id="runDialOther">
+                            <button type="button" class="run-dial-item" id="btnDialMergeVersions" data-tip="Links each top-list movie to the same movie in your library as an extra version, so it does not show up twice. Run it after a library scan has picked up new top-list entries.">
+                                <i class="md-icon">call_merge</i><span>Merge top-list versions</span>
+                            </button>
+                            <button type="button" class="run-dial-item" id="btnDialTopListRows" data-tip="Makes each top-list home row show only titles from its own library, and keeps top-list libraries out of the other home rows. Runs by itself when a new library is created in Emby.">
+                                <i class="md-icon">format_list_numbered</i><span>Sync top-list rows</span>
+                            </button>
+                            <button type="button" class="run-dial-item" id="btnDialContinueWatching" data-tip="Moves shows you had finished to the front of Continue Watching when new episodes have arrived (if Continue Watching bump is on). Also runs by itself every 6 hours.">
+                                <i class="md-icon">fast_forward</i><span>Bump Continue Watching</span>
+                            </button>
+                        </div>
+                        <button type="button" class="run-dial-item" id="btnDialOther" aria-expanded="false" aria-controls="runDialOther" data-tip="More runs: Merge top-list versions, Sync top-list rows and Bump Continue Watching. These also run by themselves when needed.">
+                            <i class="md-icon">more_horiz</i><span>Other</span><i class="md-icon run-dial-other-chevron">expand_less</i>
                         </button>
-                        <button type="button" class="run-dial-item" id="btnDialHomeScreen">
+                        <button type="button" class="run-dial-item" id="btnDialHomeScreen" data-tip="Copies the home screen layout from the source user to the selected users (Home Screen tab).">
                             <i class="md-icon">home</i><span>Sync home screen</span>
                         </button>
-                        <button type="button" class="run-dial-item" id="btnDialTagsCollections">
+                        <button type="button" class="run-dial-item" id="btnDialTagsCollections" data-tip="Runs every active source: tags, collections, playlists, home rows and top-lists. The same run as the scheduled Tag &amp; Collection Sync task.">
                             <i class="md-icon">local_offer</i><span>Sync tags and collections</span>
                         </button>
-                        <button type="button" class="run-dial-item" id="btnDialTopListRows">
-                            <i class="md-icon">format_list_numbered</i><span>Sync top-list rows</span>
-                        </button>
-                        <button type="button" class="run-dial-item" id="btnDialMergeVersions">
-                            <i class="md-icon">call_merge</i><span>Merge top-list versions</span>
-                        </button>
-                        <button type="button" class="run-dial-item" id="btnDialContinueWatching">
-                            <i class="md-icon">fast_forward</i><span>Bump Continue Watching</span>
+                        <button type="button" class="run-dial-item" id="btnDialFullSync" data-tip="Runs Sync tags and collections and Sync home screen together.">
+                            <i class="md-icon">sync</i><span>Full sync</span>
                         </button>
                     </div>
                     <button is="emby-button" type="button" id="btnRunSync" class="raised button-submit fab-btn btn-run">
@@ -1867,7 +1958,7 @@
                     <strong style="color:var(--theme-text);">Tips for a useful bug report:</strong><br>
                     • What did you expect to happen, and what happened instead?<br>
                     • Which source type and settings were you using?<br>
-                    • Copy the relevant lines from the <strong>Logs</strong> (enable <em>Extended log</em> in Settings first if needed).
+                    • Attach the logs: open <strong>Logs</strong> and click <strong>Download logs</strong> – one zip with the plugin's log of the last 7 days, its settings and a snapshot of the server. API keys are always hidden, and user names can be anonymised. Do it soon after the problem happens: the log keeps 7 days.
                 </div>
 
                 <div style="text-align:right;margin-top:24px;padding-top:16px;border-top:1px solid var(--plugin-popup-border);">
@@ -1901,7 +1992,8 @@
             </div>
             <div class="modal-body-scroll" style="background: #1a1a1a; color: #d0d0d0; font-family: ui-monospace, Consolas, Menlo, monospace; font-size: 0.85em; padding: 16px 20px;" id="logContent">
             </div>
-            <div style="text-align:right; padding: 12px 20px; background: #1a1a1a; border-top: 1px solid #333;">
+            <div style="display:flex; justify-content:space-between; gap:10px; padding: 12px 20px; background: #1a1a1a; border-top: 1px solid #333;">
+                <button is="emby-button" type="button" id="btnDownloadLogs" class="raised hsc-btn-secondary" title="A zip with the plugin's log of the last 7 days, the settings and a snapshot of the server, for troubleshooting"><i class="md-icon" style="font-size:1em;vertical-align:middle;margin-right:6px;">download</i>Download logs</button>
                 <button is="emby-button" type="button" id="btnCloseLogs" class="raised hsc-btn-secondary">Close</button>
             </div>
         </div>
@@ -1990,7 +2082,7 @@
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">auto_awesome</i> AI created lists</div>
-                        Describe what you want in plain language — for example <em>"Best sci-fi films from the 90s"</em> — and let <strong>Anthropic Claude</strong>, <strong>Google Gemini</strong>, <strong>OpenAI (ChatGPT)</strong> or a local <strong>Ollama</strong> model write the list. <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-more-ai').scrollIntoView({behavior:'smooth'});return false;">More about AI lists below</a>.
+                        Describe what you want in plain language — for example <em>"Best sci-fi films from the 90s"</em> — and let <strong>Anthropic Claude</strong>, <strong>Google Gemini</strong>, <strong>OpenAI (ChatGPT)</strong>, any <strong>OpenAI-compatible</strong> service or a local <strong>Ollama</strong> model write the list. <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-more-ai').scrollIntoView({behavior:'smooth'});return false;">More about AI lists below</a>.
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">recommend</i> Personal: Your Next Watch</div>
@@ -2048,7 +2140,7 @@
                     <i class="md-icon help-feat-icon">auto_awesome</i>
                     <div><strong>AI created lists</strong> — write what you want, and an AI answers with a list of titles that the plugin then looks for in your library.
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
-                            <li><strong>AI Provider</strong> — <em>Anthropic Claude</em>, <em>Google Gemini</em>, <em>OpenAI (ChatGPT)</em> or <em>Ollama (Local)</em>. Each needs its key (or for Ollama its URL) and model under <em>AI Settings</em> in the Settings tab. Ollama is experimental: local models often know less about new titles and give wrong IMDb ids more often.</li>
+                            <li><strong>AI Provider</strong> — <em>Anthropic Claude</em>, <em>Google Gemini</em>, <em>OpenAI (ChatGPT)</em>, <em>Ollama (Local)</em> or one of your <em>OpenAI-compatible</em> connections (listed by name). Each needs its key (or for Ollama its URL) and model under <em>AI Settings</em> in the Settings tab. Ollama is experimental: local models often know less about new titles and give wrong IMDb ids more often.</li>
                             <li><strong>Prompt</strong> — just say what you want, e.g. <em>"Feel-good comedies from the 80s"</em>. You don't need to ask for a format; the plugin's <em>system prompt</em> (Settings) already tells the AI how to answer.</li>
                             <li><strong>Max items</strong> — how many titles you want. The AI is asked for more (up to twice as many) since some will not be in your library; the first ones found fill the list.</li>
                             <li><strong>Matching</strong> — by the IMDb id in the AI's answer; when that id is missing or not in your library, by exact title and year.</li>
@@ -2170,7 +2262,7 @@
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">delete</i> Remove Group</div>
-                        Asks <em>Delete "&lt;name&gt;"?</em> with the source's name. The card goes at once, but nothing is deleted until you click <strong>Save Settings</strong>. Changed your mind before saving? Reload the page and click <em>Discard</em> in the <em>Unsaved changes restored</em> bar. Saving only removes the source from the settings; what it made in Emby is cleaned up by the runs after that:
+                        Asks <em>Delete "&lt;name&gt;"?</em> with the source's name. The card goes at once, but nothing is deleted until you click <strong>Save Settings</strong>. Changed your mind before saving? Reload the page and click <em>Discard</em> in the <em>Unsaved changes restored</em> bar (<em>Show changes</em> there lists what will be put back). Saving only removes the source from the settings; what it made in Emby is cleaned up by the runs after that:
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li>Its <strong>tag</strong> (taken off every title), its <strong>home rows</strong> and its users' <strong>playlists</strong> go on the next full sync, or the next <em>Run Group</em> of any source.</li>
                             <li>Its <strong>collection</strong> is only deleted by a <strong>full sync</strong>, so run <strong>Run</strong> → <em>Full sync</em> once to clear everything away (or wait for the nightly run). The log lists what was removed.</li>
@@ -2379,7 +2471,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">event</i>
-                    <div><strong>Easter, Advent and Friday the 13th</strong> — Dates worked out for each year: <em>Easter</em> is Easter Sunday (Western Easter), <em>Advent</em> runs from the first Sunday of Advent through Christmas Day, and <em>Friday the 13th</em> is every Friday that falls on the 13th. <em>Days before</em> and <em>Days after</em> (0–60) widen the window; both ends are included. Example: Easter weekend (Good Friday to Easter Monday) is Easter with Days before 2, Days after 1.</div>
+                    <div><strong>Easter, Advent and Friday the 13th</strong> — Added from <em>Holiday presets</em>. Dates worked out for each year: <em>Easter</em> is Easter Sunday (Western Easter), <em>Advent</em> runs from the first Sunday of Advent through Christmas Day, and <em>Friday the 13th</em> is every Friday that falls on the 13th. <em>Days before</em> and <em>Days after</em> (0–60) widen the window; both ends are included. Example: Easter weekend (Good Friday to Easter Monday) is Easter with Days before 2, Days after 1.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">schedule</i>
@@ -2492,6 +2584,10 @@
                     <i class="md-icon help-feat-icon">family_restroom</i>
                     <div><strong>Age limits in user lists</strong> — Every user list in HSC (Target Users, Sync to, Continue Watching, the user pickers) shows a small coloured chip after a user who has a parental rating limit in Emby: their highest allowed rating, e.g. <em>PG</em>, <em>12</em>, <em>PG-13</em>. Green is for children (up to PG), amber for teens (12–15), red for 16 and older; users without a limit get no chip. A &#128274; means the user also blocks unrated items (hover to see which kinds). Next to <em>Select all</em> and <em>Clear</em>, <em>Unrestricted</em> ticks only the users without a limit (adults) and <em>Restricted</em> only those with one (kids), so you can give kids and adults different home screens quickly. In drop-down pickers the rating shows as text after the name. The limits are set per user in Emby (<em>Users → Parental Control</em>); reload this page to see a change.</div>
                 </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">person_off</i>
+                    <div><strong>Disabled users</strong> — A user who is disabled in Emby shows a <em>Disabled</em> chip in the user lists (<em>· disabled</em> in drop-down pickers). They stay selected wherever you ticked them, but HSC leaves them out of everything it does per user — Your Next Watch picks, playlists, home rows, top-list rows, Home Screen Sync and the Continue Watching bump — and changes nothing of theirs. Enable the user again and the next sync brings them up to date. The log's summary names the disabled users that were skipped.</div>
+                </div>
                 <div class="help-feature-row" style="margin-bottom:0;">
                     <i class="md-icon help-feat-icon">sync</i>
                     <div><strong>Automatic &amp; Manual</strong> — Both features run as part of the scheduled task, or you can trigger them at any time using the <strong>Run</strong> button → <em>Sync home screen only</em>.</div>
@@ -2508,6 +2604,10 @@
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">create_new_folder</i>
                     <div><strong>Create top-list from a tag</strong> — Choose <em>Movies</em> or <em>TV Shows</em>, pick a tag managed by the plugin and click <em>Create top-list</em>. The plugin builds the ranked library and sets up a home screen section for the users you choose. The order follows the original list order from the source (e.g. the order on a Trakt list). The list updates automatically whenever the plugin syncs that tag.</div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">auto_awesome</i>
+                    <div><strong>Content</strong> — in a source's <em>Create as top-list</em>, <em>Auto (based on the source)</em> makes a movie or TV show list from what the source returns (an episode counts as its show); <em>Movies</em> or <em>TV Shows</em> fixes it.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">edit_note</i>
@@ -2553,6 +2653,10 @@
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">visibility_off</i>
                     <div><strong>Libraries and collections</strong> — each top-list has its own library. <em>Hide HSC libraries</em> (on by default) keeps it out of the sidebar, "My Media" and "Latest", and <em>Show collections on top-list items</em> makes "Included in &lt;collection&gt;" show on a movie opened from a top-list. Both are in the Settings tab, see <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-sec-8b').scrollIntoView({behavior:'smooth'});return false;">Advanced Settings</a>.</div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">lock_open</i>
+                    <div><strong>Library access</strong> — every user a top-list is shown to gets access to its library. The list's titles can come from any library on the server, so those users can see and play them even from libraries they otherwise have no access to. Only pick users who may see everything the list can hold.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">block</i>
@@ -2601,6 +2705,14 @@
                     <div><strong>Anthropic Claude</strong> — API key from <a href="https://console.anthropic.com/settings/keys" target="_blank" class="help-link">console.anthropic.com</a>. Model e.g. <code>claude-haiku-4-5-20251001</code>.</div>
                 </div>
                 <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">list</i>
+                    <div><strong>Model</strong> — the Model list of each provider is read from the provider once its key (Ollama: URL) is filled in; <span class="md-icon" style="font-size:1em;vertical-align:middle;">refresh</span> reads it again. <em>Custom…</em> takes any model name.</div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">hub</i>
+                    <div><strong>OpenAI-compatible</strong> — any service with OpenAI's API, such as Groq, OpenRouter, Mistral, DeepSeek, Together, xAI, LM Studio or vLLM. <strong>Add connection</strong> once per service: a <strong>Name</strong> (shown in a source's AI Provider list), the <strong>Base URL</strong> (e.g. <code>https://api.groq.com/openai/v1</code> or <code>http://192.168.1.100:1234/v1</code>), the <strong>API key</strong> (none for most local servers) and the <strong>Model</strong>. A source whose connection was removed shows <em>Needs a provider</em>.</div>
+                </div>
+                <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">computer</i>
                     <div><strong>Ollama (Local)</strong> — runs the AI on a computer of your own, free and without an API key. Enter the <strong>URL (including port)</strong>, e.g. <code>http://localhost:11434</code> or <code>http://192.168.1.100:11434</code>, as seen from the Emby server, and the <strong>Model</strong> you have pulled in Ollama, e.g. <code>llama3.2</code>. Experimental: local models know less about recent titles and give wrong IMDb ids more often (the plugin then matches by title and year). See <a href="https://ollama.com" target="_blank" class="help-link">ollama.com</a>.</div>
                 </div>
@@ -2617,7 +2729,7 @@
                 <div class="step-text" style="margin-bottom:10px;font-size:0.92em;">Optional settings in four groups under <em>Advanced Settings</em> in the <strong>Settings</strong> tab. Tick one and click <strong>Save Settings</strong>.</div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">bug_report</i>
-                    <div><strong>Extended log</strong> <span style="opacity:0.6;">(Logging &amp; Troubleshooting)</span> — Adds source details, per-item changes, timings and error details to the log. Turn it on when something isn't working as expected or before reporting a bug.</div>
+                    <div><strong>Extended log</strong> <span style="opacity:0.6;">(Logging &amp; Troubleshooting)</span> — Shows source details, per-item changes, timings and error details in the log window. Turn it on when something isn't working as expected. The plugin's own log file (<em>Download logs</em>) always has these lines, also with it off.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">science</i>
@@ -2659,7 +2771,7 @@
                 <div class="hsc-eyebrow" style="margin:18px 0 8px;">Running, logs and tools</div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">play_circle</i>
-                    <div><strong>Run button</strong> — Manually trigger a sync at any time. Three options: <em>Full sync</em> (everything), <em>Sync home screen only</em> (just the home screen rows, no tag changes), and <em>Sync tags and collections only</em> (tags and collections, skips home screen). While a sync, Run Group, Home Screen Sync or top-list sync is busy, <em>Last run</em> at the top of the page shows the step it is on and how long it has been running, e.g. <em>Running · Playlists — Top 10: 34/88 users · 1m 12s</em>. Runs never overlap: a sync, Run Group, Home Screen Sync or top-list sync started while another is busy waits for it to finish (shown as <em>… waiting for … to finish</em>) and then runs.</div>
+                    <div><strong>Run button</strong> — Start a run by hand at any time; hover an option to see what it does. <em>Full sync</em> (the two below together), <em>Sync tags and collections</em> (every active source: tags, collections, playlists, home rows and top-lists) and <em>Sync home screen</em> (copies the source user's home screen to the selected users). <em>Other</em> opens the runs that also start by themselves: <em>Bump Continue Watching</em>, <em>Sync top-list rows</em> (each top-list row shows only its own library; also runs when a library is created in Emby) and <em>Merge top-list versions</em> (links top-list movies to the library movie as an extra version). While a sync, Run Group, Home Screen Sync or top-list sync is busy, <em>Last run</em> at the top of the page shows the step it is on and how long it has been running, e.g. <em>Running · Playlists — Top 10: 34/88 users · 1m 12s</em>. Runs never overlap: a sync, Run Group, Home Screen Sync or top-list sync started while another is busy waits for it to finish (shown as <em>… waiting for … to finish</em>) and then runs.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">schedule</i>
@@ -2673,11 +2785,11 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">receipt_long</i>
-                    <div><strong>Logs</strong> — the <strong>Logs</strong> button at the top of the page shows the last run, in three tabs: <em>Sync</em>, <em>Home Screen</em> and <em>Top-list</em>, each with a coloured dot for how it went and when it ran. Green lines went well, yellow ones are warnings and red ones errors. Turn on <em>Extended log</em> for more detail.</div>
+                    <div><strong>Logs</strong> — the <strong>Logs</strong> button at the top of the page shows the last run, in three tabs: <em>Sync</em>, <em>Home Screen</em> and <em>Top-list</em>, each with a coloured dot for how it went and when it ran. Green lines went well, yellow ones are warnings and red ones errors. Turn on <em>Extended log</em> for more detail. <strong>Download logs</strong> (bottom left of the log window) saves one zip for troubleshooting: the plugin's own log of the last 7 days with every detail line, the latest run of each task, the settings and a snapshot of the server (libraries, users and their library access, every user's home rows, the top-lists). API keys are always hidden; tick <em>Anonymise user names</em> to replace each user's name and id with User 1, User 2 … (names you typed into sources, tags or libraries yourself may still contain them). <em>Show who is who</em> in the same window lists which number each user gets, so you can say which user you mean; that list is never put in the zip.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">auto_delete</i>
-                    <div><strong>Cleanup tab</strong> — Lists every tag and collection in Emby with its item count; the ones the plugin manages carry a <em>Managed by HSC Plugin</em> badge. Use <em>Remove</em> to clear out ones you no longer need; nothing changes until you confirm the summary with <em>Confirm &amp; Save</em>. Removing a <em>tag</em> takes that tag off every item that has it (films, shows, episodes, collections and so on) — the items themselves stay. Removing a <em>collection</em> deletes the collection itself from Emby, with its poster and background; the films and shows that were in it stay in your library. If an active group still makes that tag or collection, the next sync puts it back — the summary offers to deactivate that group. Tick <em>Only managed by HSC</em> to show just the plugin's own; this choice is remembered in your browser.</div>
+                    <div><strong>Cleanup tab</strong> — Lists every tag, collection and playlist in Emby with its item count; the ones the plugin manages carry a <em>Managed by HSC Plugin</em> badge. Use <em>Remove</em> to clear out ones you no longer need; nothing changes until you confirm the summary with <em>Confirm &amp; Save</em>. Removing a <em>tag</em> takes that tag off every item that has it (films, shows, episodes, collections and so on) — the items themselves stay. Removing a <em>collection</em> deletes the collection itself from Emby, with its poster and background; the films and shows that were in it stay in your library. <em>Playlists</em> shows every user's playlists, with the user who owns each one (<em>+2</em> means it is also shared with two more users, hover to see who; <em>Public</em> means every user sees it); <em>Filter users</em> shows just some users' playlists, and the search also finds a playlist by its owner's name. A playlist marked <em>No owner</em> belongs to no user, for example because its owner was removed (users it was shared with still see it). Removing a playlist deletes it for its owner and everyone it is shared with; the items in it stay. If an active group still makes that tag, collection or playlist, the next sync puts it back — the summary offers to deactivate that group. Tick <em>Only managed by HSC</em> to show just the plugin's own; this choice is remembered in your browser.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">close</i>
@@ -2685,7 +2797,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">restore</i>
-                    <div><strong>Unsaved changes</strong> — Left the page without saving? When you come back, your unsaved changes and open sources are put back and a bar at the top says <em>Unsaved changes restored</em> — click <strong>Save Settings</strong> to keep them or <strong>Discard</strong> to go back to the saved settings. If the bar warns that settings changed on the server meanwhile, Save will not overwrite them (see below).</div>
+                    <div><strong>Unsaved changes</strong> — Left the page without saving? When you come back, your unsaved changes and open sources are put back and a bar at the top says <em>Unsaved changes restored</em> — <strong>Show changes</strong> lists which sources and settings are unsaved (with <strong>Save and apply</strong> and <strong>Discard</strong> right there); click <strong>Save Settings</strong> to keep them or <strong>Discard</strong> to go back to the saved settings. If the bar warns that settings changed on the server meanwhile, Save will not overwrite them (see below).</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">sync_problem</i>
@@ -2752,7 +2864,7 @@
                 </div>
                 <div class="help-feature-row" style="margin-bottom:0;">
                     <i class="md-icon help-feat-icon">bug_report</i>
-                    <div><strong>Still stuck?</strong> Turn on <em>Extended log</em>, run again and click <strong>Report a Bug</strong> at the top of the page: it links to GitHub Issues and the plugin's Emby forum thread. Say what you expected, what happened, the source type and settings, and copy the relevant log lines.</div>
+                    <div><strong>Still stuck?</strong> Click <strong>Report a Bug</strong> at the top of the page: it links to GitHub Issues and the plugin's Emby forum thread. Say what you expected, what happened, the source type and settings, and attach the zip from <strong>Download logs</strong> in the log window – soon after the problem, as the log keeps 7 days.</div>
                 </div>
 
                 <div style="text-align:right; margin-top:24px; padding-top:16px; border-top:1px solid var(--plugin-popup-border);">

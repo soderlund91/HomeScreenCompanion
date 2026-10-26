@@ -86,26 +86,30 @@ namespace HomeScreenCompanion
                 IsVirtualItem = false
             }).Where(s => !IsCopy(s)).ToList();
 
-        // The series behind a tag, in the tag's source order (tag_ranks/<tag>.json holds the IMDb
-        // ids the tag sync matched, in list order), then by name. A tag on seasons or episodes
-        // counts for their series.
+        // The series of a source's top-list, in list order (TopListMembers). Before the source's
+        // first run since 4.5: the series behind its tag, in the tag's source order (tag_ranks/<tag>.json
+        // holds the IMDb ids the tag sync matched, in list order), then by name. A season or episode
+        // counts for its series.
         internal static List<BaseItem> SeriesForTag(ILibraryManager libraryManager, IJsonSerializer jsonSerializer, string tag)
         {
             var series = new List<BaseItem>();
             var seen = new HashSet<long>();
-            foreach (var item in libraryManager.GetItemList(new InternalItemsQuery
-            {
-                Tags = new[] { tag },
-                IncludeItemTypes = new[] { "Series", "Season", "Episode" },
-                Recursive = true,
-                IsVirtualItem = false
-            }))
+            var members = TopListMembers.Load(tag, libraryManager, jsonSerializer);
+            foreach (var item in members?.Where(i => !i.IsVirtualItem && (i is Series || i is Season || i is Episode))
+                ?? libraryManager.GetItemList(new InternalItemsQuery
+                {
+                    Tags = new[] { tag },
+                    IncludeItemTypes = new[] { "Series", "Season", "Episode" },
+                    Recursive = true,
+                    IsVirtualItem = false
+                }))
             {
                 if (IsCopy(item)) continue;
                 var s = item as Series ?? (item as Season)?.Series ?? (item as Episode)?.Series;
                 if (s == null || IsCopy(s) || !seen.Add(s.InternalId)) continue;
                 series.Add(s);
             }
+            if (members != null) return series;
 
             var rank = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             try
@@ -118,7 +122,7 @@ namespace HomeScreenCompanion
                         if (!string.IsNullOrEmpty(ids[i]) && !rank.ContainsKey(ids[i])) rank[ids[i]] = i;
                 }
             }
-            catch { }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
 
             return series
                 .OrderBy(s => rank.TryGetValue(s.GetProviderId("Imdb") ?? "", out var r) ? r : int.MaxValue)
@@ -278,7 +282,7 @@ namespace HomeScreenCompanion
                 foreach (var f in Directory.GetFiles(seasonDir))
                     if (!wanted.Contains(f)) TryDelete(f);
                 if (Directory.GetFileSystemEntries(seasonDir).Length == 0)
-                    try { Directory.Delete(seasonDir); } catch { }
+                    try { Directory.Delete(seasonDir); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             }
         }
 
@@ -347,7 +351,7 @@ namespace HomeScreenCompanion
         {
             if (!IsShowFolder(folderPath)) return;
             foreach (var dir in Directory.GetDirectories(folderPath))
-                try { Directory.Delete(dir, true); } catch { }
+                try { Directory.Delete(dir, true); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             TryDelete(Path.Combine(folderPath, ManifestFileName));
         }
 
@@ -360,7 +364,7 @@ namespace HomeScreenCompanion
                     return (jsonSerializer.DeserializeFromFile<List<ManifestEntry>>(file) ?? new List<ManifestEntry>())
                         .OrderBy(e => e.Rank).ToList();
             }
-            catch { }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             return new List<ManifestEntry>();
         }
 
@@ -393,7 +397,7 @@ namespace HomeScreenCompanion
             }).Where(i => !string.IsNullOrEmpty(i.Path) && i.Path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
 
             foreach (var copy in copies)
-                try { Refresh(copy, libraryManager, jsonSerializer, p => originalsByPath.TryGetValue(p, out var o) ? o : null); } catch { }
+                try { Refresh(copy, libraryManager, jsonSerializer, p => originalsByPath.TryGetValue(p, out var o) ? o : null); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
         }
 
         // Brings one copy (series, season or episode) up to date with its original: rank, images
@@ -435,7 +439,7 @@ namespace HomeScreenCompanion
             else if (copy is Episode)
             {
                 string? target = null;
-                try { target = File.ReadAllText(copy.Path).Trim(); } catch { }
+                try { target = File.ReadAllText(copy.Path).Trim(); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                 if (string.IsNullOrEmpty(target)) return false;
                 var original = findOriginalEpisode != null ? findOriginalEpisode(target!) : libraryManager.FindByPath(target, false);
                 if (original == null || IsCopy(original)) return false;
@@ -595,7 +599,7 @@ namespace HomeScreenCompanion
             {
                 if (File.Exists(path) && File.ReadAllText(path) == content) return false;
             }
-            catch { }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             File.WriteAllText(path, content);
             return true;
         }
@@ -609,14 +613,14 @@ namespace HomeScreenCompanion
                     && File.ReadAllBytes(target).SequenceEqual(File.ReadAllBytes(source)))
                     return false;
             }
-            catch { }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             File.Copy(source, target, overwrite: true);
             return true;
         }
 
         private static void TryDelete(string path)
         {
-            try { File.Delete(path); } catch { }
+            try { File.Delete(path); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
         }
     }
 }

@@ -44,7 +44,7 @@ namespace HomeScreenCompanion
                     foreach (var i in list) _byKey[Key(i.Name, i.Tag)] = i;
                 }
             }
-            catch { }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
         }
 
         internal static List<GroupIssue> All()
@@ -88,7 +88,7 @@ namespace HomeScreenCompanion
                 if (File.Exists(_path)) File.Replace(temp, _path, null);
                 else File.Move(temp, _path);
             }
-            catch { }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
         }
     }
 }

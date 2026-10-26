@@ -11,7 +11,7 @@ namespace HomeScreenCompanion
     {
         private readonly ILibraryManager _libraryManager;
         private readonly IUserManager _userManager;
-        private readonly ILogger _logger;
+        private readonly PluginLogger _logger;
 
         public LibraryAccessManager(
             ILibraryManager libraryManager,
@@ -20,7 +20,7 @@ namespace HomeScreenCompanion
         {
             _libraryManager = libraryManager;
             _userManager = userManager;
-            _logger = logManager.GetLogger("HomeScreenCompanion_LibraryAccess");
+            _logger = PluginLog.Wrap(logManager.GetLogger("HomeScreenCompanion_LibraryAccess"), "Library access");
         }
 
         public void Run()

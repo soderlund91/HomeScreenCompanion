@@ -1,6 +1,7 @@
 ﻿using MediaBrowser.Model.Plugins;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace HomeScreenCompanion
 {
@@ -17,6 +18,8 @@ namespace HomeScreenCompanion
         public string ClaudeModel { get; set; } = "claude-haiku-4-5-20251001";
         public string OllamaBaseUrl { get; set; } = "http://localhost:11434";
         public string OllamaModel { get; set; } = "";
+        // OpenAI-compatible AI services (Groq, OpenRouter, LM Studio …), any number of them.
+        public List<AiConnection> AiConnections { get; set; } = new List<AiConnection>();
         public string AiSystemPrompt { get; set; } =
             "You are a movie and TV show recommendation assistant. " +
             "Respond ONLY with a valid JSON array. No explanation, no markdown, no code fences. " +
@@ -48,9 +51,30 @@ namespace HomeScreenCompanion
         public List<SavedMediaInfoFilter> SavedFilters { get; set; } = new List<SavedMediaInfoFilter>();
 
         public bool HomeSyncEnabled { get; set; } = false;
+        // Copy & Sync profiles: each copies one source user's home screen to its own target users.
+        public List<HomeSyncProfile> HomeSyncProfiles { get; set; } = new List<HomeSyncProfile>();
+        // Legacy (one source user, before profiles): read as a single profile by
+        // EffectiveHomeSyncProfiles while HomeSyncProfiles is empty; the page clears them on save.
         public string HomeSyncSourceUserId { get; set; } = "";
         public List<string> HomeSyncTargetUserIds { get; set; } = new List<string>();
         public bool HomeSyncLibraryOrder { get; set; } = false;
+        public List<HomeSyncAddition> HomeSyncAdditions { get; set; } = new List<HomeSyncAddition>();
+
+        // The profiles Copy & Sync runs: HomeSyncProfiles, or the legacy single source as one profile.
+        public List<HomeSyncProfile> EffectiveHomeSyncProfiles()
+        {
+            if (HomeSyncProfiles != null && HomeSyncProfiles.Count > 0) return HomeSyncProfiles;
+            if (string.IsNullOrWhiteSpace(HomeSyncSourceUserId)) return new List<HomeSyncProfile>();
+            return new List<HomeSyncProfile>
+            {
+                new HomeSyncProfile
+                {
+                    SourceUserId = HomeSyncSourceUserId,
+                    TargetUserIds = (HomeSyncTargetUserIds ?? new List<string>()).ToList(),
+                    LibraryOrder = HomeSyncLibraryOrder
+                }
+            };
+        }
 
         // Continue Watching bump: moves a finished series to the front of Next Up when a new episode arrives.
         public bool ContinueWatchingBumpEnabled { get; set; } = false;
@@ -61,10 +85,62 @@ namespace HomeScreenCompanion
         // Set once LegacyForkCleanup has run (see there).
         public bool LegacyForkCleanupDone { get; set; } = false;
 
+        // Set once the old Top-Lists tab lists have been moved to their sources (SourceTopLists.Migrate).
+        public bool TopListsMovedToSources { get; set; } = false;
+
         // Legacy, for migration only: settings of the stoep-labs fork (4.2.0.x), read once by
         // LegacyForkCleanup and then cleared.
         public bool? ShowTopListsEnabled { get; set; } = null;
         public bool CollectionSortTitleEnabled { get; set; } = false;
+    }
+
+    // One Copy & Sync profile: SourceUserId's home screen (and library order, with LibraryOrder)
+    // is copied to TargetUserIds. A user gets their home screen from one profile only; several
+    // profiles may share a source user.
+    public class HomeSyncProfile
+    {
+        public bool Active { get; set; } = true;
+        public string SourceUserId { get; set; } = "";
+        public List<string> TargetUserIds { get; set; } = new List<string>();
+        public bool LibraryOrder { get; set; } = false;
+        // "all" (Copy all): the target's home screen is replaced by the source user's; with
+        // KeepOwnRows, rows of sources and top-lists the target is on (and the source user is not)
+        // stay. "selected" (Copy selected): only the SelectedRows (HomeSectionSyncTask.RowKey) are
+        // added or updated, the target's other rows stay.
+        public string Mode { get; set; } = ModeAll;
+        public bool KeepOwnRows { get; set; } = true;
+        public List<string> SelectedRows { get; set; } = new List<string>();
+        // The target is also put on the sources and top-lists of the rows it gets (remembered in
+        // HomeSyncAdditions), so the full sync keeps those rows updated and makes its own
+        // playlists, and an exact copy takes it off the lists of rows the source user does not
+        // have. Off (as before 4.4.3): nobody's lists change; the rows are only copied, top-list
+        // rows only to the list's own users.
+        public bool AddToSources { get; set; } = false;
+
+        public const string ModeAll = "all";
+        public const string ModeSelected = "selected";
+        public bool CopiesSelected() => string.Equals(Mode, ModeSelected, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // What Copy & Sync added for a target user, so it can take it away again when the row is no
+    // longer copied to them: the user on a source / top-list (List "home" = its home-row users,
+    // "playlist" = the source's playlist users), or a home row it copied ("row", Copy selected).
+    // Key: the row's HomeSectionSyncTask.RowKey. Never made for a user who was already there.
+    public class HomeSyncAddition
+    {
+        public string List { get; set; } = "";
+        public string Key { get; set; } = "";
+        public string UserId { get; set; } = "";
+        // The row was ticked in Copy selected (the last run of the profile): unticking it removes
+        // the row. Not for a row only left out by a switch from Copy all, which stays.
+        public bool Picked { get; set; } = false;
+        // "row": the home row Copy & Sync added (its section id), so only that row is updated or
+        // removed, never a row of the user's own with the same title. Empty in older records.
+        public string SectionId { get; set; } = "";
+
+        public const string Home = "home";
+        public const string Playlist = "playlist";
+        public const string Row = "row";
     }
 
     public class TagConfig
@@ -97,6 +173,24 @@ namespace HomeScreenCompanion
 
         public bool OverrideWhenActive { get; set; } = false;
         public bool EnableTag { get; set; } = true;
+        // More tags put on the same titles as Tag ("Add another tag"). Only Tag drives the home
+        // row, tag art, top-list and priority override; these are just written and cleaned up with it.
+        public List<string> ExtraTags { get; set; } = new List<string>();
+
+        // Tag followed by ExtraTags: trimmed, without empties or repeats.
+        public List<string> AllTags() => Distinct(new[] { Tag }.Concat(ExtraTags ?? new List<string>()));
+
+        private static List<string> Distinct(IEnumerable<string?> tags)
+        {
+            var all = new List<string>();
+            foreach (var t in tags)
+            {
+                var s = (t ?? "").Trim();
+                if (s.Length > 0 && !all.Contains(s, StringComparer.OrdinalIgnoreCase)) all.Add(s);
+            }
+            return all;
+        }
+
         // Generated art on the tag's own page (the Emby Tag item), same styles as the collection
         // art. "" = none: Emby's own collage poster and no background (or TagBackgroundPath).
         public string TagPosterStyle { get; set; } = "";
@@ -150,6 +244,19 @@ namespace HomeScreenCompanion
         public bool CollectionThumbReplaced { get; set; } = false;
         public bool CollectionBannerReplaced { get; set; } = false;
         public bool OnlyCollection { get; set; } = false;
+        // "Custom tag on collection/playlist": a tag put on the collection / the playlists this group
+        // creates (not on their titles). Kept in sync by CleanupBoxSetTags / SyncPlaylistTags.
+        public bool EnableCollectionTag { get; set; } = false;
+        public string CollectionTag { get; set; } = "";
+        public List<string> CollectionExtraTags { get; set; } = new List<string>();
+        public bool EnablePlaylistTag { get; set; } = false;
+        public string PlaylistTag { get; set; } = "";
+        public List<string> PlaylistExtraTags { get; set; } = new List<string>();
+        // The custom tags in force (switched on, and the collection / playlist is made): trimmed, no repeats.
+        internal List<string> ActiveCollectionTags() => EnableCollection && EnableCollectionTag
+            ? Distinct(new[] { CollectionTag }.Concat(CollectionExtraTags ?? new List<string>())) : new List<string>();
+        internal List<string> ActivePlaylistTags() => EnablePlaylist && EnablePlaylistTag
+            ? Distinct(new[] { PlaylistTag }.Concat(PlaylistExtraTags ?? new List<string>())) : new List<string>();
 
         // Legacy, for migration only (stoep-labs fork, see LegacyForkCleanup): "Show at the top of
         // Collections" and its custom sort title.
@@ -204,6 +311,18 @@ namespace HomeScreenCompanion
         public string PlaylistPosterOptions { get; set; } = "";
         public string PlaylistBackgroundOptions { get; set; } = "";
 
+        // Create as top-list (Home Screen tab): the source's home row is a ranked top-list (its own hidden library with
+        // numbered posters) instead of a plain row. Users, title, position, display mode, image type
+        // and card size come from the Home Screen tab; the TopLists entry is derived from this
+        // source on every save (see SourceTopLists).
+        public bool EnableTopList { get; set; } = false;
+        // "Auto" (movies or TV shows by the source's titles, see SourceTopLists.ResolveAutoTypes), "Movies" or "Shows".
+        public string TopListContentType { get; set; } = "Auto";
+        public int TopListMaxItems { get; set; } = 0;
+        public string TopListBadgeStyle { get; set; } = "neutral";
+        public string TopListBadgeOptions { get; set; } = "";
+        public string TopListRealPoster { get; set; } = "";
+
         public DateTime LastModified { get; set; } = DateTime.MinValue;
     }
 
@@ -224,6 +343,8 @@ namespace HomeScreenCompanion
         public List<HomeSectionTracking> HomeSectionTracked { get; set; } = new List<HomeSectionTracking>();
         // "Movies" (default) or "Shows" — see ShowTopList.
         public string ContentType { get; set; } = "Movies";
+        // Made by a source's Create as top-list (SourceTopLists): edited there, not in the Top-Lists tab.
+        public bool FromSource { get; set; } = false;
 
         // Legacy, for migration only (stoep-labs fork, see LegacyForkCleanup): the fork's tag-based
         // show lists.

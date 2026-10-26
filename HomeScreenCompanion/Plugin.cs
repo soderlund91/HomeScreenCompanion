@@ -26,21 +26,36 @@ namespace HomeScreenCompanion
             XmlSerializer = xmlSerializer;
         }
 
-        public static Plugin? Instance { get; private set; }
+        public static Plugin Instance { get; private set; } = null!;
         public static IApplicationPaths AppPaths { get; private set; } = null!;
         public static new IXmlSerializer XmlSerializer { get; private set; } = null!;
 
         public override void UpdateConfiguration(BasePluginConfiguration configuration)
         {
+            // Sources with Top-List on: their TopLists entries follow the source (first, so the
+            // steps below see the lists as saved).
+            SourceTopLists.Derive(Configuration, configuration as PluginConfiguration);
+            if (configuration is PluginConfiguration saved)
+                PluginLog.Write("INF", "Settings", $"Settings saved — {RunLog.Plural(saved.Tags?.Count ?? 0, "source entry", "source entries")}, {RunLog.Plural(saved.TopLists?.Count ?? 0, "top-list")}");
             var wasMirroring = Configuration?.TopListMirrorCollections ?? false;
             HomeScreenCompanionTask.KeepLastRunCounts(Configuration, configuration as PluginConfiguration);
+            // A changed row Position: the next run moves the rows already there (see RowPlacement).
+            RowPlacement.NoteChanges(Configuration, configuration as PluginConfiguration);
             // Groups deleted on the settings page: their tag and home rows are cleaned up by the next full run.
             HomeScreenCompanionTask.RecordDeletedGroups(Configuration, configuration as PluginConfiguration);
             LegacyForkCleanup.KeepCleanupDone(Configuration, configuration as PluginConfiguration);
+            // What Copy & Sync added for its target users is the task's own record (the page never
+            // edits it). A copy: a running Copy & Sync keeps working on the old one (see SaveRunChanges).
+            if (configuration is PluginConfiguration incoming && Configuration is PluginConfiguration current)
+            {
+                incoming.HomeSyncAdditions = (current.HomeSyncAdditions ?? new List<HomeSyncAddition>())
+                    .Select(a => new HomeSyncAddition { List = a.List, Key = a.Key, UserId = a.UserId, Picked = a.Picked, SectionId = a.SectionId }).ToList();
+                HomeSectionSyncTask.KeepKeysOfRenamedSources(current, incoming);
+            }
             base.UpdateConfiguration(configuration);
             HomeScreenCompanionTask.RecordImportedCollections(Configuration);
             // Toggling the collection mirror adds (or removes) memberships for all existing copies.
-            if (Configuration.TopListMirrorCollections != wasMirroring)
+            if (Configuration!.TopListMirrorCollections != wasMirroring)
                 TopListCollectionMirror.QueueFullSync();
         }
 
@@ -51,6 +66,14 @@ namespace HomeScreenCompanion
             base.SaveConfiguration();
             HomeScreenCompanionTask.RecordImportedCollections(Configuration);
             RealPosterBadges.ConfigSaved();
+        }
+
+        // A save that cannot change any badge: only who is on which source or top-list and where
+        // their rows are (Copy & Sync, which saves on most runs since Copy all makes new rows).
+        internal void SaveUsersAndRows()
+        {
+            base.SaveConfiguration();
+            HomeScreenCompanionTask.RecordImportedCollections(Configuration);
         }
 
         public IEnumerable<PluginPageInfo> GetPages()

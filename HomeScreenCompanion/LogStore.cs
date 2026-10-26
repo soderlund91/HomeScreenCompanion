@@ -70,7 +70,7 @@ namespace HomeScreenCompanion
                     else File.Move(temp, path);
                 }
             }
-            catch { }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
         }
 
         internal static PersistedRunLog? Load(string key)

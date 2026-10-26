@@ -39,11 +39,11 @@ namespace HomeScreenCompanion
         private static volatile Dictionary<long, Entry> _map = new Dictionary<long, Entry>();
         private static ILibraryManager? _libraryManager;
         private static IJsonSerializer? _json;
-        private static ILogger? _logger;
+        private static PluginLogger? _logger;
         private static Timer? _timer;
         private static readonly object Gate = new object();
 
-        internal static void Initialize(ILibraryManager libraryManager, IJsonSerializer json, ILogger logger)
+        internal static void Initialize(ILibraryManager libraryManager, IJsonSerializer json, PluginLogger logger)
         {
             _libraryManager = libraryManager;
             _json = json;
@@ -107,7 +107,7 @@ namespace HomeScreenCompanion
             foreach (var tl in config.TopLists ?? new List<TopListHomeSection>())
             {
                 Dictionary<string, string>? settings = null;
-                try { settings = json.DeserializeFromString<Dictionary<string, string>>(string.IsNullOrEmpty(tl.HomeSectionSettings) ? "{}" : tl.HomeSectionSettings); } catch { }
+                try { settings = json.DeserializeFromString<Dictionary<string, string>>(string.IsNullOrEmpty(tl.HomeSectionSettings) ? "{}" : tl.HomeSectionSettings); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                 if (settings == null || !settings.TryGetValue("RealPosterBadge", out var v)) continue;
                 var opt = OptionOf(v);
                 if (opt != null) wanted.Add((tl, opt.Value.Label, opt.Value.Size, opt.Value.Corner));
@@ -180,7 +180,7 @@ namespace HomeScreenCompanion
                                 foreach (var v in versions) Add(v, rank, label, size, corner);
                             else Add(movie, rank, label, size, corner);
                         }
-                        catch { }
+                        catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                     }
                 }
             }
@@ -215,7 +215,7 @@ namespace HomeScreenCompanion
     {
         public RealPosterBadgeEnhancer(ILibraryManager libraryManager, IJsonSerializer jsonSerializer, ILogManager logManager)
         {
-            RealPosterBadges.Initialize(libraryManager, jsonSerializer, logManager.GetLogger("HomeScreenCompanion"));
+            RealPosterBadges.Initialize(libraryManager, jsonSerializer, PluginLog.Wrap(logManager.GetLogger("HomeScreenCompanion"), "Real posters"));
         }
 
         public MetadataProviderPriority Priority => MetadataProviderPriority.Last;

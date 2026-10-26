@@ -26,14 +26,14 @@ namespace HomeScreenCompanion
         private static RunLog _log = new RunLog(ExecutionLog, null, "", false);
         public static string LastRunStatus { get; private set; } = "Never";
 
-        private readonly ILogger _logger;
+        private readonly PluginLogger _logger;
 
         public MergeTopListVersionsTask(ILibraryManager libraryManager, IProviderManager providerManager, IFileSystem fileSystem, ILogManager logManager)
         {
             _libraryManager = libraryManager;
             _providerManager = providerManager;
             _fileSystem = fileSystem;
-            _logger = logManager.GetLogger("HomeScreenCompanion_TopListMerge");
+            _logger = PluginLog.Wrap(logManager.GetLogger("HomeScreenCompanion_TopListMerge"), "Top-list merge");
         }
 
         // Forces Emby to ffprobe a top-list .strm item so it gets a real RunTimeTicks and
@@ -59,7 +59,7 @@ namespace HomeScreenCompanion
                 };
                 providerManager.QueueRefresh(li.InternalId, opts, RefreshPriority.High);
             }
-            catch { }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
         }
 
         public string Key => "MergeTopListVersionsTask";
@@ -225,7 +225,7 @@ namespace HomeScreenCompanion
                     QueueStrmProbe(providerManager, fileSystem, li);
                     merged++;
                 }
-                catch { }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             }
 
             return (strmItems.Count, merged);

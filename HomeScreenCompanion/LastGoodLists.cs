@@ -50,7 +50,7 @@ namespace HomeScreenCompanion
                     json.SerializeToFile(new Entry { Url = url.Trim(), SavedUtc = DateTime.UtcNow, Items = items.ToList() }, FileFor(url));
                 }
             }
-            catch { }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
         }
 
         /// <summary>The entries of the URL's last read that had any; null when there is none.</summary>
@@ -84,7 +84,7 @@ namespace HomeScreenCompanion
                         if (!keep.Contains(f)) File.Delete(f);
                 }
             }
-            catch { }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
         }
     }
 }

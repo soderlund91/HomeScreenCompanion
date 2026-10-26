@@ -10,13 +10,17 @@
 		<AssemblyName>HomeScreenCompanion</AssemblyName>
 		<RootNamespace>HomeScreenCompanion</RootNamespace>
 		
-		<Version>4.4.2.0</Version>
+		<Version>4.4.3.1</Version>
 		<!-- "beta" shows "vX.X.X.X beta" in the settings page footer; leave empty for a release. -->
-		<ReleaseChannel>dev</ReleaseChannel>
+		<ReleaseChannel></ReleaseChannel>
 		<InformationalVersion Condition="'$(ReleaseChannel)' != ''">$(Version)-$(ReleaseChannel)</InformationalVersion>
 
 		<Product>Home Screen Companion</Product>
-		
+
+		<!-- MSB3277: the Emby DLLs reference newer System.* versions; Emby supplies them at runtime.
+		     NU1903: SkiaSharp is compile-only (not shipped); the plugin runs on Emby's own SkiaSharp. -->
+		<NoWarn>$(NoWarn);MSB3277;NU1903</NoWarn>
+
 	</PropertyGroup>
 
 	<ItemGroup>

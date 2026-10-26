@@ -46,6 +46,39 @@ namespace HomeScreenCompanion
         public string Channel { get; set; } = "";
     }
 
+    // Download logs: the zip (see LogBundle), base64 in JSON like the plugin's other downloads.
+    [Route("/HomeScreenCompanion/Logs/Download", "GET")]
+    [Authenticated(Roles = "Admin")]
+    public class DownloadLogsRequest : IReturn<DownloadLogsResponse>
+    {
+        public bool Anonymize { get; set; } = true;
+    }
+
+    public class DownloadLogsResponse
+    {
+        public bool Success { get; set; }
+        public string Message { get; set; } = "";
+        public string FileName { get; set; } = "";
+        public string Data { get; set; } = "";
+    }
+
+    // Download logs: the number each user gets in an anonymised zip ("User 3" = …). Shown only in
+    // the download window, so the one sending the zip can say which user they mean; never in the zip.
+    [Route("/HomeScreenCompanion/Logs/UserNumbers", "GET")]
+    [Authenticated(Roles = "Admin")]
+    public class LogUserNumbersRequest : IReturn<LogUserNumbersResponse> { }
+
+    public class LogUserNumbersResponse
+    {
+        public List<LogUserNumber> Users { get; set; } = new List<LogUserNumber>();
+    }
+
+    public class LogUserNumber
+    {
+        public int Number { get; set; }
+        public string Name { get; set; } = "";
+    }
+
     [Route("/HomeScreenCompanion/UploadCollectionImage", "POST")]
     [Authenticated(Roles = "Admin")]
     public class UploadCollectionImageRequest : IReturn<UploadCollectionImageResponse>
@@ -299,6 +332,13 @@ namespace HomeScreenCompanion
     [Authenticated(Roles = "Admin")]
     public class HscGetStatusRequest : IReturn<HscSyncStatusResponse> { }
 
+    [Route("/HomeScreenCompanion/Hsc/SourceRows", "GET")]
+    [Authenticated(Roles = "Admin")]
+    public class HscGetSourceRowsRequest : IReturn<List<HomeSyncRowChoice>>
+    {
+        public string UserId { get; set; } = string.Empty;
+    }
+
     [Route("/HomeScreenCompanion/DebugSections", "GET")]
     [Authenticated(Roles = "Admin")]
     public class DebugSectionsRequest : IReturn<string>
@@ -317,6 +357,25 @@ namespace HomeScreenCompanion
     public class GetManagedCollectionsRequest : IReturn<GetManagedCollectionsResponse> { }
     public class ManagedCollectionInfo { public string Id { get; set; } = ""; public string Name { get; set; } = ""; public int ItemCount { get; set; } }
     public class GetManagedCollectionsResponse { public List<ManagedCollectionInfo> Collections { get; set; } = new List<ManagedCollectionInfo>(); }
+
+    // Every playlist on the server (Cleanup tab), with its owner and the users it is shared with.
+    [Route("/HomeScreenCompanion/Manage/Playlists", "GET")]
+    [Authenticated(Roles = "Admin")]
+    public class GetManagedPlaylistsRequest : IReturn<GetManagedPlaylistsResponse> { }
+    public class ManagedPlaylistInfo
+    {
+        public string Id { get; set; } = "";            // Guid (N), as DeletePlaylist takes it
+        public string Name { get; set; } = "";
+        public int ItemCount { get; set; }
+        public string OwnerId { get; set; } = "";       // "" = no user owns it
+        public string OwnerName { get; set; } = "";
+        public List<string> SharedWith { get; set; } = new List<string>();   // other users' names
+        public bool IsPublic { get; set; }               // every user sees it
+        public string ManagedBy { get; set; } = "";     // the HSC source that makes it; "" = none
+        public bool ManagedActive { get; set; }
+        public int ManagedIndex { get; set; } = -1;     // index in Tags of that source
+    }
+    public class GetManagedPlaylistsResponse { public List<ManagedPlaylistInfo> Playlists { get; set; } = new List<ManagedPlaylistInfo>(); }
 
     // ── Import existing collections (Sources tab) ──
     // Every Emby collection, with what stops it from being taken over (HSC already makes it, or
@@ -361,6 +420,10 @@ namespace HomeScreenCompanion
     [Authenticated(Roles = "Admin")]
     public class DeleteManagedCollectionRequest : IReturn<DeleteManagedCollectionResponse> { public string CollectionId { get; set; } = ""; }
     public class DeleteManagedCollectionResponse { public bool Success { get; set; } public string Message { get; set; } = ""; }
+
+    [Route("/HomeScreenCompanion/Manage/DeletePlaylist", "POST")]
+    [Authenticated(Roles = "Admin")]
+    public class DeleteManagedPlaylistRequest : IReturn<DeleteManagedCollectionResponse> { public string PlaylistId { get; set; } = ""; }
 
     [Route("/HomeScreenCompanion/TopList/Status", "GET")]
     [Authenticated(Roles = "Admin")]
@@ -605,6 +668,9 @@ namespace HomeScreenCompanion
         public string ClaudeModel { get; set; } = "";
         public string OllamaBaseUrl { get; set; } = "";
         public string OllamaModel { get; set; } = "";
+        // OpenAI-compatible connections without their keys (those are in BackupApiKeys).
+        // Nullable so backups made before this feature leave the current connections alone.
+        public List<AiConnection>? AiConnections { get; set; }
         public string AiSystemPrompt { get; set; } = "";
         public bool ExtendedConsoleOutput { get; set; }
         public bool LogMissingItems { get; set; }
@@ -625,11 +691,15 @@ namespace HomeScreenCompanion
         public string OpenAiApiKey { get; set; } = "";
         public string GeminiApiKey { get; set; } = "";
         public string ClaudeApiKey { get; set; } = "";
+        // OpenAI-compatible connection keys, by connection id.
+        public Dictionary<string, string>? AiConnectionKeys { get; set; }
     }
 
     public class BackupHomeSync
     {
         public bool HomeSyncEnabled { get; set; }
+        // Null in backups from before profiles: the single-source fields below are used then.
+        public List<HomeSyncProfile>? HomeSyncProfiles { get; set; }
         public string HomeSyncSourceUserId { get; set; } = "";
         public List<string> HomeSyncTargetUserIds { get; set; } = new List<string>();
         public bool HomeSyncLibraryOrder { get; set; }
@@ -852,10 +922,15 @@ public class HomeScreenCompanionService : IService
         private readonly ITaskManager _taskManager;
         private readonly IProviderManager _providerManager;
         private readonly IFileSystem _fileSystem;
-        private readonly ILogger _logger;
+        private readonly PluginLogger _logger;
 
-        public HomeScreenCompanionService(IHttpClient httpClient, IJsonSerializer jsonSerializer, IUserManager userManager, ILibraryManager libraryManager, IUserDataManager userDataManager, IUserViewManager userViewManager, ITaskManager taskManager, IProviderManager providerManager, IFileSystem fileSystem, ILogManager logManager)
+        private readonly MediaBrowser.Controller.IServerApplicationHost _appHost;
+        private readonly MediaBrowser.Controller.Persistence.IItemRepository _itemRepository;
+
+        public HomeScreenCompanionService(IHttpClient httpClient, IJsonSerializer jsonSerializer, IUserManager userManager, ILibraryManager libraryManager, IUserDataManager userDataManager, IUserViewManager userViewManager, ITaskManager taskManager, IProviderManager providerManager, IFileSystem fileSystem, ILogManager logManager, MediaBrowser.Controller.IServerApplicationHost appHost, MediaBrowser.Controller.Persistence.IItemRepository itemRepository)
         {
+            _appHost = appHost;
+            _itemRepository = itemRepository;
             _httpClient = httpClient;
             _jsonSerializer = jsonSerializer;
             _userManager = userManager;
@@ -865,7 +940,31 @@ public class HomeScreenCompanionService : IService
             _taskManager = taskManager;
             _providerManager = providerManager;
             _fileSystem = fileSystem;
-            _logger = logManager.GetLogger("HomeScreenCompanion_Access");
+            _logger = PluginLog.Wrap(logManager.GetLogger("HomeScreenCompanion_Access"), "Page");
+        }
+
+        public object Get(DownloadLogsRequest request)
+        {
+            try
+            {
+                var (fileName, zip) = new LogBundle(_libraryManager, _userManager, _taskManager, _jsonSerializer, _appHost).Build(request.Anonymize);
+                _logger.Info($"Logs downloaded ({zip.Length / 1024} KB{(request.Anonymize ? ", anonymised" : "")})");
+                return new DownloadLogsResponse { Success = true, FileName = fileName, Data = Convert.ToBase64String(zip) };
+            }
+            catch (Exception ex)
+            {
+                _logger.ErrorException("Logs could not be put together", ex);
+                return new DownloadLogsResponse { Success = false, Message = ex.Message };
+            }
+        }
+
+        public object Get(LogUserNumbersRequest request)
+        {
+            var users = LogBundle.UsersInOrder(_userManager);
+            return new LogUserNumbersResponse
+            {
+                Users = users.Select((u, i) => new LogUserNumber { Number = i + 1, Name = u.Name ?? "" }).ToList()
+            };
         }
 
         public object Get(VersionRequest request)
@@ -915,7 +1014,7 @@ public class HomeScreenCompanionService : IService
                         return s; // ThemeSong, ThemeVideo, Trailer, BehindTheScenes, etc.
                 }
             }
-            catch { }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             return item.GetType().Name;
         }
 
@@ -1017,6 +1116,15 @@ public class HomeScreenCompanionService : IService
             }
         }
 
+        // The rows of a source user's home screen, for a Copy & Sync profile's Copy selected picker.
+        public object Get(HscGetSourceRowsRequest request)
+        {
+            var config = Plugin.Instance?.Configuration;
+            if (config == null || string.IsNullOrWhiteSpace(request.UserId)) return new List<HomeSyncRowChoice>();
+            try { return HomeSectionSyncTask.RowChoices(config, _userManager, _libraryManager, _jsonSerializer, request.UserId); }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); return new List<HomeSyncRowChoice>(); }
+        }
+
         public object Get(DebugSectionsRequest request)
         {
             try
@@ -1101,12 +1209,12 @@ public class HomeScreenCompanionService : IService
             return index;
         }
 
-        private static SourceTestItem MatchTestItem(TestLibraryIndex index, string name, int? year, string imdb, bool allowTitleMatch)
+        private static SourceTestItem MatchTestItem(TestLibraryIndex index, string? name, int? year, string? imdb, bool allowTitleMatch)
         {
             imdb = (imdb ?? "").Trim();
             var result = new SourceTestItem { Name = name ?? "", Year = year, Imdb = imdb };
 
-            BaseItem match = null;
+            BaseItem? match = null;
             if (!string.IsNullOrEmpty(imdb)) index.ByImdb.TryGetValue(imdb, out match);
             if (match == null && allowTitleMatch && !string.IsNullOrWhiteSpace(name))
             {
@@ -1192,7 +1300,7 @@ public class HomeScreenCompanionService : IService
         {
             var settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             try { settings = _jsonSerializer.DeserializeFromString<Dictionary<string, string>>(tl.HomeSectionSettings ?? "{}") ?? settings; }
-            catch { }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             var badgeStyle = settings.TryGetValue("BadgeStyle", out var bs) && !string.IsNullOrEmpty(bs) ? bs : "neutral";
             var badgeOptions = settings.TryGetValue("BadgeOptions", out var bo) ? bo ?? "" : "";
             var folderPath = Path.Combine(Plugin.Instance.DataFolderPath, "toplists", SanitizeFolderName(tl.TagName));
@@ -1557,6 +1665,10 @@ public class HomeScreenCompanionService : IService
             if (string.IsNullOrWhiteSpace(request.Prompt))
                 return new TestAiSourceResponse { Success = false, Message = "Prompt is required." };
 
+            // The test asks the AI with the saved settings, like a run does.
+            if (AiConnection.IsCompat(request.Provider) && AiConnection.Find(config.AiConnections, request.Provider) == null)
+                return new TestAiSourceResponse { Success = false, Message = "This AI connection is not saved yet. Click Save, then test again." };
+
             string recentlyWatchedContext = "";
             if (request.IncludeRecentlyWatched && !string.IsNullOrWhiteSpace(request.RecentlyWatchedUserId))
             {
@@ -1598,7 +1710,7 @@ public class HomeScreenCompanionService : IService
                         }
                     }
                 }
-                catch { }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             }
 
             var fetcher = new ListFetcher(_httpClient, _jsonSerializer);
@@ -1615,6 +1727,7 @@ public class HomeScreenCompanionService : IService
                     config.ClaudeModel,
                     config.OllamaBaseUrl,
                     config.OllamaModel,
+                    config.AiConnections,
                     config.AiSystemPrompt,
                     recentlyWatchedContext,
                     20,
@@ -1824,7 +1937,7 @@ public class HomeScreenCompanionService : IService
                 if (tc == null)
                     return new HscApplyTagHomeSectionsResponse { Success = false, Message = $"Tag '{request.TagName}' not found." };
 
-                if (!tc.EnableHomeSection)
+                if (!SourceTopLists.PlainRow(tc))
                     return new HscApplyTagHomeSectionsResponse { Success = true, Message = "Home section not enabled for this tag." };
 
                 var realTracked = (tc.HomeSectionTracked ?? new System.Collections.Generic.List<HomeSectionTracking>())
@@ -1840,7 +1953,7 @@ public class HomeScreenCompanionService : IService
                     if (!string.IsNullOrEmpty(tc.HomeSectionSettings) && tc.HomeSectionSettings != "{}")
                         settingsDict = _jsonSerializer.DeserializeFromString<Dictionary<string, string>>(tc.HomeSectionSettings) ?? settingsDict;
                 }
-                catch { }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
 
                 if (!settingsDict.ContainsKey("SectionType"))
                     settingsDict["SectionType"] = HomeScreenCompanionTask.DefaultSectionType(tc);
@@ -1853,7 +1966,7 @@ public class HomeScreenCompanionService : IService
                 settingsDict.TryGetValue("SectionType", out var sectionType);
 
                 // Resolve library ID
-                string resolvedLibraryId = null;
+                string? resolvedLibraryId = null;
                 if (sectionType == "boxset")
                 {
                     if (tc.HomeSectionLibraryId == "auto")
@@ -1894,10 +2007,13 @@ public class HomeScreenCompanionService : IService
                 var sectionMarker = "hsc__" + safeTag;
 
                 int updated = 0;
+                var topListLibraries = TopListSyncTask.TopListLibraryIds(config, _libraryManager);
+                var userStatus = UserStatus.Read(_userManager);
                 foreach (var userId in (tc.HomeSectionUserIds ?? new System.Collections.Generic.List<string>()))
                 {
                     var tracking = realTracked.FirstOrDefault(t => t.UserId == userId);
                     if (tracking == null) continue; // no real tracked section for this user
+                    if (userStatus.IsDisabled(userId)) continue; // disabled in Emby: their row is left as it is
 
                     try
                     {
@@ -1905,9 +2021,13 @@ public class HomeScreenCompanionService : IService
                         var currentSections = _userManager.GetHomeSections(userInternalId, CancellationToken.None);
                         var allSections = currentSections?.Sections ?? Array.Empty<ContentSection>();
 
+                        // By title only a row no other source or top-list owns, and never a row on a
+                        // top-list's library (a top-list can have the same title).
                         ContentSection ownedSection = allSections.FirstOrDefault(s => s.Id == tracking.SectionId);
                         if (ownedSection == null && settingsDict.TryGetValue("CustomName", out var _applyFallbackName) && !string.IsNullOrEmpty(_applyFallbackName))
-                            ownedSection = allSections.FirstOrDefault(s => HomeScreenCompanionTask.SameTitle(s.CustomName, _applyFallbackName));
+                            ownedSection = allSections.FirstOrDefault(s => HomeScreenCompanionTask.SameTitle(s.CustomName, _applyFallbackName)
+                                && !HomeScreenCompanionTask.SectionOwnedElsewhere(config, tc, userId, s.Id)
+                                && !TopListSyncTask.IsTopListRow(s, topListLibraries));
 
                         if (ownedSection == null) continue;
 
@@ -1916,7 +2036,7 @@ public class HomeScreenCompanionService : IService
                         _userManager.UpdateHomeSection(userInternalId, updatedSection, CancellationToken.None);
                         updated++;
                     }
-                    catch { /* skip this user on error */ }
+                    catch (Exception swallowed) { /* skip this user on error */ PluginLog.Swallowed(swallowed); }
                 }
 
                 return new HscApplyTagHomeSectionsResponse { Success = true, UsersUpdated = updated, Message = $"Applied to {updated} user(s)." };
@@ -1944,13 +2064,13 @@ public class HomeScreenCompanionService : IService
             var fields = typeof(ContentSection)
                 .GetProperties(BindingFlags.Public | BindingFlags.Instance)
                 .Where(p => p.CanRead && p.CanWrite && p.Name != "Id")
-                .Select(p => new HscSectionField { Name = p.Name, Type = GetSimpleTypeName(p.PropertyType) })
+                .Select(p => new HscSectionField { Name = p.Name, Type = GetSimpleTypeName(p.PropertyType)! })
                 .Where(f => f.Type != null)
                 .ToList();
             return new HscSectionSchemaResponse { Fields = fields };
         }
 
-        private static string GetSimpleTypeName(Type t)
+        private static string? GetSimpleTypeName(Type t)
         {
             if (t == typeof(string)) return "string";
             if (t == typeof(bool) || t == typeof(bool?)) return "bool";
@@ -1991,7 +2111,7 @@ public class HomeScreenCompanionService : IService
                     all.CopyTo(allExtraTypes, 0);
                 }
             }
-            catch { }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
 
             var tagCount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             var tagMovieKeys = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
@@ -2020,7 +2140,7 @@ public class HomeScreenCompanionService : IService
                         foreach (var extra in _libraryManager.GetItemList(extraQuery))
                             if (seenIds.Add(extra.Id)) items.Add(extra);
                     }
-                    catch { }
+                    catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                 }
                 return items;
             }
@@ -2105,6 +2225,79 @@ public class HomeScreenCompanionService : IService
             }
             result.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
             return new GetManagedCollectionsResponse { Collections = result };
+        }
+
+        // Owner = the user whose share is ManageDelete (Emby gives it to the creator only; users it
+        // is shared with get Read or Write). When the owner is deleted the others keep their share,
+        // so the playlist has no owner but is still shared.
+        public object Get(GetManagedPlaylistsRequest request)
+        {
+            var playlists = _libraryManager.GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = new[] { "Playlist" },
+                Recursive = true
+            }).Where(p => p.GetType().Name.Contains("Playlist")).ToArray();
+
+            var usersById = _userManager.GetUserList(new UserQuery()).ToDictionary(u => u.InternalId);
+            var sharesByItem = new Dictionary<long, List<MediaBrowser.Controller.Library.UserItemShare>>();
+            if (playlists.Length > 0)
+            {
+                try
+                {
+                    var shares = _itemRepository.GetUserItemShares(
+                        new MediaBrowser.Controller.Library.UserItemShareQuery { ItemIds = playlists.Select(p => p.InternalId).ToArray() },
+                        CancellationToken.None) ?? Array.Empty<MediaBrowser.Controller.Library.UserItemShare>();
+                    foreach (var s in shares)
+                    {
+                        if (!sharesByItem.TryGetValue(s.ItemId, out var list)) sharesByItem[s.ItemId] = list = new List<MediaBrowser.Controller.Library.UserItemShare>();
+                        list.Add(s);
+                    }
+                }
+                catch (Exception ex) { _logger.Warn($"Cleanup: playlist owners could not be read: {ex.Message}"); }
+            }
+
+            // The playlists HSC sources make, by playlist id → (source name, active, index).
+            var hsc = new Dictionary<Guid, (string Name, bool Active, int Index)>();
+            var tags = Plugin.Instance?.Configuration?.Tags ?? new List<TagConfig>();
+            for (int i = 0; i < tags.Count; i++)
+            {
+                var t = tags[i];
+                if (t?.PlaylistMappings == null) continue;
+                foreach (var m in t.PlaylistMappings)
+                    if (m != null && Guid.TryParse(m.PlaylistId, out var g) && !hsc.ContainsKey(g))
+                        hsc[g] = (string.IsNullOrWhiteSpace(t.Name) ? (t.Tag ?? "") : t.Name.Trim(), t.Active, i);
+            }
+
+            var result = new List<ManagedPlaylistInfo>();
+            foreach (var p in playlists)
+            {
+                int count = 0;
+                try { count = _libraryManager.GetItemList(new InternalItemsQuery { ListIds = new[] { p.InternalId } }).Length; }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                var info = new ManagedPlaylistInfo { Id = p.Id.ToString("N"), Name = p.Name ?? "", ItemCount = count, IsPublic = p.IsPublic };
+
+                var known = (sharesByItem.TryGetValue(p.InternalId, out var ps) ? ps : new List<MediaBrowser.Controller.Library.UserItemShare>())
+                    .Where(s => usersById.ContainsKey(s.UserId)).ToList();
+                var ownerShare = known.FirstOrDefault(s => s.ShareLevel == MediaBrowser.Model.Dto.UserItemShareLevel.ManageDelete);
+                if (ownerShare != null)
+                {
+                    var owner = usersById[ownerShare.UserId];
+                    info.OwnerId = owner.Id.ToString("N");
+                    info.OwnerName = owner.Name ?? "";
+                }
+                info.SharedWith = known.Where(s => s != ownerShare).Select(s => usersById[s.UserId].Name ?? "")
+                    .OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+                if (hsc.TryGetValue(p.Id, out var src))
+                {
+                    info.ManagedBy = src.Name;
+                    info.ManagedActive = src.Active;
+                    info.ManagedIndex = src.Index;
+                }
+                result.Add(info);
+            }
+            result.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase) is int c && c != 0
+                ? c : string.Compare(a.OwnerName, b.OwnerName, StringComparison.OrdinalIgnoreCase));
+            return new GetManagedPlaylistsResponse { Playlists = result };
         }
 
         // Collection names the saved sources make (collection on), name → source name.
@@ -2240,7 +2433,7 @@ public class HomeScreenCompanionService : IService
                 if (item.Tags == null) continue;
                 item.RemoveTag(tagName);
                 try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); updated++; }
-                catch { /* best effort */ }
+                catch (Exception swallowed) { /* best effort */ PluginLog.Swallowed(swallowed); }
             }
             return new DeleteManagedTagResponse { Success = true, ItemsUpdated = updated };
         }
@@ -2254,7 +2447,7 @@ public class HomeScreenCompanionService : IService
                 return new DeleteManagedTagsResponse { Success = true };
 
             foreach (var tag in tagNames)
-                TagCacheManager.Instance.RemoveTagFromAllEntries(tag);
+                TagCacheManager.Instance.RemoveTagFromAllEntries(tag!);
             TagCacheManager.Instance.Save();
 
             var allItems = _libraryManager.GetItemList(new InternalItemsQuery
@@ -2284,7 +2477,7 @@ public class HomeScreenCompanionService : IService
                 foreach (var extra in _libraryManager.GetItemList(extraQuery))
                     if (seenIds.Add(extra.Id)) allItems.Add(extra);
             }
-            catch { }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
 
             int updated = 0;
             foreach (var item in allItems)
@@ -2301,7 +2494,7 @@ public class HomeScreenCompanionService : IService
                 }
                 if (!changed) continue;
                 try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); updated++; }
-                catch { /* best effort */ }
+                catch (Exception swallowed) { /* best effort */ PluginLog.Swallowed(swallowed); }
             }
             return new DeleteManagedTagsResponse { Success = true, ItemsUpdated = updated };
         }
@@ -2320,6 +2513,27 @@ public class HomeScreenCompanionService : IService
             try
             {
                 _libraryManager.DeleteItem(item, new DeleteOptions { DeleteFileLocation = true });
+                return new DeleteManagedCollectionResponse { Success = true };
+            }
+            catch (Exception ex)
+            {
+                return new DeleteManagedCollectionResponse { Success = false, Message = ex.Message };
+            }
+        }
+
+        // Removed with its folder (userplaylists\<name> [playlist]\): left behind, Emby indexes the
+        // .m3u again as a new playlist that no user owns.
+        public object Post(DeleteManagedPlaylistRequest request)
+        {
+            if (!Guid.TryParse(request.PlaylistId ?? "", out var guid))
+                return new DeleteManagedCollectionResponse { Success = false, Message = "Invalid PlaylistId." };
+            var item = _libraryManager.GetItemById(guid);
+            if (item == null || !item.GetType().Name.Contains("Playlist"))
+                return new DeleteManagedCollectionResponse { Success = false, Message = "Playlist not found." };
+            try
+            {
+                _libraryManager.DeleteItem(item, new DeleteOptions { DeleteFileLocation = true });
+                _logger.Info($"Cleanup: playlist \"{item.Name}\" removed");
                 return new DeleteManagedCollectionResponse { Success = true };
             }
             catch (Exception ex)
@@ -2417,22 +2631,15 @@ public class HomeScreenCompanionService : IService
                 foreach (var f in Directory.GetFiles(folderPath, "*.jpg"))
                     File.Delete(f);
 
-                // Write one .strm file per movie that carries this tag. Top-list copies are skipped:
+                // Write one .strm file per movie of the source's list (TopListMembers), or before its
+                // first run since 4.5 per movie that carries this tag. Top-list copies are skipped:
                 // one carrying the tag would otherwise become a .strm pointing at a .strm.
                 var topListsFolder = Path.Combine(dataPath, "toplists") + Path.DirectorySeparatorChar;
-                var items = _libraryManager.GetItemList(new InternalItemsQuery
-                {
-                    Tags = new[] { request.TagName },
-                    IncludeItemTypes = new[] { "Movie" },
-                    Recursive = true,
-                    IsVirtualItem = false
-                }).Where(i => string.IsNullOrEmpty(i.Path)
-                           || !i.Path.StartsWith(topListsFolder, StringComparison.OrdinalIgnoreCase))
-                  .ToList();
+                var (items, fromList) = TopListMembers.MoviesFor(request.TagName, _libraryManager, _jsonSerializer, topListsFolder);
 
-                // Sort by saved rank order from the last task run (preserves external list order)
+                // Without a saved list: sort by saved rank order from the last task run (preserves external list order)
                 var rankFile = Path.Combine(Plugin.Instance.DataFolderPath, "tag_ranks", sanitized + ".json");
-                if (File.Exists(rankFile))
+                if (!fromList && File.Exists(rankFile))
                 {
                     try
                     {
@@ -2449,7 +2656,7 @@ public class HomeScreenCompanionService : IService
                             }).ToList();
                         }
                     }
-                    catch { }
+                    catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                 }
 
                 // First pass: deduplicate and preserve query order
@@ -2611,7 +2818,7 @@ public class HomeScreenCompanionService : IService
                     try
                     {
                         // Prefer GetUserPolicy (fresh from store) over the cached User.Policy property.
-                        object policy = null;
+                        object? policy = null;
                         if (getPolicyMethod != null)
                         {
                             try
@@ -2621,7 +2828,7 @@ public class HomeScreenCompanionService : IService
                                 var gpArgs   = BuildArgList(gpParams, gpArg0, null);
                                 policy = getPolicyMethod.Invoke(_userManager, gpArgs);
                             }
-                            catch { }
+                            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                         }
                         if (policy == null)
                             policy = user.GetType().GetProperty("Policy")?.GetValue(user);
@@ -2674,7 +2881,7 @@ public class HomeScreenCompanionService : IService
                 {
                     try
                     {
-                        object policy = null;
+                        object? policy = null;
                         if (getPolicyMethod != null)
                         {
                             try
@@ -2682,7 +2889,7 @@ public class HomeScreenCompanionService : IService
                                 var gp = getPolicyMethod.GetParameters();
                                 policy = getPolicyMethod.Invoke(_userManager, BuildArgList(gp, BuildUserArg(gp[0].ParameterType, user), null));
                             }
-                            catch { }
+                            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                         }
                         if (policy == null) policy = user.GetType().GetProperty("Policy")?.GetValue(user);
                         if (policy == null) continue;
@@ -2696,7 +2903,7 @@ public class HomeScreenCompanionService : IService
                             EnabledFolders = foldersProp?.GetValue(policy) as string[] ?? Array.Empty<string>()
                         });
                     }
-                    catch { }
+                    catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                 }
             }
             catch (Exception ex)
@@ -2751,7 +2958,7 @@ public class HomeScreenCompanionService : IService
                 if (!userDict.TryGetValue(snap.UserId, out var user)) continue;
                 try
                 {
-                    object policy = null;
+                    object? policy = null;
                     if (getPolicyMethod != null)
                     {
                         try
@@ -2759,7 +2966,7 @@ public class HomeScreenCompanionService : IService
                             var gp = getPolicyMethod.GetParameters();
                             policy = getPolicyMethod.Invoke(_userManager, BuildArgList(gp, BuildUserArg(gp[0].ParameterType, user), null));
                         }
-                        catch { }
+                        catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                     }
                     if (policy == null) policy = user.GetType().GetProperty("Policy")?.GetValue(user);
                     if (policy == null) continue;
@@ -2795,9 +3002,9 @@ public class HomeScreenCompanionService : IService
             return user;
         }
 
-        private static object[] BuildArgList(System.Reflection.ParameterInfo[] parms, object arg0, object arg1)
+        private static object?[] BuildArgList(System.Reflection.ParameterInfo[] parms, object arg0, object? arg1)
         {
-            var args = new object[parms.Length];
+            var args = new object?[parms.Length];
             args[0] = arg0;
             for (int i = 1; i < parms.Length; i++)
             {
@@ -2809,7 +3016,7 @@ public class HomeScreenCompanionService : IService
             return args;
         }
 
-        private void EnforceTopListLibraryPermissions(string libId, IEnumerable<string> assignedUserIds)
+        private void EnforceTopListLibraryPermissions(string libId, IEnumerable<string>? assignedUserIds)
         {
             var normalizedLibId = (libId ?? "").Trim().Replace("-", "").ToLowerInvariant();
             if (string.IsNullOrEmpty(normalizedLibId)) return;
@@ -2835,7 +3042,7 @@ public class HomeScreenCompanionService : IService
             {
                 try
                 {
-                    object policy = null;
+                    object? policy = null;
                     if (getPolicyMethod != null)
                     {
                         try
@@ -2843,7 +3050,7 @@ public class HomeScreenCompanionService : IService
                             var gp = getPolicyMethod.GetParameters();
                             policy = getPolicyMethod.Invoke(_userManager, BuildArgList(gp, BuildUserArg(gp[0].ParameterType, user), null));
                         }
-                        catch { }
+                        catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                     }
                     if (policy == null) policy = user.GetType().GetProperty("Policy")?.GetValue(user);
                     if (policy == null) continue;
@@ -2871,7 +3078,7 @@ public class HomeScreenCompanionService : IService
                     var up = updateMethod.GetParameters();
                     updateMethod.Invoke(_userManager, BuildArgList(up, BuildUserArg(up[0].ParameterType, user), policy));
                 }
-                catch { }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             }
         }
 
@@ -2955,7 +3162,7 @@ public class HomeScreenCompanionService : IService
                                        .Select(i => i.ImdbId).ToList();
                     _jsonSerializer.SerializeToFile(rankIds, Path.Combine(rankDir, sanitized + ".json"));
                 }
-                catch { }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
 
                 // Update ForcedSortName directly in the library database so the new order applies
                 // immediately. MetadataRefreshMode=Default (used in the UI scan) won't override
@@ -2999,13 +3206,13 @@ public class HomeScreenCompanionService : IService
                                 MergeTopListVersionsTask.QueueStrmProbe(_providerManager, _fileSystem, li);
                             }
                         }
-                        catch { }
+                        catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
 
                         try { _libraryManager.UpdateItem(li, li.Parent, ItemUpdateType.MetadataEdit, null); }
-                        catch { }
+                        catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                     }
                 }
-                catch { }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
 
                 return new PrepareTopListFolderResponse { Success = true, FolderPath = folderPath, FilesCreated = count };
             }
@@ -3178,10 +3385,10 @@ public class HomeScreenCompanionService : IService
             return changed;
         }
 
-        internal static string EnsureLocalImagePath(IHttpClient httpClient, string path, string tempDir)
+        internal static string? EnsureLocalImagePath(IHttpClient httpClient, string? path, string tempDir)
         {
             if (string.IsNullOrEmpty(path)) return null;
-            if (!path.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            if (!path!.StartsWith("http", StringComparison.OrdinalIgnoreCase))
                 return File.Exists(path) ? path : null;
             try
             {
@@ -3272,7 +3479,7 @@ public class HomeScreenCompanionService : IService
                         badgeOptions = settings.TryGetValue("BadgeOptions", out var bo) ? bo ?? "" : "";
                         realPoster = settings.TryGetValue("RealPosterBadge", out var rp) ? rp ?? "" : "";
                     }
-                    catch { }
+                    catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                     userIds = tlConfig.HomeSectionUserIds ?? new List<string>();
                 }
 
@@ -3333,10 +3540,21 @@ public class HomeScreenCompanionService : IService
                                 var internalId = _userManager.GetInternalId(tracking.UserId);
                                 _userManager.DeleteHomeSections(internalId, new[] { tracking.SectionId }, CancellationToken.None);
                             }
-                            catch { }
+                            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                         }
                         config.TopLists.Remove(tl);
-                        Plugin.Instance.SaveConfiguration();
+                        // Made with a source's Create as top-list: switched off there too (else the next
+                        // settings save would make it again).
+                        // A source with nothing else to show (Apply Tag went off with the top-list) gets
+                        // no plain row instead: it would have nothing in it.
+                        if (tl.FromSource)
+                            foreach (var tc in (config.Tags ?? new List<TagConfig>()).Where(t => string.Equals((t.Tag ?? "").Trim(), (tl.TagName ?? "").Trim(), StringComparison.OrdinalIgnoreCase)))
+                            {
+                                tc.EnableTopList = false;
+                                if (!tc.EnableTag && !tc.EnableCollection && !tc.EnablePlaylist) tc.EnableHomeSection = false;
+                            }
+                        TopListMembers.Delete(tl.TagName);
+                        Plugin.Instance!.SaveConfiguration();
                     }
                 }
 
@@ -3368,7 +3586,7 @@ public class HomeScreenCompanionService : IService
                     if (!string.IsNullOrEmpty(tl.HomeSectionSettings) && tl.HomeSectionSettings != "{}")
                         settingsDict = _jsonSerializer.DeserializeFromString<Dictionary<string, string>>(tl.HomeSectionSettings) ?? settingsDict;
                 }
-                catch { }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
 
                 if (!settingsDict.ContainsKey("SectionType"))
                     settingsDict["SectionType"] = "items";
@@ -3385,7 +3603,12 @@ public class HomeScreenCompanionService : IService
                     .Where(f => !string.IsNullOrEmpty(f.ItemId))
                     .Select(f => f.ItemId.Trim().ToLowerInvariant())
                     .ToList();
-                foreach (var viewUserId in tl.HomeSectionUserIds ?? new System.Collections.Generic.List<string>())
+                // Users removed from Emby can still be on the list, and disabled ones are left as they
+                // are (see UserStatus): both left out here and below.
+                var userStatus = UserStatus.Read(_userManager);
+                var listUsers = (tl.HomeSectionUserIds ?? new System.Collections.Generic.List<string>())
+                    .Where(u => TopListSyncTask.UserExists(_userManager, u) && !userStatus.IsDisabled(u)).ToList();
+                foreach (var viewUserId in listUsers)
                     allLibIds.AddRange(TopListSyncTask.GetSectionEditorViewIds(_userViewManager, _userManager, viewUserId));
                 var ownIds = TopListSyncTask.OwnLibraryIds(resolvedLibraryId, _libraryManager);
                 var storedExclude = (settingsDict.TryGetValue("_queryExcludeViewIds", out var storedEv) ? storedEv : "")
@@ -3402,7 +3625,7 @@ public class HomeScreenCompanionService : IService
 
                 int created = 0, updated = 0;
 
-                foreach (var userId in (tl.HomeSectionUserIds ?? new System.Collections.Generic.List<string>()))
+                foreach (var userId in listUsers)
                 {
                     try
                     {
@@ -3413,11 +3636,13 @@ public class HomeScreenCompanionService : IService
                         var tracked = (tl.HomeSectionTracked ?? new System.Collections.Generic.List<HomeSectionTracking>())
                             .FirstOrDefault(t => t.UserId == userId);
 
-                        ContentSection ownedSection = null;
+                        ContentSection? ownedSection = null;
                         if (tracked != null && !string.IsNullOrEmpty(tracked.SectionId) && !tracked.SectionId.StartsWith("hsc__"))
                             ownedSection = allSections.FirstOrDefault(s => s.Id == tracked.SectionId);
-                        if (ownedSection == null && settingsDict.TryGetValue("CustomName", out var _tlFallbackName) && !string.IsNullOrEmpty(_tlFallbackName))
-                            ownedSection = allSections.FirstOrDefault(s => string.Equals(s.CustomName, _tlFallbackName, StringComparison.OrdinalIgnoreCase));
+                        // Its id is gone: the user's row on the list's own library. Never a row found by
+                        // its title — a source's row can have the same title, and would be made over.
+                        if (ownedSection == null)
+                            ownedSection = allSections.FirstOrDefault(s => TopListSyncTask.IsTopListRow(s, ownIds));
 
                         string trackId;
                         if (ownedSection != null)
@@ -3440,6 +3665,10 @@ public class HomeScreenCompanionService : IService
                                 .Where(s => !string.IsNullOrEmpty(s.Id) && !beforeIds.Contains(s.Id))
                                 .Select(s => s.Id).FirstOrDefault() ?? "";
                             trackId = !string.IsNullOrEmpty(newId) ? newId : sectionMarker;
+                            // At the list's Position (a new row is at the bottom).
+                            if (!string.IsNullOrEmpty(newId))
+                                HomeScreenCompanionTask.PlaceNewRow(_userManager, userInternalId, newId, RowPlacement.PositionIn(tl.HomeSectionSettings), CancellationToken.None,
+                                    TopListSyncTask.OtherUsers(tl, userId), settingsDict.TryGetValue("CustomName", out var _tlOwnName) ? _tlOwnName : null);
                             created++;
                         }
 
@@ -3451,7 +3680,12 @@ public class HomeScreenCompanionService : IService
                             tl.HomeSectionTracked.Add(new HomeSectionTracking { UserId = userId, SectionId = trackId });
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        // The top-list sync queued below makes or updates the row again.
+                        var who = Guid.TryParse(userId, out var whoGuid) ? (_userManager.GetUserById(whoGuid)?.Name ?? userId) : userId;
+                        PluginLog.Write("WRN", "Page", $"Top-list '{tl.TagName}': the row for {who} could not be saved — {PluginLog.Describe(ex)}");
+                    }
                 }
 
                 // Inject the new top-list library into _queryExcludeViewIds of every existing
@@ -3461,7 +3695,7 @@ public class HomeScreenCompanionService : IService
                 {
                     foreach (var tc in (config.Tags ?? new System.Collections.Generic.List<TagConfig>()))
                     {
-                        if (!tc.EnableHomeSection) continue;
+                        if (!SourceTopLists.PlainRow(tc)) continue;
 
                         var tcSettings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                         try
@@ -3469,7 +3703,7 @@ public class HomeScreenCompanionService : IService
                             if (!string.IsNullOrEmpty(tc.HomeSectionSettings) && tc.HomeSectionSettings != "{}")
                                 tcSettings = _jsonSerializer.DeserializeFromString<Dictionary<string, string>>(tc.HomeSectionSettings) ?? tcSettings;
                         }
-                        catch { }
+                        catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
 
                         tcSettings.TryGetValue("SectionType", out var tcSt);
                         // Only items rows get the top-list exclusion (boxset and playlist rows show one item list).
@@ -3520,7 +3754,7 @@ public class HomeScreenCompanionService : IService
                                 typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSec, owned.Id);
                                 _userManager.UpdateHomeSection(uid, updatedSec, CancellationToken.None);
                             }
-                            catch { }
+                            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                         }
                     }
                 }
@@ -3539,7 +3773,7 @@ public class HomeScreenCompanionService : IService
                             if (!string.IsNullOrEmpty(otherTl.HomeSectionSettings) && otherTl.HomeSectionSettings != "{}")
                                 otherSettings = _jsonSerializer.DeserializeFromString<Dictionary<string, string>>(otherTl.HomeSectionSettings) ?? otherSettings;
                         }
-                        catch { }
+                        catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
 
                         var otherExisting = (otherSettings.TryGetValue("_queryExcludeViewIds", out var otherEv) ? otherEv : "")
                             .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
@@ -3573,7 +3807,7 @@ public class HomeScreenCompanionService : IService
                                 typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSec, owned.Id);
                                 _userManager.UpdateHomeSection(uid, updatedSec, CancellationToken.None);
                             }
-                            catch { }
+                            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                         }
                     }
                 }
@@ -3587,7 +3821,7 @@ public class HomeScreenCompanionService : IService
 
                 EnforceTopListLibraryPermissions(resolvedLibraryId, tl.HomeSectionUserIds);
 
-                Plugin.Instance.SaveConfiguration();
+                Plugin.Instance!.SaveConfiguration();
                 _taskManager.QueueScheduledTask<TopListSyncTask>();
                 return new PrepareTopListHomeSectionsResponse { Success = true, UsersCreated = created, UsersUpdated = updated, Message = $"Synced: {created} created, {updated} updated." };
             }
@@ -3650,6 +3884,8 @@ public class HomeScreenCompanionService : IService
                     ClaudeModel               = config.ClaudeModel ?? "",
                     OllamaBaseUrl             = config.OllamaBaseUrl ?? "",
                     OllamaModel               = config.OllamaModel ?? "",
+                    AiConnections             = (config.AiConnections ?? new List<AiConnection>()).Where(c => c != null)
+                        .Select(c => new AiConnection { Id = c.Id, Name = c.Name, BaseUrl = c.BaseUrl, Model = c.Model }).ToList(),
                     AiSystemPrompt            = config.AiSystemPrompt ?? "",
                     ExtendedConsoleOutput     = config.ExtendedConsoleOutput,
                     LogMissingItems           = config.LogMissingItems,
@@ -3673,7 +3909,10 @@ public class HomeScreenCompanionService : IService
                     TmdbApiKey    = config.TmdbApiKey ?? "",
                     OpenAiApiKey  = config.OpenAiApiKey ?? "",
                     GeminiApiKey  = config.GeminiApiKey ?? "",
-                    ClaudeApiKey  = config.ClaudeApiKey ?? ""
+                    ClaudeApiKey  = config.ClaudeApiKey ?? "",
+                    AiConnectionKeys = (config.AiConnections ?? new List<AiConnection>())
+                        .Where(c => c != null && !string.IsNullOrEmpty(c.Id) && !string.IsNullOrEmpty(c.ApiKey))
+                        .GroupBy(c => c.Id).ToDictionary(g => g.Key, g => g.First().ApiKey)
                 };
                 file.Sections.Add("ApiKeys");
             }
@@ -3719,12 +3958,16 @@ public class HomeScreenCompanionService : IService
 
             if (request.HomeSync)
             {
+                // The first profile also goes into the single-source fields, for older versions.
+                var profiles = config.EffectiveHomeSyncProfiles();
+                var first = profiles.FirstOrDefault();
                 file.HomeSync = new BackupHomeSync
                 {
                     HomeSyncEnabled       = config.HomeSyncEnabled,
-                    HomeSyncSourceUserId  = config.HomeSyncSourceUserId ?? "",
-                    HomeSyncTargetUserIds = (config.HomeSyncTargetUserIds ?? new List<string>()).ToList(),
-                    HomeSyncLibraryOrder  = config.HomeSyncLibraryOrder,
+                    HomeSyncProfiles      = profiles.Select(CopyProfile).ToList(),
+                    HomeSyncSourceUserId  = first?.SourceUserId ?? "",
+                    HomeSyncTargetUserIds = (first?.TargetUserIds ?? new List<string>()).ToList(),
+                    HomeSyncLibraryOrder  = first?.LibraryOrder ?? false,
                     ContinueWatchingBumpEnabled  = config.ContinueWatchingBumpEnabled,
                     ContinueWatchingBumpMode     = config.ContinueWatchingBumpMode ?? ContinueWatchingBumper.ModeAllEpisodes,
                     ContinueWatchingBumpAllUsers = config.ContinueWatchingBumpAllUsers,
@@ -3748,6 +3991,10 @@ public class HomeScreenCompanionService : IService
                 if (plugin == null)
                     return Fail(response, "Plugin not initialized.");
                 var config = plugin.Configuration;
+                // The sources as they were before the restore (they may be replaced first): the source
+                // a list that leaves with the restore came from (SourceTopLists.QueueVanished).
+                var tagsBefore = (config.Tags ?? new List<TagConfig>()).ToList();
+                var listsBefore = (config.TopLists ?? new List<TopListHomeSection>()).ToList();
 
                 var backup = ParseBackup(request.BackupJson);
                 if (backup == null)
@@ -3765,6 +4012,16 @@ public class HomeScreenCompanionService : IService
                     config.ClaudeModel               = s.ClaudeModel ?? "";
                     config.OllamaBaseUrl             = s.OllamaBaseUrl ?? "";
                     config.OllamaModel               = s.OllamaModel ?? "";
+                    if (s.AiConnections != null)
+                    {
+                        // A connection that is still here keeps its key; the keys come with "API keys".
+                        var oldConns = config.AiConnections ?? new List<AiConnection>();
+                        config.AiConnections = s.AiConnections.Where(c => c != null && !string.IsNullOrEmpty(c.Id)).Select(c => new AiConnection
+                        {
+                            Id = c.Id, Name = c.Name ?? "", BaseUrl = c.BaseUrl ?? "", Model = c.Model ?? "",
+                            ApiKey = oldConns.FirstOrDefault(o => o != null && o.Id == c.Id)?.ApiKey ?? ""
+                        }).ToList();
+                    }
                     config.AiSystemPrompt            = s.AiSystemPrompt ?? "";
                     config.ExtendedConsoleOutput     = s.ExtendedConsoleOutput;
                     config.LogMissingItems           = s.LogMissingItems;
@@ -3788,6 +4045,9 @@ public class HomeScreenCompanionService : IService
                     config.OpenAiApiKey  = k.OpenAiApiKey ?? "";
                     config.GeminiApiKey  = k.GeminiApiKey ?? "";
                     config.ClaudeApiKey  = k.ClaudeApiKey ?? "";
+                    if (k.AiConnectionKeys != null)
+                        foreach (var c in config.AiConnections ?? new List<AiConnection>())
+                            if (c != null && c.Id != null && k.AiConnectionKeys.TryGetValue(c.Id, out var ck)) c.ApiKey = ck ?? "";
                     response.Applied.Add("API keys");
                 }
 
@@ -3823,20 +4083,29 @@ public class HomeScreenCompanionService : IService
                 if (request.HomeSync && Has("HomeSync") && backup.HomeSync != null)
                 {
                     var h = backup.HomeSync;
-                    config.HomeSyncEnabled       = h.HomeSyncEnabled;
-                    config.HomeSyncSourceUserId  = h.HomeSyncSourceUserId ?? "";
-                    config.HomeSyncTargetUserIds = (h.HomeSyncTargetUserIds ?? new List<string>()).ToList();
-                    config.HomeSyncLibraryOrder  = h.HomeSyncLibraryOrder;
-                    if (!string.IsNullOrEmpty(config.HomeSyncSourceUserId) && !IsKnownUser(knownUsers, config.HomeSyncSourceUserId))
-                    {
-                        config.HomeSyncSourceUserId = "";
-                        if (config.HomeSyncEnabled)
+                    config.HomeSyncEnabled = h.HomeSyncEnabled;
+                    // Backups from before profiles hold one source user: it becomes one profile.
+                    var restored = h.HomeSyncProfiles != null
+                        ? h.HomeSyncProfiles.Where(p => p != null).Select(CopyProfile).ToList()
+                        : new PluginConfiguration
                         {
-                            config.HomeSyncEnabled = false;
-                            response.Warnings.Add("Home screen sync: the source user does not exist on this server – sync has been disabled until you pick a new source user.");
-                        }
-                    }
-                    PruneUnknownUsers(config.HomeSyncTargetUserIds, knownUsers, response.Warnings, "Home screen sync targets");
+                            HomeSyncSourceUserId = h.HomeSyncSourceUserId ?? "",
+                            HomeSyncTargetUserIds = (h.HomeSyncTargetUserIds ?? new List<string>()).ToList(),
+                            HomeSyncLibraryOrder = h.HomeSyncLibraryOrder
+                        }.EffectiveHomeSyncProfiles();
+                    // (A profile saved before its source user was picked stays as it was saved.)
+                    int unknownSources = restored.RemoveAll(p => !string.IsNullOrWhiteSpace(p.SourceUserId) && !IsKnownUser(knownUsers, p.SourceUserId));
+                    if (unknownSources > 0)
+                        response.Warnings.Add($"Home screen sync: {unknownSources} profile(s) have a source user that does not exist on this server and were removed – add them again with a new source user.");
+                    foreach (var p in restored)
+                        PruneUnknownUsers(p.TargetUserIds, knownUsers, response.Warnings,
+                            string.IsNullOrWhiteSpace(p.SourceUserId) ? "Home screen sync targets of a profile without a source user" : $"Home screen sync targets of {UserNameOf(p.SourceUserId)}");
+                    config.HomeSyncProfiles = restored;
+                    config.HomeSyncSourceUserId = "";
+                    config.HomeSyncTargetUserIds = new List<string>();
+                    config.HomeSyncLibraryOrder = false;
+                    if (config.HomeSyncEnabled && restored.Count == 0 && unknownSources > 0)
+                        config.HomeSyncEnabled = false;
                     if (h.ContinueWatchingBumpEnabled.HasValue)  config.ContinueWatchingBumpEnabled  = h.ContinueWatchingBumpEnabled.Value;
                     if (!string.IsNullOrEmpty(h.ContinueWatchingBumpMode)) config.ContinueWatchingBumpMode = h.ContinueWatchingBumpMode!;
                     if (h.ContinueWatchingBumpAllUsers.HasValue) config.ContinueWatchingBumpAllUsers = h.ContinueWatchingBumpAllUsers.Value;
@@ -3866,7 +4135,7 @@ public class HomeScreenCompanionService : IService
 
                         var settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                         try { settings = _jsonSerializer.DeserializeFromString<Dictionary<string, string>>(tl.HomeSectionSettings) ?? settings; }
-                        catch { }
+                        catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                         var badgeStyle = settings.TryGetValue("BadgeStyle", out var bs) && !string.IsNullOrEmpty(bs) ? bs : "neutral";
                         var badgeOptions = settings.TryGetValue("BadgeOptions", out var bo) ? bo ?? "" : "";
                         var folderPath = Path.Combine(dataPath, "toplists", SanitizeFolderName(tl.TagName));
@@ -3933,6 +4202,10 @@ public class HomeScreenCompanionService : IService
                         restored.Add(tl);
                     }
 
+                    // Manual lists this server has that the backup does not: removed by the next run (rows,
+                    // library, folder) instead of being left behind with nothing tracking them. Source
+                    // lists follow their sources below.
+                    SourceTopLists.QueueVanished(listsBefore.Where(t => !t.FromSource), restored, tagsBefore, "not in the restored backup", onlyFromSource: false);
                     config.TopLists = restored;
                     response.Applied.Add($"Top lists ({restored.Count})");
                 }
@@ -3940,6 +4213,10 @@ public class HomeScreenCompanionService : IService
                 if (response.Applied.Count == 0)
                     return Fail(response, "Nothing selected to restore, or the selected sections are not present in the file.");
 
+                // As a settings save does: each source with Top-List on has its list (one the backup
+                // lacks gets the library and rows it has here), and a list whose source is gone or
+                // switched off is queued for removal. A list whose source the restore left out is kept.
+                SourceTopLists.Derive(new PluginConfiguration { Tags = tagsBefore, TopLists = listsBefore }, config, keepOrphans: true);
                 plugin.SaveConfiguration();
                 if (mirrorChanged) TopListCollectionMirror.QueueFullSync();
                 response.Success = true;
@@ -3966,11 +4243,26 @@ public class HomeScreenCompanionService : IService
             catch { return null; }
         }
 
+        private static HomeSyncProfile CopyProfile(HomeSyncProfile p) => new HomeSyncProfile
+        {
+            Active = p.Active,
+            SourceUserId = p.SourceUserId ?? "",
+            TargetUserIds = (p.TargetUserIds ?? new List<string>()).ToList(),
+            LibraryOrder = p.LibraryOrder,
+            Mode = string.IsNullOrEmpty(p.Mode) ? HomeSyncProfile.ModeAll : p.Mode,
+            KeepOwnRows = p.KeepOwnRows,
+            AddToSources = p.AddToSources,
+            SelectedRows = (p.SelectedRows ?? new List<string>()).ToList()
+        };
+
+        private string UserNameOf(string? userId)
+            => Guid.TryParse(userId, out var g) ? (_userManager.GetUserById(g)?.Name ?? userId!) : (userId ?? "");
+
         private static bool IsKnownUser(HashSet<string>? known, string? userId)
         {
             if (known == null) return true;
             if (string.IsNullOrWhiteSpace(userId)) return false;
-            return known.Contains(userId.Replace("-", "").Trim());
+            return known.Contains(userId!.Replace("-", "").Trim());
         }
 
         // Removes user ids that do not exist on this server and reports them once per context.
@@ -4069,6 +4361,11 @@ public class HomeScreenCompanionService : IService
         {
             t.Name                ??= "";
             t.Tag                 ??= "";
+            t.ExtraTags           ??= new List<string>();
+            t.CollectionTag       ??= "";
+            t.PlaylistTag         ??= "";
+            t.CollectionExtraTags ??= new List<string>();
+            t.PlaylistExtraTags   ??= new List<string>();
             t.Url                 ??= "";
             t.SourceType          ??= "External";
             t.LocalSourceId       ??= "";
@@ -4147,7 +4444,7 @@ public class HomeScreenCompanionService : IService
                         var match = System.Text.RegularExpressions.Regex.Match(nfoContent, @"<sorttitle>(\d+)</sorttitle>");
                         if (match.Success) rank = int.Parse(match.Groups[1].Value);
                     }
-                    catch { }
+                    catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                 }
                 entries.Add((rank, File.ReadAllText(strmFile).Trim()));
             }
@@ -4221,7 +4518,7 @@ public class HomeScreenCompanionService : IService
                         lookup[imdb] = m;
                 }
             }
-            catch { }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             return lookup;
         }
 
@@ -4279,7 +4576,7 @@ public class HomeScreenCompanionService : IService
         {
             var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             if (string.IsNullOrWhiteSpace(json) || json == "{}") return d;
-            try { d = _jsonSerializer.DeserializeFromString<Dictionary<string, string>>(json!) ?? d; } catch { }
+            try { d = _jsonSerializer.DeserializeFromString<Dictionary<string, string>>(json!) ?? d; } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             return new Dictionary<string, string>(d, StringComparer.OrdinalIgnoreCase);
         }
 
@@ -4313,7 +4610,7 @@ public class HomeScreenCompanionService : IService
                 foreach (var f in _libraryManager.GetVirtualFolders())
                     if (!string.IsNullOrEmpty(f.ItemId)) libraryNames[NormId(f.ItemId)] = f.Name ?? "";
             }
-            catch { }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
 
             void AddUser(string? id)
             {
@@ -4486,7 +4783,7 @@ public class HomeScreenCompanionService : IService
                             foreach (var i in _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { type }, Recursive = true }))
                                 if (!string.IsNullOrEmpty(i.Name)) set.Add(i.Name);
                         }
-                        catch { }
+                        catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                         localSourceNames[type] = set;
                     }
                     return set.Contains(name);
@@ -4604,7 +4901,7 @@ public class HomeScreenCompanionService : IService
             var byProvider = new Dictionary<string, BaseItem>(StringComparer.OrdinalIgnoreCase);
             var byNameYear = new Dictionary<string, BaseItem>(StringComparer.OrdinalIgnoreCase);
             string? topListsFolder = null;
-            try { topListsFolder = Path.Combine(Plugin.Instance!.DataFolderPath, "toplists") + Path.DirectorySeparatorChar; } catch { }
+            try { topListsFolder = Path.Combine(Plugin.Instance!.DataFolderPath, "toplists") + Path.DirectorySeparatorChar; } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             foreach (var item in _libraryManager.GetItemList(new InternalItemsQuery
             {
                 IncludeItemTypes = new[] { "Movie", "Series" },
@@ -4636,7 +4933,7 @@ public class HomeScreenCompanionService : IService
         private Dictionary<string, string> UserNamesById()
         {
             var names = new Dictionary<string, string>();
-            try { foreach (var u in _userManager.GetUserList(new UserQuery())) names[u.Id.ToString("N")] = u.Name ?? ""; } catch { }
+            try { foreach (var u in _userManager.GetUserList(new UserQuery())) names[u.Id.ToString("N")] = u.Name ?? ""; } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             return names;
         }
 
@@ -4665,7 +4962,7 @@ public class HomeScreenCompanionService : IService
         private bool TagExistsHere(string tag)
         {
             if (string.IsNullOrWhiteSpace(tag)) return false;
-            if ((Plugin.Instance?.Configuration?.Tags ?? new List<TagConfig>()).Any(t => string.Equals((t.Tag ?? "").Trim(), tag.Trim(), StringComparison.OrdinalIgnoreCase)))
+            if ((Plugin.Instance?.Configuration?.Tags ?? new List<TagConfig>()).Any(t => t.AllTags().Contains(tag.Trim(), StringComparer.OrdinalIgnoreCase)))
                 return true;
             try { return _libraryManager.GetItemList(new InternalItemsQuery { Tags = new[] { tag.Trim() }, Recursive = true, Limit = 1 }).Length > 0; }
             catch { return false; }
@@ -4714,7 +5011,7 @@ public class HomeScreenCompanionService : IService
 
             // Same rule as the Top Lists tab: a list is fed by a tag when titles carry its name.
             bool byTag = false;
-            try { byTag = _libraryManager.GetItemList(new InternalItemsQuery { Tags = new[] { file.ListName }, Recursive = true, Limit = 1 }).Length > 0; } catch { }
+            try { byTag = _libraryManager.GetItemList(new InternalItemsQuery { Tags = new[] { file.ListName }, Recursive = true, Limit = 1 }).Length > 0; } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             file.IsManual = !byTag;
             if (byTag) file.SourceTag = file.ListName;
             else

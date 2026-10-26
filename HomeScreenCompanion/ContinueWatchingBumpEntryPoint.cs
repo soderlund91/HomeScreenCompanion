@@ -24,7 +24,7 @@ namespace HomeScreenCompanion
         private readonly ILibraryManager _libraryManager;
         private readonly IUserManager _userManager;
         private readonly IUserDataManager _userDataManager;
-        private readonly ILogger _logger;
+        private readonly PluginLogger _logger;
 
         private readonly object _lock = new object();
         private readonly HashSet<long> _pendingSeries = new HashSet<long>();
@@ -35,7 +35,7 @@ namespace HomeScreenCompanion
             _libraryManager = libraryManager;
             _userManager = userManager;
             _userDataManager = userDataManager;
-            _logger = logManager.GetLogger("HomeScreenCompanion_CWBump");
+            _logger = PluginLog.Wrap(logManager.GetLogger("HomeScreenCompanion_CWBump"), "CW Bump");
         }
 
         public void Run()

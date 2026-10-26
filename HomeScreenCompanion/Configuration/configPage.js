@@ -35,8 +35,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // ---- Save conflict check ----
     // A fingerprint of the server's settings without what runs write on their own (home-section
     // ids, playlist mappings, art-replaced flags, the AI's last-run date, the Next Watch migration
-    // flag, top-list exclusions in a home section's settings, the top-lists Save re-reads anyway)
-    // and without secrets. Taken when the page loads; Save compares it with the server's current
+    // flag, top-list exclusions in a home section's settings, the top-lists Save re-reads anyway,
+    // Copy & Sync's record of whom it added, which the server always keeps, and a source's user
+    // lists, which Save merges, see mergeUserIds) and without secrets.
+    // Taken when the page loads; Save compares it with the server's current
     // one, so a change made elsewhere (another tab, another admin, an import) is never overwritten,
     // while a run that finished meanwhile does not count.
     function hscServerStamp(config) {
@@ -49,6 +51,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }
         var c = strip(config || {});
         delete c.TopLists;
+        delete c.HomeSyncAdditions;
         c.Tags = (c.Tags || []).map(function (t) {
             var x = Object.assign({}, t);
             delete x.HomeSectionTracked; delete x.PlaylistMappings;
@@ -56,6 +59,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             delete x.CollectionThumbReplaced; delete x.CollectionBannerReplaced;
             delete x.AiLastRunDate; delete x.NextWatchUsersMigrated;
             delete x.LastRunCount; delete x.LastRunLimit;
+            delete x.HomeSectionUserIds; delete x.PlaylistUserIds;
             try {
                 var s = JSON.parse(x.HomeSectionSettings || '{}') || {};
                 delete s._queryExcludeViewIds; delete s.ExcludedFolders;
@@ -66,6 +70,27 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             return x;
         });
         return JSON.stringify(c);
+    }
+    // Each source's user lists as the server has them (by the card key), the base mergeUserIds
+    // compares with.
+    function sourceUserLists(config) {
+        var out = {};
+        (config.Tags || []).forEach(function (t) {
+            var key = t.Name ? t.Name + '\x1F' + t.Tag : t.Tag;
+            if (!out[key]) out[key] = { Home: (t.HomeSectionUserIds || []).slice(), Playlist: (t.PlaylistUserIds || []).slice() };
+        });
+        return out;
+    }
+    // A user list as saved: this page's, plus who was put on it on the server since the page loaded,
+    // minus who was taken off there (Copy & Sync, another tab). A user changed both here and there
+    // follows this page.
+    function mergeUserIds(page, loaded, server) {
+        function norm(u) { return String(u || '').replace(/-/g, '').toLowerCase(); }
+        function has(list, u) { return (list || []).some(function (x) { return norm(x) === norm(u); }); }
+        // Added here, or loaded and still on the server.
+        var out = (page || []).filter(function (u) { return !has(loaded, u) || has(server, u); });
+        (server || []).forEach(function (u) { if (!has(loaded, u) && !has(out, u)) out.push(u); });
+        return out;
     }
     // After this page saved part of the settings itself (saved filters, Clean up): the server's new
     // state is the page's own, so move the fingerprint along — only if nothing else had changed.
@@ -185,6 +210,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     var currentManageSections = [];
     var savedFilters = [];
     var _topListTagNames = new Set();
+    // Tag (lower case) → the server's top-list content type ('Movies' / 'Shows').
+    var _topListTypes = {};
+    function noteTopListTypes(lists) {
+        _topListTypes = {};
+        (lists || []).forEach(function (tl) { if (tl.TagName) _topListTypes[tl.TagName.trim().toLowerCase()] = tl.ContentType || 'Movies'; });
+    }
     // Each group's warnings / error from its last run (Status → GroupIssues), by groupIssueKey.
     var _groupIssues = {};
     var _groupIssuesSig = '';
@@ -684,6 +715,65 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             </div>`;
     }
 
+    // One extra tag of a source (TagConfig.ExtraTags), put on the same titles as its Tag Name.
+    function getExtraTagRowHtml(value) {
+        var val = String(value || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        return `
+            <div class="extra-tag-row" style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+                <div style="flex-grow:1;">
+                    <input is="emby-input" class="txtExtraTag" type="text" label="Extra Tag" value="${val}" />
+                </div>
+                <button type="button" is="emby-button" class="raised btnRemoveExtraTag btn-row-remove" title="Remove tag"><i class="md-icon">remove_circle_outline</i></button>
+            </div>`;
+    }
+
+    // The values of tag fields: filled in, trimmed, without repeats (case-insensitive).
+    function uniqueTagValues(inputs) {
+        var seen = {};
+        return Array.from(inputs).map(function (i) { return (i.value || '').trim(); })
+            .filter(function (v) { var k = v.toLowerCase(); if (!v || seen[k]) return false; seen[k] = 1; return true; });
+    }
+
+    // The extra tags of a source card.
+    function readExtraTags(row) {
+        return uniqueTagValues(row.querySelectorAll('.txtExtraTag'));
+    }
+
+    // "Custom tag on collection / playlist": a tag on the collection or playlists the group makes,
+    // not on their titles. kind = 'coll' or 'pl'.
+    function getOutputTagHtml(kind, enabled, value, extras) {
+        var val = String(value || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        var what = kind === 'coll' ? 'collection' : 'playlist';
+        var extraRows = (extras || []).map(function (v) { return getOutExtraTagRowHtml(v); }).join('');
+        return `
+            <div class="checkboxContainer checkboxContainer-withDescription out-tag-box" style="margin-top:12px;">
+                <label>
+                    <input is="emby-checkbox" type="checkbox" class="chkOutTag" data-kind="${kind}" ${enabled ? 'checked' : ''} />
+                    <span>Custom tag on ${what}</span>
+                </label>
+                <div class="fieldDescription">Puts a tag on the ${what}${kind === 'pl' ? 's' : ''} itself, not on the titles in ${kind === 'pl' ? 'them' : 'it'}.<br>Not sure you need it? Leave it off.</div>
+                <div class="inputContainer out-tag-field" style="margin-top:10px; display:${enabled ? 'block' : 'none'};">
+                    <input is="emby-input" type="text" class="txtOutTag" data-kind="${kind}" label="Tag on the ${what}" value="${val}" />
+                    <div class="out-extra-tag-list" style="margin-top:10px;">${extraRows}</div>
+                    <button is="emby-button" type="button" class="raised btnAddOutTag hsc-btn-dashed" style="width:100%;"><i class="md-icon" style="margin-right:5px;">add</i>Add another tag</button>
+                </div>
+            </div>`;
+    }
+
+    // An extra row of a custom collection / playlist tag (removed by the shared btnRemoveExtraTag).
+    function getOutExtraTagRowHtml(value) {
+        return getExtraTagRowHtml(value).replace('class="txtExtraTag"', 'class="txtOutExtraTag"');
+    }
+
+    // { enabled, tag, extras } of a card's custom collection / playlist tag.
+    function readOutputTag(row, kind) {
+        var chk = row.querySelector('.chkOutTag[data-kind="' + kind + '"]');
+        var txt = row.querySelector('.txtOutTag[data-kind="' + kind + '"]');
+        var box = chk ? chk.closest('.out-tag-box') : null;
+        var extras = box ? uniqueTagValues(box.querySelectorAll('.txtOutExtraTag')) : [];
+        return { enabled: !!(chk && chk.checked), tag: txt ? txt.value.trim() : '', extras: extras };
+    }
+
     function getLocalRowHtml(type, selectedName, limit) {
         var options = type === 'LocalCollection' ? cachedCollections : cachedPlaylists;
         var optHtml = '<option value="">-- Select --</option>' + options.map(o => `<option value="${o.Name}" ${selectedName === o.Name ? 'selected' : ''}>${o.Name}</option>`).join('');
@@ -790,9 +880,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         <option value="SpecificDate" ${type === 'SpecificDate' ? 'selected' : ''}>Specific Date</option>
                         <option value="EveryYear" ${type === 'EveryYear' ? 'selected' : ''}>Recurring</option>
                         <option value="MovingDate" ${type === 'MovingDate' ? 'selected' : ''}>Yearly weekday</option>
-                        <option value="Easter" ${type === 'Easter' ? 'selected' : ''}>Easter</option>
-                        <option value="Advent" ${type === 'Advent' ? 'selected' : ''}>Advent</option>
-                        <option value="Friday13" ${type === 'Friday13' ? 'selected' : ''}>Friday the 13th</option>
+                        ${type === 'Easter' ? '<option value="Easter" selected>Easter</option>' : ''}
+                        ${type === 'Advent' ? '<option value="Advent" selected>Advent</option>' : ''}
+                        ${type === 'Friday13' ? '<option value="Friday13" selected>Friday the 13th</option>' : ''}
                         <option value="Weekly" ${type === 'Weekly' ? 'selected' : ''}>Week Days</option>
                         <option value="TimeOfDay" ${type === 'TimeOfDay' ? 'selected' : ''}>Time of Day</option>
                     </select>
@@ -1411,7 +1501,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             // Customise (generated styles only): opens the art popup; its options live here.
             '<input type="hidden" class="coll-art-opts" value="' + optsVal + '" />' +
             '<div class="coll-art-custom-row" style="flex-basis:100%;display:' + (isGenArtStyle(sel) ? 'flex' : 'none') + ';align-items:center;gap:8px;">' +
-                '<button type="button" is="emby-button" class="btnArtCustomise raised" style="background:transparent; border:1px solid rgba(128,128,128,0.35); color:var(--theme-text-secondary); font-size:0.82em; padding:0 10px; min-width:0;"><i class="md-icon" style="font-size:1em; margin-right:4px;">settings</i><span>Customise</span></button>' +
+                '<button type="button" is="emby-button" class="btnArtCustomise raised btn-neutral"><i class="md-icon" style="margin-right:5px;">settings</i><span>Customise</span></button>' +
                 '<span class="coll-art-custom-note fieldDescription" style="margin:0;' + (options ? '' : 'display:none;') + '">Customised</span>' +
             '</div>' +
             '<div class="coll-art-keep-note fieldDescription" style="flex-basis:100%;margin:0;display:' + (isKeepArtStyle(sel) ? 'block' : 'none') + ';">' +
@@ -1448,18 +1538,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '</div>' +
             '<div class="fieldDescription">' + note + '</div>' +
         '</div>';
-    }
-
-    // The top-list badge's one Customise button is greyed (with a tooltip) when the choice has nothing to customise.
-    function custDisabledAttrs(disabled, tip) {
-        return disabled ? ' disabled title="' + escapeHtml(tip) + '"' : ' title="Customise"';
-    }
-    function setCustomiseEnabled(btn, enabled, tip) {
-        if (!btn) return;
-        btn.disabled = !enabled;
-        btn.title = enabled ? 'Customise' : tip;
-        btn.style.opacity = enabled ? '' : '0.45';
-        btn.style.cursor = enabled ? 'pointer' : 'not-allowed';
     }
 
     // ── Customise popup (generated art) ──────────────────────────────────────────────
@@ -1829,6 +1907,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 if (tagShared) kept.push(['label', 'Tag "' + esc(tag) + '"', 'another group uses it too']);
                 else removed.push(['label', 'Tag "' + esc(tag) + '"', 'taken off every title that has it']);
             }
+            if (row.dataset.tlSaved === '1') {
+                var tlTitle = '';
+                try { tlTitle = (JSON.parse(cfg.HomeSectionSettings || '{}').CustomName || '').trim(); } catch (e) {}
+                removed.push(['format_list_numbered', 'Top-list "' + esc(tlTitle || title) + '"', 'its home rows, its library and the copies in it']);
+            }
             if (cfg.EnableCollection && collName) {
                 if (cfg.CollectionImported) kept.push(['video_library', 'Collection "' + esc(collName) + '"', 'it was imported, so it stays in Emby']);
                 else if (collShared) kept.push(['video_library', 'Collection "' + esc(collName) + '"', 'another group uses it too']);
@@ -2009,7 +2092,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         });
 
         var hseTab = row.querySelector('.homescreen-tab');
-        var enableHse = hseTab ? !!(hseTab.querySelector('.chkEnableHomeSection') || {}).checked : false;
+        var enableHse = hseTab ? !!(hseTab.querySelector('.chkEnableHomeSection') || {}).checked && hseAllowed(row) : false;
         var hseLibraryId = hseTab && hseTab.dataset.hseLoaded === '1'
             ? ((hseTab.querySelector('.selHseLibrary') || {}).value || 'auto')
             : decodeURIComponent((hseTab && hseTab.dataset.hseLibraryid) || 'auto');
@@ -2055,9 +2138,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var aiRecentlyWatchedUserId = (row.querySelector('.selAiWatchedUser') || {}).value || '';
         var aiRecentlyWatchedCount = parseInt((row.querySelector('.txtAiWatchedCount') || {}).value, 10) || 20;
         var aiRefreshIntervalDays = parseInt((row.querySelector('.txtAiRefreshInterval') || {}).value, 10) || 0;
+        var collTag = readOutputTag(row, 'coll'), plTag = readOutputTag(row, 'pl');
 
-        return {
-            Name: entryLabel, Tag: tagName, Active: active, Blacklist: bl, ActiveIntervals: intervals,
+        return Object.assign({
+            Name: entryLabel, Tag: tagName, ExtraTags: readExtraTags(row), Active: active, Blacklist: bl, ActiveIntervals: intervals,
             EnableTag: enableTag, EnableCollection: enableColl, CollectionName: collName, CollectionSortName: collSortName,
             CollectionDescription: collDesc, CollectionPosterPath: collPoster,
             CollectionPosterStyle: readCollectionArt(row).CollectionPosterStyle,
@@ -2093,6 +2177,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             CollectionTargetSeason:  !!(row.querySelector('.chkCollTargetSeason')  || {}).checked,
             CollectionTargetSeries:  !!(row.querySelector('.chkCollTargetSeries')  || {}).checked,
             EnablePlaylist:   !!(row.querySelector('.chkEnablePlaylist') || {}).checked,
+            EnableCollectionTag: collTag.enabled, CollectionTag: collTag.tag, CollectionExtraTags: collTag.extras,
+            EnablePlaylistTag: plTag.enabled, PlaylistTag: plTag.tag, PlaylistExtraTags: plTag.extras,
             PlaylistName:     (row.querySelector('.txtPlaylistName') || { value: '' }).value,
             PlaylistDescription: readPlaylistLook(row).PlaylistDescription, PlaylistPosterPath: readPlaylistLook(row).PlaylistPosterPath,
             PlaylistPosterStyle: readPlaylistLook(row).PlaylistPosterStyle, PlaylistBackgroundStyle: readPlaylistLook(row).PlaylistBackgroundStyle,
@@ -2104,7 +2190,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             NextWatchSeedDays: readNwSeedDays(row), NextWatchUseTaste: readNwUseTaste(row),
             MediaInfoTargetEpisode: false, MediaInfoTargetSeason: false, MediaInfoTargetSeries: false,
             MediaInfoTargetType: '', MediaInfoSeasonMode: false,
-        };
+        }, readTopListTab(row));
     }
 
     var _formAc = null;
@@ -2946,7 +3032,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var _collTargetSer = tagConfig.CollectionTargetSeries  || tagConfig.MediaInfoTargetSeries  || _legacyTarget === 'Series' || !_collAnySet;
 
         var enableHomeSection = tagConfig.EnableHomeSection ? 'checked' : '';
-        var disableHomeSection = (tagConfig.EnableTag === false && !tagConfig.EnableCollection && !tagConfig.EnablePlaylist) ? 'disabled' : '';
         var homeSectionLibraryId = encodeURIComponent(tagConfig.HomeSectionLibraryId || 'auto');
         var homeSectionUserIdsEnc = encodeURIComponent(JSON.stringify(tagConfig.HomeSectionUserIds || []));
         var homeSectionSettingsEnc = encodeURIComponent(tagConfig.HomeSectionSettings || '{}');
@@ -2954,6 +3039,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var homeSectionOrigNameEnc = encodeURIComponent((tagConfig.Name || tagConfig.Tag || '').trim());
         var homeSectionTrackedEnc = encodeURIComponent(JSON.stringify(tagConfig.HomeSectionTracked || []));
         var hsDefaultSectionType = tagConfig.EnableCollection ? 'boxset' : (tagConfig.EnableTag !== false ? 'items' : (tagConfig.EnablePlaylist ? 'playlist' : 'boxset'));
+        var topListOn = !!tagConfig.EnableTopList;
 
         var mediaFilters = (tagConfig.MediaInfoFilters && tagConfig.MediaInfoFilters.length > 0)
             ? tagConfig.MediaInfoFilters
@@ -2988,7 +3074,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         if (tagConfig.EnablePlaylist) {
             indicatorsHtml += `<span class="tag-indicator playlist"><i class="md-icon" style="font-size:1.1em;">queue_music</i> Playlist</span>`;
         }
-        if (_topListTagNames.has(tagName.toLowerCase())) {
+        if (topListOn) {
             indicatorsHtml += `<span class="tag-indicator toplist"><i class="md-icon" style="font-size:1.1em;">format_list_numbered</i> Top-List</span>`;
         }
         var lastRuns = tagConfig.LastRuns || [];
@@ -3001,7 +3087,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var newClass = isNew ? "just-added" : "";
 
         var html = `
-        <div class="tag-row ${inactiveClass} ${newClass}" data-index="${idx}" data-tag="${tagName.toLowerCase()}" data-last-modified="${lastMod}" data-nw-migrated="${tagConfig.NextWatchUsersMigrated ? '1' : '0'}" data-coll-imported="${tagConfig.CollectionImported ? '1' : '0'}" data-imported-st="${tagConfig.CollectionImported ? (tagConfig.SourceType || '') : ''}" data-poster-replaced="${tagConfig.CollectionPosterReplaced ? '1' : '0'}" data-bg-replaced="${tagConfig.CollectionBackgroundReplaced ? '1' : '0'}" data-thumb-replaced="${tagConfig.CollectionThumbReplaced ? '1' : '0'}" data-banner-replaced="${tagConfig.CollectionBannerReplaced ? '1' : '0'}" data-last-runs="${encodeURIComponent(JSON.stringify(tagConfig.LastRuns || []))}" data-group-key="${encodeURIComponent(groupIssueKey(tagConfig.Name, tagConfig.Tag))}" data-dirty="false">
+        <div class="tag-row ${inactiveClass} ${newClass}" data-index="${idx}" data-tag="${tagName.toLowerCase()}" data-last-modified="${lastMod}" data-nw-migrated="${tagConfig.NextWatchUsersMigrated ? '1' : '0'}" data-coll-imported="${tagConfig.CollectionImported ? '1' : '0'}" data-imported-st="${tagConfig.CollectionImported ? (tagConfig.SourceType || '') : ''}" data-poster-replaced="${tagConfig.CollectionPosterReplaced ? '1' : '0'}" data-bg-replaced="${tagConfig.CollectionBackgroundReplaced ? '1' : '0'}" data-thumb-replaced="${tagConfig.CollectionThumbReplaced ? '1' : '0'}" data-banner-replaced="${tagConfig.CollectionBannerReplaced ? '1' : '0'}" data-last-runs="${encodeURIComponent(JSON.stringify(tagConfig.LastRuns || []))}" data-group-key="${encodeURIComponent(groupIssueKey(tagConfig.Name, tagConfig.Tag))}" data-tl-saved="${topListOn && !isNew ? '1' : '0'}" data-tl-saved-tag="${escapeHtml((tagConfig.Tag || '').trim().toLowerCase())}" data-dirty="false">
             <div class="tag-header">
                 <div style="display:flex; align-items:center; min-width:0;">
                     <div class="header-actions" style="margin-right:12px; display:flex; align-items:center;" onclick="event.stopPropagation()">
@@ -3100,11 +3186,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         <div style="margin-bottom: 15px;">
                             <label class="selectLabel">AI Provider</label>
                             <select is="emby-select" class="selAiProvider" style="width:100%;">
-                                <option value="Claude" ${(tagConfig.AiProvider || 'OpenAI') === 'Claude' ? 'selected' : ''}>Anthropic Claude</option>
-                                <option value="Gemini" ${(tagConfig.AiProvider || 'OpenAI') === 'Gemini' ? 'selected' : ''}>Google Gemini</option>
-                                <option value="Ollama" ${(tagConfig.AiProvider || 'OpenAI') === 'Ollama' ? 'selected' : ''}>Ollama (Local)</option>
-                                <option value="OpenAI" ${(tagConfig.AiProvider || 'OpenAI') === 'OpenAI' ? 'selected' : ''}>OpenAI (ChatGPT)</option>
+                                ${aiProviderOptionsHtml(tagConfig.AiProvider || 'OpenAI')}
                             </select>
+                            <div class="ai-provider-missing" style="display:${aiProviderMissing(tagConfig.AiProvider) ? 'block' : 'none'}; font-size:0.9em; color:var(--hsc-danger-text); margin-top:4px;">Needs a provider</div>
                         </div>
 
                         <div class="ollama-experimental-warning" style="display:${(tagConfig.AiProvider || 'OpenAI') === 'Ollama' ? 'flex' : 'none'}; align-items:flex-start; gap:8px; background:rgba(230,193,90,0.1); border:1px solid rgba(230,193,90,0.35); border-radius:6px; padding:10px 12px; margin-bottom:15px; font-size:0.85em; line-height:1.5;">
@@ -3243,6 +3327,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                                 <input is="emby-input" type="text" class="txtTagName" label="Tag Name" value="${tagName}" placeholder="${labelName}" />
                                 <div class="fieldDescription">Leave empty to use Display Name.</div>
                             </div>
+                            <div class="extra-tag-list">${(tagConfig.ExtraTags || []).map(getExtraTagRowHtml).join('')}</div>
+                            <button is="emby-button" type="button" class="raised btnAddExtraTag hsc-btn-dashed" style="width:100%;"><i class="md-icon" style="margin-right:5px;">add</i>Add another tag</button>
+                            <div class="fieldDescription" style="margin-bottom:12px;">Extra tags go on the same titles. The home row, top-list and tag images use the Tag Name.</div>
                             <div class="mi-tag-target-section" style="margin-top:4px;">
                                 <div style="font-size:0.85em; opacity:0.6; margin-bottom:6px; display:flex; align-items:center; gap:8px;">
                                     <span>For TV shows, choose what level to tag:</span>
@@ -3264,6 +3351,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                                 </div>
                             </div>
 
+                            <details class="tag-art-more"${tagConfig.TagPosterStyle || tagConfig.TagBackgroundStyle || tagConfig.TagBackgroundPath ? ' data-custom="1"' : ''}>
+                            <summary><span><i class="md-icon" style="margin-right:5px;">image</i>Customize tag images<span class="tag-art-custom-chip">customized</span></span><i class="md-icon tag-art-chevron">expand_more</i></summary>
+                            <div class="fieldDescription" style="margin-top:8px;">Images for the <strong>tag itself</strong>: the poster and background of the tag's own page in Emby, the page that opens when you click the tag on a movie or show. Not the posters of the movies or shows: those are never changed here.</div>
                             <div style="margin-top:15px;">
                                 <p style="margin:0 0 8px 0; font-size:0.9em; font-weight:bold; opacity:0.7;">Tag Poster</p>
                                 ${buildCollStylePickerHtml('poster', tagConfig.TagPosterStyle, 'tag', tagConfig.TagPosterOptions)}
@@ -3305,6 +3395,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <div class="tag-art-preview-row" style="margin-top:10px; display:${isGenArtStyle(tagConfig.TagPosterStyle) || isGenArtStyle(tagConfig.TagBackgroundStyle) ? 'block' : 'none'};">
                                 <button type="button" is="emby-button" class="btnTagArtPreview raised" style="background:transparent; border:1px solid rgba(128,128,128,0.35); color:var(--theme-text-secondary); font-size:0.82em; padding:0 10px; min-width:0;"><i class="md-icon" style="font-size:1em; margin-right:4px;">visibility</i><span>Preview art</span></button>
                             </div>
+                            </details>
                         </div>
                     </div>
             </div>
@@ -3353,6 +3444,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <input is="emby-input" type="text" class="txtCollectionSortName" label="Sort Title" value="${collSortName}" />
                             <div class="fieldDescription">Optional. Used instead of the name when collections are sorted by name, e.g. "001" to show this collection first. Leave empty to sort by the collection name.</div>
                         </div>
+                        ${getOutputTagHtml('coll', tagConfig.EnableCollectionTag, tagConfig.CollectionTag, tagConfig.CollectionExtraTags)}
 
                         <div class="mi-coll-target-section" style="margin-top:10px;">
                             <div style="font-size:0.85em; opacity:0.6; margin-bottom:6px; display:flex; align-items:center; gap:8px;">
@@ -3487,6 +3579,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <input is="emby-input" type="text" class="txtPlaylistName" label="Playlist Name" value="${playlistName}" placeholder="${labelName}" />
                             <div class="fieldDescription">Leave empty to use Display Name.</div>
                         </div>
+                        ${getOutputTagHtml('pl', tagConfig.EnablePlaylistTag, tagConfig.PlaylistTag, tagConfig.PlaylistExtraTags)}
                         <div class="pl-users-box" style="margin-top:12px;">
                             <p style="margin:0 0 8px 0; font-size:0.9em; font-weight:bold; opacity:0.7;">Target Users</p>
                             <div class="playlist-user-list"><em style="opacity:0.5">Loading users...</em></div>
@@ -3503,7 +3596,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     </div>
                 </div>
 
-                <div class="tab-content homescreen-tab" style="display:none;"
+                <div class="tab-content homescreen-tab${topListOn ? ' tl-mode' : ''}${tagConfig.EnableTag === false && !tagConfig.EnableCollection && !tagConfig.EnablePlaylist && !topListOn ? ' hse-empty' : ''}" style="display:none;"
                     data-hse-libraryid="${homeSectionLibraryId}"
                     data-hse-userids="${homeSectionUserIdsEnc}"
                     data-hse-settings="${homeSectionSettingsEnc}"
@@ -3513,13 +3606,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     data-hse-loaded="0">
                     <div class="checkboxContainer checkboxContainer-withDescription">
                         <label>
-                            <input is="emby-checkbox" class="chkEnableHomeSection" type="checkbox" ${enableHomeSection} ${disableHomeSection}/>
+                            <input is="emby-checkbox" class="chkEnableHomeSection" type="checkbox" ${enableHomeSection} />
                             <span>Add as home screen section</span>
                         </label>
                         <div class="fieldDescription">A home screen section will be managed for selected users each time sync runs.</div>
-                        <div class="hse-disabled-hint" style="font-size:0.9em; color:var(--hsc-danger-text); margin-top:4px; display:${(tagConfig.EnableTag === false && !tagConfig.EnableCollection && !tagConfig.EnablePlaylist) ? 'block' : 'none'};">Requires <strong>Apply Tag</strong>, <strong>Create Collection</strong> or <strong>Create Playlist</strong> to be enabled.</div>
+                        <div class="hse-disabled-hint" style="font-size:0.9em; color:var(--hsc-danger-text); margin-top:4px; display:${(enableHomeSection && tagConfig.EnableTag === false && !tagConfig.EnableCollection && !tagConfig.EnablePlaylist && !tagConfig.EnableTopList) ? 'block' : 'none'};">A plain row needs <strong>Apply Tag</strong>, <strong>Create Collection</strong> or <strong>Create Playlist</strong>, or tick <strong>Create as top-list</strong> below. Untick <em>Add as home screen section</em> if you do not want a row.</div>
                     </div>
                     <div class="hse-details" style="display:${enableHomeSection ? 'block' : 'none'}; margin-top:15px;">
+                        ${buildTopListTabHtml(tagConfig)}
                         <div style="margin-bottom:15px;">
                             <p style="margin:0 0 8px 0; font-size:0.9em; font-weight:bold; opacity:0.7;">Target Users</p>
                             <div class="hse-user-list-inner"><em style="opacity:0.5">Loading users...</em></div>
@@ -3559,13 +3653,215 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }
     }
 
+    // ── Create as top-list (top of the Home Screen tab: the source's home row as a ranked top-list) ──
+    // The source is where the list is set: the server derives its TopLists entry on Save
+    // (SourceTopLists.cs) and the next run makes the library, copies and rows. Its own fields
+    // are content type, max items and the badges; users, title, position and look are the Home
+    // Screen tab's, whose fields the top-list sets are hidden (tl-mode). Not for Your Next Watch.
+    function buildTopListTabHtml(tc) {
+        var on = !!tc.EnableTopList;
+        // A list that is off starts as Auto when ticked (Movies was only the old default).
+        var content = on && (tc.TopListContentType === 'Shows' || tc.TopListContentType === 'Movies') ? tc.TopListContentType : 'Auto';
+        var enc = function (v) { return encodeURIComponent(v || ''); };
+        return '<div class="toplist-tab hse-nw-hide" style="margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid var(--line-color);"' +
+            ' data-tl-badge="' + enc(tc.TopListBadgeStyle || 'neutral') + '"' +
+            ' data-tl-badgeopts="' + enc(tc.TopListBadgeOptions) + '"' +
+            ' data-tl-rp="' + enc(tc.TopListRealPoster) + '" data-tl-loaded="0">' +
+            '<div class="checkboxContainer checkboxContainer-withDescription">' +
+                '<label><input is="emby-checkbox" type="checkbox" class="chkEnableTopList"' + (on ? ' checked' : '') + ' /><span>Create as top-list</span></label>' +
+                '<div class="fieldDescription">The row becomes a ranked top-list: the titles in list order with numbered posters, from a hidden library of its own. The users, title, position and look below are used for it.</div>' +
+                '<div class="tl-req" style="display:none;font-size:0.9em;margin-top:6px;"></div>' +
+                '<div class="tl-tagnote fieldDescription" style="display:none;margin-top:6px;"><i class="md-icon" style="font-size:1.15em;vertical-align:-3px;margin-right:4px;color:var(--hsc-info-text);">info</i>Apply Tag was switched off: the top-list does not need it. Switch it back on in the <a href="javascript:void(0)" class="tl-req-link help-link" data-goto="tag">Tag tab</a> if you want the tag on the titles in Emby too.</div>' +
+                '<div class="tl-note fieldDescription" style="display:none;color:var(--hsc-warning-text);margin-top:6px;"></div>' +
+            '</div>' +
+            '<div class="tl-settings" style="margin-left:20px;padding-left:15px;border-left:2px solid var(--line-color);margin-top:10px;display:' + (on ? 'block' : 'none') + ';">' +
+                '<div style="margin-bottom:12px;"><label class="selectLabel">Content</label>' +
+                    '<select is="emby-select" class="selTopListContent" style="width:100%;">' +
+                        '<option value="Auto"' + (content === 'Auto' ? ' selected' : '') + '>Auto (based on the source)</option>' +
+                        '<option value="Movies"' + (content === 'Movies' ? ' selected' : '') + '>Movies</option>' +
+                        '<option value="Shows"' + (content === 'Shows' ? ' selected' : '') + '>TV Shows</option>' +
+                    '</select>' +
+                    '<div class="fieldDescription">Only titles of this kind are ranked. Switching it later makes the list again (a new library).</div>' +
+                '</div>' +
+                '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">' +
+                    '<label style="font-size:0.9em;white-space:nowrap;margin:0;">Max items</label>' +
+                    '<input is="emby-input" class="txtTopListMax" type="number" value="' + (Math.max(0, tc.TopListMaxItems || 0)) + '" min="0" style="width:90px;" />' +
+                    '<span style="font-size:0.8em;opacity:0.5;">0 = all</span>' +
+                '</div>' +
+                '<div class="tl-badge-host"><em style="opacity:0.5">Loading badges...</em></div>' +
+                '<div class="hsc-callout warning" style="margin-top:6px;"><i class="md-icon">warning</i>' +
+                    '<span><strong>Library access is not checked per title.</strong> A top-list gets a library of its own, and every user it is shown to gets access to that library. Its titles can come from any library on the server, so those users can see and play them even from libraries they otherwise have no access to.</span>' +
+                '</div>' +
+            '</div>' +
+            '</div>';
+    }
+
+    function hseUserIdsOf(row) {
+        var hseTab = row.querySelector('.homescreen-tab');
+        if (!hseTab) return [];
+        if (hseTab.dataset.hseLoaded === '1')
+            return Array.from(hseTab.querySelectorAll('.chkHseUser:checked')).map(function (c) { return c.value; });
+        try { return JSON.parse(decodeURIComponent(hseTab.dataset.hseUserids || '%5B%5D')) || []; } catch (e) { return []; }
+    }
+
+    // 'Auto' (movies or TV shows by the source's titles, decided by each run), 'Movies' or 'Shows'.
+    function topListContentOf(row) {
+        var v = (row.querySelector('.selTopListContent') || {}).value;
+        return v === 'Shows' || v === 'Movies' ? v : 'Auto';
+    }
+
+    // The kind the list is now: as set, or for Auto what the server made it (movies until then).
+    function topListKindOf(row) {
+        var c = topListContentOf(row);
+        if (c !== 'Auto') return c;
+        var tag = ((row.querySelector('.txtTagName') || {}).value || (row.querySelector('.txtEntryLabel') || {}).value || '').trim().toLowerCase();
+        return _topListTypes[tag] === 'Shows' ? 'Shows' : 'Movies';
+    }
+
+    // What the top-list still needs: [tab to open ('' = none), text].
+    function topListMissing(row) {
+        var miss = [];
+        if ((row.querySelector('.selSourceType') || {}).value === 'NextWatch')
+            return [['', 'Not available for <strong>Your Next Watch</strong>: its row is each user\'s own playlist.']];
+        // Users are not needed to tick it: Save asks for them (topListsWithoutUsers).
+        return miss;
+    }
+
+    // A source card changed on this page, or added: Save's checks apply to it. Cards left alone are
+    // saved as they are (a home row with nothing to show goes off, as before these checks).
+    function rowChangedHere(row) {
+        return row.dataset.touched === '1' || row.classList.contains('just-added');
+    }
+
+    // Sources with Create as top-list on but no user picked (Save is stopped for them).
+    function topListsWithoutUsers(view) {
+        return Array.from(view.querySelectorAll('#tagListContainer .tag-row')).filter(function (row) {
+            return row.querySelector('.selSourceType') && rowChangedHere(row) && (row.querySelector('.selSourceType') || {}).value !== 'NextWatch'
+                && !!(row.querySelector('.chkEnableTopList') || {}).checked
+                && !!(row.querySelector('.chkEnableHomeSection') || {}).checked
+                && hseUserIdsOf(row).length === 0;
+        });
+    }
+
+    function updateTopListTab(row) {
+        var tab = row.querySelector('.toplist-tab');
+        if (!tab) return;
+        var chk = tab.querySelector('.chkEnableTopList');
+        var on = chk.checked;
+        var miss = topListMissing(row);
+        // Can't be switched on before it has what it needs; once on it stays switchable off.
+        chk.disabled = !on && miss.length > 0;
+        var label = chk.closest('.checkboxContainer');
+        if (label) label.style.opacity = chk.disabled ? '0.75' : '';
+
+        var req = tab.querySelector('.tl-req');
+        if (miss.length) {
+            req.style.display = 'block';
+            req.style.color = on ? 'var(--hsc-warning-text)' : 'var(--hsc-danger-text)';
+            req.innerHTML = (on ? 'Still needs: ' : 'Needs: ') + '<ul style="margin:4px 0 0;padding-left:20px;line-height:1.5;">' +
+                miss.map(function (m) {
+                    var link = m[0] ? ' <a href="javascript:void(0)" class="tl-req-link help-link" data-goto="' + m[0] + '">Tag tab</a>' : '';
+                    return '<li>' + m[1] + link + '</li>';
+                }).join('') + '</ul>';
+        } else {
+            req.style.display = 'none';
+            req.innerHTML = '';
+        }
+
+        // What Save changes for a list the server already has.
+        var note = tab.querySelector('.tl-note');
+        var saved = row.dataset.tlSaved === '1';
+        var tagNow = (((row.querySelector('.txtTagName') || {}).value || (row.querySelector('.txtEntryLabel') || {}).value || '') + '').trim().toLowerCase();
+        var text = '';
+        if (saved && !on) text = 'Saving with this off removes the top-list at the next run (its rows, library and copies), and the plain row comes back (when the home screen section stays on).';
+        else if (saved && on && row.dataset.tlSavedTag && tagNow && tagNow !== row.dataset.tlSavedTag)
+            text = 'The name has changed (the Tag Name, or the Display Name when that is empty): the top-list is made again under the new name at the next run, and the old one (its rows and library) is removed.';
+        note.textContent = text;
+        note.style.display = text ? 'block' : 'none';
+
+        tab.querySelector('.tl-settings').style.display = on ? 'block' : 'none';
+        var hseTab = row.querySelector('.homescreen-tab');
+        if (hseTab) { hseTab.classList.toggle('tl-mode', on); updateHseImageTypeState(hseTab); }
+    }
+
+    function topListBadgeHtml(row, values) {
+        var shows = topListKindOf(row) === 'Shows';
+        return buildBadgePickerHtml(values.style, values.options, values.realPoster, shows ? 'shows' : 'movies');
+    }
+
+    function topListBadgeValues(tab) {
+        var host = tab.querySelector('.tl-badge-host');
+        if (tab.dataset.tlLoaded === '1')
+            return { style: readBadgeStyle(host), options: readBadgeOptions(host), realPoster: readRealPoster(host) };
+        var dec = function (v) { try { return decodeURIComponent(v || ''); } catch (e) { return ''; } };
+        return { style: dec(tab.dataset.tlBadge) || 'neutral', options: dec(tab.dataset.tlBadgeopts), realPoster: dec(tab.dataset.tlRp) };
+    }
+
+    function initTopListTab(row) {
+        var tab = row.querySelector('.toplist-tab');
+        if (!tab || tab.dataset.tlLoaded === '1') return;
+        var host = tab.querySelector('.tl-badge-host');
+        host.innerHTML = topListBadgeHtml(row, topListBadgeValues(tab));
+        tab.dataset.tlLoaded = '1';
+        initBadgePicker(host, ((row.querySelector('.txtTagName') || {}).value || '').trim());
+        updateTopListTab(row);
+    }
+
+    // Movies ↔ TV Shows: the badge previews are drawn for the kind (the chosen look is kept).
+    function onTopListContentChanged(row) {
+        var tab = row.querySelector('.toplist-tab');
+        if (!tab || tab.dataset.tlLoaded !== '1') return;
+        var host = tab.querySelector('.tl-badge-host');
+        var values = topListBadgeValues(tab);
+        host.innerHTML = topListBadgeHtml(row, values);
+        initBadgePicker(host, ((row.querySelector('.txtTagName') || {}).value || '').trim());
+    }
+
+    // Switched on: Apply Tag goes off (the list is the source's titles, not the tagged ones; the
+    // tag can be switched back on).
+    function onTopListToggled(row) {
+        var chk = row.querySelector('.chkEnableTopList');
+        var tagNote = row.querySelector('.tl-tagnote');
+        var tagChk = row.querySelector('.chkEnableTag');
+        if (!chk.checked) {
+            if (tagNote) tagNote.style.display = 'none';
+            // Unticked again: Apply Tag comes back if ticking it switched the tag off.
+            if (row.dataset.tlTagWasOn === '1' && tagChk && !tagChk.checked) {
+                tagChk.checked = true;
+                tagChk.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            delete row.dataset.tlTagWasOn;
+            return;
+        }
+        if (tagChk && tagChk.checked) {
+            tagChk.checked = false;
+            tagChk.dispatchEvent(new Event('change', { bubbles: true }));
+            row.dataset.tlTagWasOn = '1';   // after the event: a change by hand forgets it
+            if (tagNote) tagNote.style.display = 'block';
+        }
+    }
+
+    // The tab's fields as saved (TagConfig.EnableTopList etc.).
+    function readTopListTab(row) {
+        var tab = row.querySelector('.toplist-tab');
+        if (!tab) return {};
+        var b = topListBadgeValues(tab);
+        return {
+            EnableTopList: !!(tab.querySelector('.chkEnableTopList') || {}).checked,
+            TopListContentType: topListContentOf(row),
+            TopListMaxItems: Math.max(0, parseInt((tab.querySelector('.txtTopListMax') || {}).value, 10) || 0),
+            TopListBadgeStyle: b.style || 'neutral',
+            TopListBadgeOptions: b.options || '',
+            TopListRealPoster: b.realPoster || ''
+        };
+    }
+
     function refreshTopListBadges() {
         document.querySelectorAll('.tag-row').forEach(function (row) {
             var container = row.querySelector('.badge-container');
-            if (!container) return;
-            var tagName = (row.dataset.tag || '').toLowerCase();
+            if (!container || !row.querySelector('.selSourceType')) return;
             var existing = container.querySelector('.tag-indicator.toplist');
-            if (_topListTagNames.has(tagName)) {
+            if (!!(row.querySelector('.chkEnableTopList') || {}).checked) {
                 if (!existing) {
                     var span = document.createElement('span');
                     span.className = 'tag-indicator toplist';
@@ -3622,7 +3918,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             if (hasPlaylist) {
                 html += `<span class="tag-indicator playlist"><i class="md-icon" style="font-size:1.1em;">queue_music</i> Playlist</span>`;
             }
-            if (_topListTagNames.has((row.dataset.tag || '').toLowerCase())) {
+            if (!!(row.querySelector('.chkEnableTopList') || {}).checked) {
                 html += `<span class="tag-indicator toplist"><i class="md-icon" style="font-size:1.1em;">format_list_numbered</i> Top-List</span>`;
             }
             try { html += lastRunChipHtml(JSON.parse(decodeURIComponent(row.dataset.lastRuns || '%5B%5D')), rowToFlatTags(row, true)); } catch (e) { }
@@ -3642,7 +3938,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 row.querySelector('.advanced-tab').style.display = target === 'advanced' ? 'block' : 'none';
                 row.querySelector('.homescreen-tab').style.display = target === 'homescreen' ? 'block' : 'none';
                 row.querySelector('.playlist-tab').style.display = target === 'playlist' ? 'block' : 'none';
-                if (target === 'homescreen') initHomeSectionTab(row);
+                if (target === 'homescreen') { initHomeSectionTab(row); initTopListTab(row); }
                 if (target === 'playlist') initPlaylistTab(row);
                 var activeTabEl = row.querySelector('.' + target + '-tab');
                 if (activeTabEl) activeTabEl.querySelectorAll('textarea.txtMiValue, textarea.txtTagBlacklist').forEach(function(ta) {
@@ -3653,6 +3949,30 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             });
         });
 
+        // Create as top-list: what it needs, the Home Screen tab's top-list mode and the chip follow
+        // every change in the card (users, tag name...).
+        // Changed on this page: Save's checks (a home row with nothing to show, a top-list without
+        // users) apply to it; a card left alone is saved as it is.
+        row.addEventListener('change', function () { row.dataset.touched = '1'; });
+        row.addEventListener('input', function () { row.dataset.touched = '1'; });
+        row.addEventListener('change', function (e) {
+            if (e.target.classList.contains('chkEnableTopList')) { onTopListToggled(row); updateHseSectionAvailability(row); }
+            if (e.target.classList.contains('selTopListContent')) onTopListContentChanged(row);
+            updateTopListTab(row);
+            if (e.target.classList.contains('chkEnableTopList')) updateBadges(row);
+        });
+        row.addEventListener('input', function (e) {
+            if (e.target.classList.contains('txtTagName') || e.target.classList.contains('txtEntryLabel')) updateTopListTab(row);
+        });
+        row.addEventListener('click', function (e) {
+            var link = e.target.closest('.tl-req-link');
+            if (!link || !row.contains(link)) return;
+            e.preventDefault();
+            var tab = row.querySelector('.tag-tab[data-tab="' + link.dataset.goto + '"]');
+            if (tab) tab.click();
+        });
+        updateTopListTab(row);
+
         // A changed Max items hides the "9 of 10" chip until the next run.
         row.addEventListener('input', e => {
             if (/Limit$/.test(e.target.className.split(' ').filter(function (c) { return c.indexOf('txt') === 0; })[0] || '')) updateBadges(row);
@@ -3661,6 +3981,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         row.addEventListener('change', e => {
             if (e.target.classList.contains('selSourceType')) {
                 var type = e.target.value;
+                // Your Next Watch has no top-list (its row is each user's own playlist; the box is hidden).
+                var tlBox = row.querySelector('.chkEnableTopList');
+                if (type === 'NextWatch' && tlBox && tlBox.checked) {
+                    tlBox.checked = false;
+                    tlBox.dispatchEvent(new Event('change', { bubbles: true }));
+                }
                 // Another kind of source is no longer the imported collection (saved with Save);
                 // switching back before saving makes it imported again.
                 if (row.dataset.importedSt) {
@@ -3717,6 +4043,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 }
                 updateNextWatchWarning(row);
                 updatePlaylistDescPlaceholder(row);
+                var _hseTab = row.querySelector('.homescreen-tab');
+                if (_hseTab && _hseTab.dataset.hseLoaded === '1') { updateHseItemsOnlyVisibility(_hseTab); updateHseImageTypeState(_hseTab); }
                 if (miHelpBtnRow) miHelpBtnRow.style.display = isMi ? 'none' : 'flex';
                 if (isMi) {
                     if (miToggleRow)  miToggleRow.style.display  = 'none';
@@ -3813,6 +4141,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         updateRunGroupBtn();
 
         row.querySelector('.chkEnableTag').addEventListener('change', function () {
+            delete row.dataset.tlTagWasOn;   // the user's own choice wins over Create as top-list's
+            // Switched back on: the note that it was switched off is no longer true.
+            var tlTagNote = row.querySelector('.tl-tagnote');
+            if (this.checked && tlTagNote) tlTagNote.style.display = 'none';
             row.querySelector('.tag-settings').style.display = this.checked ? 'block' : 'none';
             updateBadges(row);
             updateHseSectionAvailability(row);
@@ -3832,6 +4164,20 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             updateHseSectionAvailability(row);
         });
 
+        row.querySelectorAll('.chkOutTag').forEach(function (chk) {
+            chk.addEventListener('change', function () {
+                chk.closest('.out-tag-box').querySelector('.out-tag-field').style.display = chk.checked ? 'block' : 'none';
+            });
+        });
+        row.querySelectorAll('.btnAddOutTag').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var list = btn.closest('.out-tag-box').querySelector('.out-extra-tag-list');
+                list.insertAdjacentHTML('beforeend', getOutExtraTagRowHtml(''));
+                var input = list.lastElementChild.querySelector('.txtOutExtraTag');
+                if (input) input.focus();
+            });
+        });
+
         row.querySelector('.chkOverrideWhenActive').addEventListener('change', function () {
             updateBadges(row);
         });
@@ -3839,6 +4185,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         row.querySelector('.chkEnableHomeSection').addEventListener('change', function () {
             var hseDetails = row.querySelector('.hse-details');
             if (hseDetails) hseDetails.style.display = this.checked ? 'block' : 'none';
+            // The top-list is part of the home screen section: off with it.
+            var tlChk = row.querySelector('.chkEnableTopList');
+            if (!this.checked && tlChk && tlChk.checked) {
+                tlChk.checked = false;
+                tlChk.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            updateHseSectionAvailability(row);
             updateBadges(row);
         });
 
@@ -3855,11 +4208,19 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             selAiProv.addEventListener('change', function () {
                 var warn = row.querySelector('.ollama-experimental-warning');
                 if (warn) warn.style.display = this.value === 'Ollama' ? 'flex' : 'none';
+                updateAiProviderMissing(row);
             });
         }
 
         row.querySelector('.btnAddUrl').addEventListener('click', () => {
             row.querySelector('.url-list-container').insertAdjacentHTML('beforeend', getUrlRowHtml('', 0));
+        });
+
+        row.querySelector('.btnAddExtraTag').addEventListener('click', () => {
+            var list = row.querySelector('.extra-tag-list');
+            list.insertAdjacentHTML('beforeend', getExtraTagRowHtml(''));
+            var input = list.lastElementChild.querySelector('.txtExtraTag');
+            if (input) input.focus();
         });
 
         row.querySelector('.btnAddLocal').addEventListener('click', () => {
@@ -3900,6 +4261,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
             if (e.target.closest('.btnRemoveUrl')) {
                 e.target.closest('.url-row').remove();
+            }
+
+            if (e.target.closest('.btnRemoveExtraTag')) {
+                e.target.closest('.extra-tag-row').remove();
             }
 
             if (e.target.closest('.btnRemoveLocal')) {
@@ -4141,7 +4506,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 btnTestAi.disabled = true;
                 if (resultSpan) resultSpan.textContent = 'Testing...';
-                var aiModal = openSourceTestModal('AI source test', aiProvider + ' · ' + aiPrompt);
+                var aiModal = openSourceTestModal('AI source test', aiProviderLabel(aiProvider) + ' · ' + aiPrompt);
 
                 fetch(window.ApiClient.getUrl('HomeScreenCompanion/TestAiSource'), {
                     method: 'POST',
@@ -4247,6 +4612,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }
         function syncTagArt() {
             var art = readTagArt(row);
+            var tagArtMore = row.querySelector('.tag-art-more');
+            if (tagArtMore) tagArtMore.dataset.custom = art.TagPosterStyle || art.TagBackgroundStyle || art.TagBackgroundPath ? '1' : '0';
             row.querySelector('.tag-poster-note').style.display = isKeepArtStyle(art.TagPosterStyle) ? 'none' : 'block';
             row.querySelector('.tag-poster-note').textContent = art.TagPosterStyle
                 ? 'Drawn from the posters of the first titles with this tag, with the tag name. It is redrawn when the titles change.'
@@ -4843,13 +5210,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             window.ApiClient.getJSON(window.ApiClient.getUrl('Localization/ParentalRatings')).catch(function () { return []; }),
             window.ApiClient.getJSON(window.ApiClient.getUrl('System/Configuration')).catch(function () { return {}; })
         ]);
-        _hseUsersPromise = Promise.all([window.ApiClient.getJSON(window.ApiClient.getUrl('Users', { IsDisabled: false })), ratingsP])
+        // Disabled users too: they stay selected (marked "Disabled") so a save keeps them; the sync
+        // leaves them out until they are enabled again.
+        _hseUsersPromise = Promise.all([window.ApiClient.getJSON(window.ApiClient.getUrl('Users')), ratingsP])
             .then(function(res) {
                 var ratings = res[1][0] || [], country = ((res[1][1] || {}).MetadataCountryCode || '').toUpperCase();
                 _hseUsersCache = (res[0] || []).map(function(u) {
                     var p = u.Policy || {};
                     var max = (p.MaxParentalRating === null || p.MaxParentalRating === undefined) ? null : Number(p.MaxParentalRating);
-                    return { Id: u.Id, Name: u.Name, MaxParentalRating: max,
+                    return { Id: u.Id, Name: u.Name, MaxParentalRating: max, IsDisabled: !!p.IsDisabled,
                         RatingName: max === null ? '' : parentalRatingName(max, ratings, country),
                         BlockUnratedItems: (p.BlockUnratedItems || []).slice() };
                 }).sort(byName);
@@ -4919,6 +5288,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         if (u && u.BlockUnratedItems && u.BlockUnratedItems.length) {
             html += '<span class="hsc-rating-lock" title="Blocks unrated: ' + esc(u.BlockUnratedItems.join(', ')) + '" style="margin-left:4px;font-size:0.8em;vertical-align:middle;cursor:help;">&#128274;</span>';
         }
+        if (u && u.IsDisabled) {
+            html += '<span class="hsc-disabled-chip" title="Disabled in Emby: stays selected, but HSC leaves this user out until they are enabled again" style="display:inline-block;margin-left:6px;padding:0 5px;' +
+                'border-radius:3px;font-size:0.72em;font-weight:700;line-height:1.4;vertical-align:middle;white-space:nowrap;border:1px solid var(--hsc-hairline);opacity:0.75;cursor:help;">Disabled</span>';
+        }
         return html;
     }
 
@@ -4926,6 +5299,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     function userRatingSuffix(u) {
         var s = isUserRestricted(u) ? ' \u00B7 ' + u.RatingName : '';
         if (u && u.BlockUnratedItems && u.BlockUnratedItems.length) s += ' \uD83D\uDD12';
+        if (u && u.IsDisabled) s += ' \u00B7 disabled';
         return s;
     }
 
@@ -5121,16 +5495,68 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         return cn ? 'name:' + cn.toLowerCase() : 'type:' + (s.SectionType || '').toLowerCase() + '|' + (s.ParentId || '');
     }
 
-    // A saved "after:<key>" before the row list has loaded.
-    function hsePositionKeyLabel(pos) {
-        var key = pos.substring('after:'.length);
+    var HSC_POSITION_DESC = 'Where the row goes when it is made, and where every user\'s row moves to when you change this. ' +
+        'A user who does not have the chosen row gets it next to the nearest row around it that they do have. ' +
+        'A row moved by hand in Emby\'s home screen settings keeps its place until you change this setting.';
+
+    // The row a saved "before:" / "after:" key points at, shown before the row list has loaded.
+    function hsePositionKeyLabel(key) {
         if (key.indexOf('name:') === 0) return key.substring(5);
         return key.substring(5).split('|')[0];
     }
 
-    // Adds "After <row>" for each row on the user's home screen (but this source's own row).
-    function fillHsePositionOptions(tab, userId) {
-        var sel = tab.querySelector('.selHsePosition');
+    // Position of a home row: Bottom, Top, or Before / After one of the rows. The hidden
+    // .hsc-pos-value holds it ("", "top", "before:<key>", "after:<key>"); hiddenAttrs makes it a
+    // form field (a source's data-field="_position"). labelStyle: inline label style (popups), else
+    // the page's selectLabel.
+    function positionFieldHtml(posVal, hiddenAttrs, labelStyle, desc) {
+        posVal = posVal || '';
+        var mode = posVal === 'top' ? 'top' : posVal.indexOf('before:') === 0 ? 'before' : posVal.indexOf('after:') === 0 ? 'after' : '';
+        var key = (mode === 'before' || mode === 'after') ? posVal.substring(mode.length + 1) : '';
+        var lbl = labelStyle ? ' style="' + labelStyle + '"' : ' class="selectLabel"';
+        return '<div class="hsc-pos-field">' +
+            '<input type="hidden" class="hsc-pos-value"' + (hiddenAttrs || '') + ' value="' + escapeHtml(posVal) + '" />' +
+            '<label' + lbl + '>Position</label>' +
+            '<select is="emby-select" class="hsc-pos-mode" style="width:100%;">' +
+            [['', 'Bottom (default)'], ['top', 'Top'], ['before', 'Before a row'], ['after', 'After a row']].map(function (o) {
+                return '<option value="' + o[0] + '"' + (mode === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
+            }).join('') +
+            '</select>' +
+            '<div class="hsc-pos-row-wrap" style="margin-top:8px;' + (mode === 'before' || mode === 'after' ? '' : 'display:none;') + '">' +
+            '<label' + lbl + '>Row</label>' +
+            '<select is="emby-select" class="hsc-pos-row" style="width:100%;">' +
+            '<option value=""' + (key ? '' : ' selected') + '>— Choose a row —</option>' +
+            (key ? '<option value="' + escapeHtml(key) + '" selected>' + escapeHtml(hsePositionKeyLabel(key)) + '</option>' : '') +
+            '</select></div>' +
+            (desc ? '<div class="fieldDescription">' + desc + '</div>' : '') +
+            '</div>';
+    }
+
+    // Keeps the hidden value in step with the two pickers (before their change reaches the page).
+    function wirePositionField(root) {
+        var f = root && root.querySelector('.hsc-pos-field');
+        if (!f || f.dataset.wired) return;
+        f.dataset.wired = '1';
+        var mode = f.querySelector('.hsc-pos-mode'), row = f.querySelector('.hsc-pos-row');
+        var wrap = f.querySelector('.hsc-pos-row-wrap'), val = f.querySelector('.hsc-pos-value');
+        function update() {
+            var m = mode.value, needsRow = m === 'before' || m === 'after';
+            wrap.style.display = needsRow ? '' : 'none';
+            val.value = needsRow ? (row.value ? m + ':' + row.value : '') : m;
+        }
+        mode.addEventListener('change', update);
+        row.addEventListener('change', update);
+    }
+
+    function readPositionValue(root) {
+        var v = root && root.querySelector('.hsc-pos-field .hsc-pos-value');
+        return v ? v.value : '';
+    }
+
+    // Lists the rows on the user's home screen as choices for Before / After (the row being placed
+    // left out: ownName, its title). The saved choice stays when the list cannot be loaded.
+    function fillPositionRows(root, userId, ownName) {
+        var sel = root && root.querySelector('.hsc-pos-field .hsc-pos-row');
         if (!sel || !userId) return;
         var headers = {};
         var token = window.ApiClient.accessToken && window.ApiClient.accessToken();
@@ -5138,18 +5564,17 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         fetch(window.ApiClient.getUrl('HomeScreenCompanion/Hsc/UserSections', { UserId: userId }), { headers: headers })
             .then(function (r) { return r.json(); })
             .then(function (data) {
-                var nameEl = tab.querySelector('[data-field="CustomName"]');
-                var ownName = ((nameEl && (nameEl.value || nameEl.placeholder)) || '').trim().toLowerCase();
+                var own = typeof ownName === 'function' ? ownName() : ownName;
+                own = (own || '').trim().toLowerCase();
                 var current = sel.value;
                 ((data && data.Sections) || []).forEach(function (s, i) {
                     var key = hseSectionKey(s);
-                    if (ownName && key === 'name:' + ownName) return;
-                    var value = 'after:' + key;
-                    var label = 'After: ' + (s.CustomName || s.Name || s.SectionType || ('Row ' + (i + 1)));
-                    var existing = Array.from(sel.options).find(function (o) { return o.value === value; });
+                    if (own && key === 'name:' + own) return;
+                    var label = stripInactive(s.CustomName || '') || s.Name || s.SectionType || ('Row ' + (i + 1));
+                    var existing = Array.from(sel.options).find(function (o) { return o.value === key; });
                     if (existing) { existing.textContent = label; return; }
                     var o = document.createElement('option');
-                    o.value = value; o.textContent = label;
+                    o.value = key; o.textContent = label;
                     sel.appendChild(o);
                 });
                 sel.value = current;
@@ -5162,7 +5587,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var html = '';
 
         var st = s.SectionType || defaultSectionType || (collEnabled ? 'boxset' : 'items');
-        html += '<div style="margin-bottom:12px;"><label class="selectLabel">Section Type</label>';
+        html += '<div class="hse-st-field hse-nw-hide hse-tl-hide" style="margin-bottom:12px;"><label class="selectLabel">Section Type</label>';
         html += '<select is="emby-select" class="selHseSectionType hse-field-str" data-field="SectionType" style="width:100%;">';
         var sectionTypeOptions = [];
         if (collEnabled) sectionTypeOptions.push(['boxset', 'Single Collection']);
@@ -5184,7 +5609,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var savedItemTypes = [];
         try { savedItemTypes = JSON.parse(s.ItemTypes || '[]'); } catch {}
         var savedItemTypesStr = savedItemTypes.length > 0 ? savedItemTypes.join(',') : 'Movie,Series';
-        html += '<div class="hse-items-only" style="margin-bottom:12px;"><label class="selectLabel">Media Type</label>';
+        html += '<div class="hse-items-only hse-nw-hide hse-tl-hide" style="margin-bottom:12px;"><label class="selectLabel">Media Type</label>';
         html += '<select is="emby-select" class="selHseItemTypes" style="width:100%;">';
         var itemTypeOptions = [
                 ['Movie',        'Movies'],
@@ -5209,29 +5634,20 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             html += '<option value="' + o[0] + '"' + (savedItemTypesStr === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
         });
         html += '</select>';
-        html += '<div class="fieldDescription hse-playlist-only">Playlist rows show the whole playlist: <em>Media Type</em> and <em>Playstate</em> are not used (filter the source itself instead).</div>';
+        html += '<div class="fieldDescription hse-playlist-only hse-tl-hide">Playlist rows show the whole playlist: <em>Media Type</em> and <em>Playstate</em> are not used (filter the source itself instead).</div>';
         html += '</div>';
 
         var customName = ((s.CustomName || '').trim() === (defaultName || '').trim() ? '' : (s.CustomName || '')).replace(/"/g, '&quot;');
         var customNamePlaceholder = (defaultName || '').replace(/"/g, '&quot;');
         html += '<div style="margin-bottom:12px;"><input is="emby-input" type="text" class="hse-field-str" data-field="CustomName" label="Custom Title" value="' + customName + '" placeholder="' + customNamePlaceholder + '"/></div>';
 
-        // Where a new row goes. "After" lists the first selected user's rows (filled in by
-        // fillHsePositionOptions); the saved choice is shown until that list has loaded.
-        var posVal = s._position || '';
-        html += '<div style="margin-bottom:12px;"><label class="selectLabel">Position</label>';
-        html += '<select is="emby-select" class="selHsePosition hse-field-str" data-field="_position" style="width:100%;">';
-        html += '<option value=""' + (posVal === '' ? ' selected' : '') + '>Bottom (default)</option>';
-        html += '<option value="top"' + (posVal === 'top' ? ' selected' : '') + '>Top</option>';
-        if (posVal.indexOf('after:') === 0)
-            html += '<option value="' + escapeHtml(posVal) + '" selected>After: ' + escapeHtml(hsePositionKeyLabel(posVal)) + '</option>';
-        html += '</select>';
-        html += '<div class="fieldDescription">Where the row is put when it is created. A row you move later (in Emby\'s home screen settings) keeps its place, also while its schedule hides it.</div>';
-        html += '</div>';
+        // Where the row goes. The Row list is the first selected user's rows (filled in by
+        // fillPositionRows); the saved choice is shown until that list has loaded.
+        html += '<div style="margin-bottom:12px;">' + positionFieldHtml(s._position || '', ' data-field="_position"', '', HSC_POSITION_DESC) + '</div>';
 
         // Emby native uses "" for Cards (default); migrate old stored "cards" value
         var viewTypeVal = (s.ViewType === 'cards' ? '' : s.ViewType) || '';
-        html += '<div class="hse-items-only" style="margin-bottom:12px;"><label class="selectLabel">View Type</label>';
+        html += '<div class="hse-items-only hse-tl-hide" style="margin-bottom:12px;"><label class="selectLabel">View Type</label>';
         html += '<select is="emby-select" class="selHseViewType hse-field-str" data-field="ViewType" style="width:100%;">';
         [['','Cards (default)'],['spotlight','Spotlight']].forEach(function(o) {
             html += '<option value="' + o[0] + '"' + (viewTypeVal === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
@@ -5245,14 +5661,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         html += '<select is="emby-select" class="selHseImageType hse-field-str" data-field="ImageType" style="width:100%;"' + (imgTypeDisabled ? ' disabled' : '') + '><option value=""' + (imgTypeVal === '' ? ' selected' : '') + '>Auto</option>';
         ['Primary','Thumb'].forEach(function(o) { html += '<option value="' + o + '"' + (imgTypeVal === o ? ' selected' : '') + '>' + o + '</option>'; });
         html += '</select>';
-        html += '<div class="fieldDescription hse-playlist-only">Playlist rows: <em>Auto</em> and <em>Primary</em> show a show\'s poster on its card (the playlist holds its first episode); <em>Thumb</em> shows the show\'s landscape image.</div>';
+        html += '<div class="fieldDescription hse-playlist-only hse-tl-hide">Playlist rows: <em>Auto</em> and <em>Primary</em> show a show\'s poster on its card (the playlist holds its first episode); <em>Thumb</em> shows the show\'s landscape image.</div>';
         html += '</div>';
 
         html += '<div style="margin-bottom:12px;"><label class="selectLabel">Card Size</label>';
         html += '<select is="emby-select" class="selHseCardSize hse-field-str" data-field="CardSizeOffset" style="width:100%;">' + cardSizeOptionsHtml(s.CardSizeOffset) + '</select></div>';
 
         var sortByVal = s.SortBy || '';
-        html += '<div style="margin-bottom:12px;"><label class="selectLabel">Sort By</label>';
+        html += '<div class="hse-nw-hide hse-tl-hide" style="margin-bottom:12px;"><label class="selectLabel">Sort By</label>';
         html += '<select is="emby-select" class="hse-field-str" data-field="SortBy" style="width:100%;">';
         html += '<option value=""' + (sortByVal === '' ? ' selected' : '') + '>(Default)</option>';
         [
@@ -5267,11 +5683,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             html += '<option value="' + o[0] + '"' + (sortByVal === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
         });
         html += '</select>';
-        html += '<div class="fieldDescription hse-playlist-only">Playlist rows: <em>(Default)</em> keeps the playlist order (Your Next Watch: best match first). <em>Random</em> shuffles the row every time the home screen loads, so it shows a different few of the list each time.</div>';
+        html += '<div class="fieldDescription hse-playlist-only hse-tl-hide">Playlist rows: <em>(Default)</em> keeps the playlist order (Your Next Watch: best match first). <em>Random</em> shuffles the row every time the home screen loads, so it shows a different few of the list each time.</div>';
         html += '</div>';
 
         var sortOrderVal = s.SortOrder || '';
-        html += '<div style="margin-bottom:12px;"><label class="selectLabel">Sort Order</label>';
+        html += '<div class="hse-nw-hide hse-tl-hide" style="margin-bottom:12px;"><label class="selectLabel">Sort Order</label>';
         html += '<select is="emby-select" class="hse-field-str" data-field="SortOrder" style="width:100%;">';
         html += '<option value=""' + (sortOrderVal === '' ? ' selected' : '') + '>(Default)</option>';
         [['Ascending','Ascending'],['Descending','Descending']].forEach(function(o) { html += '<option value="' + o[0] + '"' + (sortOrderVal === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; });
@@ -5284,7 +5700,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         html += '</select></div>';
 
         var playstateVal = s._queryIsPlayed || '';
-        html += '<div class="hse-items-only" style="margin-bottom:12px;"><label class="selectLabel">Playstate</label>';
+        html += '<div class="hse-items-only hse-nw-hide hse-tl-hide" style="margin-bottom:12px;"><label class="selectLabel">Playstate</label>';
         html += '<select is="emby-select" class="hse-field-str" data-field="_queryIsPlayed" style="width:100%;">';
         html += '<option value=""' + (playstateVal === '' ? ' selected' : '') + '>Any</option>';
         [['true','Played'],['false','Unplayed']].forEach(function(o) { html += '<option value="' + o[0] + '"' + (playstateVal === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; });
@@ -5327,8 +5743,31 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         return html;
     }
 
-    function updateHseItemsOnlyVisibility(tab) {
+    // Your Next Watch: the row is each user's own playlist (Movies & Shows, best match first), so
+    // Section Type, Media Type, Sort By, Sort Order and Playstate are set and hidden.
+    function applyNextWatchHomeSection(tab) {
+        var row = tab.closest('.tag-row');
         var stSel = tab.querySelector('.selHseSectionType');
+        var isNw = !!row && (row.querySelector('.selSourceType') || {}).value === 'NextWatch'
+            && !!stSel && Array.from(stSel.options).some(function (o) { return o.value === 'playlist'; });
+        if (isNw) {
+            stSel.value = 'playlist';
+            var itSel = tab.querySelector('.selHseItemTypes');
+            if (itSel) itSel.value = 'Movie,Series';
+            ['SortBy', 'SortOrder', '_queryIsPlayed'].forEach(function (f) {
+                var el = tab.querySelector('[data-field="' + f + '"]');
+                if (el) el.value = '';
+            });
+        }
+        return isNw;
+    }
+
+    function updateHseItemsOnlyVisibility(tab) {
+        var isNw = applyNextWatchHomeSection(tab);
+        var stSel = tab.querySelector('.selHseSectionType');
+        // Section Type is only a choice when two or more of tag / collection / playlist are on.
+        var stField = tab.querySelector('.hse-st-field');
+        if (stField) stField.classList.toggle('hse-st-single', !stSel || stSel.options.length < 2);
         var isItems = !stSel || stSel.value !== 'boxset';
         tab.querySelectorAll('.hse-items-only').forEach(function(el) {
             el.style.display = isItems ? '' : 'none';
@@ -5336,6 +5775,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var isPlaylist = !!stSel && stSel.value === 'playlist';
         tab.querySelectorAll('.hse-playlist-only').forEach(function(el) {
             el.style.display = isPlaylist ? '' : 'none';
+        });
+        tab.querySelectorAll('.hse-nw-hide').forEach(function(el) {
+            if (isNw) el.style.display = 'none';
+            else if (!el.classList.contains('hse-items-only')) el.style.display = '';
         });
     }
 
@@ -5346,7 +5789,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         if (!imgSel) return;
         var isItems = !stSel || stSel.value !== 'boxset';
         var isCards = !vtSel || vtSel.value === '' || vtSel.value === 'cards';
-        imgSel.disabled = isItems && !isCards;
+        // A top-list row is always cards (its View Type is hidden).
+        imgSel.disabled = isItems && !isCards && !tab.classList.contains('tl-mode');
     }
 
     function wireHomeSectionTypeChange(tab) {
@@ -5519,7 +5963,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var plEnabled = !!(row.querySelector('.chkEnablePlaylist') || {}).checked;
                 tab.querySelector('.hse-fields-inner').innerHTML = buildHomeSectionFormHtml(savedSettings, defaultSectionType, defaultTagName, tagEnabled, collEnabled, libraryOptions, savedLibraryId, allLibraries, plEnabled);
                 wireHomeSectionTypeChange(tab);
-                fillHsePositionOptions(tab, savedUserIds[0] || ((users || [])[0] || {}).Id);
+                wirePositionField(tab);
+                fillPositionRows(tab, savedUserIds[0] || ((users || [])[0] || {}).Id, function () {
+                    var nameEl = tab.querySelector('[data-field="CustomName"]');
+                    return (nameEl && (nameEl.value || nameEl.placeholder)) || '';
+                });
 
                 // Mark as fully loaded only after form is in DOM so getUiConfig reads form values
                 tab.dataset.hseLoaded = '1';
@@ -5544,25 +5992,30 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var hseCbx = row.querySelector('.chkEnableHomeSection');
         if (!hseCbx) return;
         var plEnabled = !!(row.querySelector('.chkEnablePlaylist') || {}).checked;
+        // A top-list row needs none of them: its titles come from the source's run.
+        var tlEnabled = !!(row.querySelector('.chkEnableTopList') || {}).checked && (row.querySelector('.selSourceType') || {}).value !== 'NextWatch';
 
+        // The checkbox stays usable (Create as top-list is inside it); a plain row with nothing to
+        // show says so, and Save stops until it has something (hseAllowed).
         var hint = row.querySelector('.hse-disabled-hint');
-        if (!tagEnabled && !collEnabled && !plEnabled) {
-            hseCbx.disabled = true;
-            hseCbx.checked = false;
-            if (hint) hint.style.display = 'block';
-            var hseDetails = row.querySelector('.hse-details');
-            if (hseDetails) hseDetails.style.display = 'none';
-            // updateBadges lives in setupRowEvents; the Home Screen checkbox's change handler calls it.
-            hseCbx.dispatchEvent(new Event('change'));
-        } else {
-            hseCbx.disabled = false;
-            if (hint) hint.style.display = 'none';
-        }
+        hseCbx.disabled = false;
+        var hseEmpty = !tagEnabled && !collEnabled && !plEnabled && !tlEnabled;
+        if (hint) hint.style.display = hseCbx.checked && hseEmpty ? 'block' : 'none';
+        // Nothing to show: only Create as top-list stays, the row's other fields are hidden.
+        var hseTabEl = row.querySelector('.homescreen-tab');
+        if (hseTabEl) hseTabEl.classList.toggle('hse-empty', hseEmpty);
 
         var tab = row.querySelector('.homescreen-tab');
         if (tab && tab.dataset.hseLoaded === '1') {
             refreshHseSectionTypeOptions(tab, tagEnabled, collEnabled, plEnabled);
         }
+    }
+
+    // The home screen section has something to show: a tag, collection or playlist, or its top-list.
+    function hseAllowed(row) {
+        var nw = (row.querySelector('.selSourceType') || {}).value === 'NextWatch';
+        return ['.chkEnableTag', '.chkEnableCollection', '.chkEnablePlaylist'].concat(nw ? [] : ['.chkEnableTopList'])
+            .some(function (c) { return !!(row.querySelector(c) || {}).checked; });
     }
 
     function refreshHseSectionTypeOptions(tab, tagEnabled, collEnabled, plEnabled) {
@@ -5645,7 +6098,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 : (function() { try { return JSON.parse(decodeURIComponent((plTab2 && plTab2.dataset.plUserids) || '%5B%5D')); } catch { return []; } })();
 
             var hseTab = row.querySelector('.homescreen-tab');
-            var enableHse = hseTab ? !!(hseTab.querySelector('.chkEnableHomeSection') || {}).checked : false;
+            var enableHse = hseTab ? !!(hseTab.querySelector('.chkEnableHomeSection') || {}).checked && hseAllowed(row) : false;
             var hseLibraryId = hseTab && hseTab.dataset.hseLoaded === '1'
                 ? ((hseTab.querySelector('.selHseLibrary') || {}).value || 'auto')
                 : decodeURIComponent((hseTab && hseTab.dataset.hseLibraryid) || 'auto');
@@ -5676,9 +6129,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
             clearDefaultCustomName(hseSettings, hseTab);
             var hseTracked = (function() { try { return JSON.parse(decodeURIComponent((hseTab && hseTab.dataset.hseTracked) || '%5B%5D')); } catch { return []; } })();
+            var collTag = readOutputTag(row, 'coll'), plTag = readOutputTag(row, 'pl');
 
             var baseTag = {
-                Name: entryLabel, Tag: name, Active: active, Blacklist: bl, ActiveIntervals: intervals,
+                Name: entryLabel, Tag: name, ExtraTags: readExtraTags(row), Active: active, Blacklist: bl, ActiveIntervals: intervals,
                 EnableTag: enableTagChk, EnableCollection: enableColl, CollectionName: collName, CollectionSortName: collSortName, CollectionDescription: collDescription, CollectionPosterPath: collPoster, OnlyCollection: false, OverrideWhenActive: overrideWhenActive, LastModified: currentLastMod,
                 CollectionPosterStyle: readCollectionArt(row).CollectionPosterStyle,
                 CollectionBackgroundStyle: readCollectionArt(row).CollectionBackgroundStyle,
@@ -5709,6 +6163,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 HomeSectionSettings: JSON.stringify(hseSettings),
                 HomeSectionTracked: hseTracked,
                 EnablePlaylist:   !!(row.querySelector('.chkEnablePlaylist') || {}).checked,
+                EnableCollectionTag: collTag.enabled, CollectionTag: collTag.tag, CollectionExtraTags: collTag.extras,
+                EnablePlaylistTag: plTag.enabled, PlaylistTag: plTag.tag, PlaylistExtraTags: plTag.extras,
                 PlaylistName:     (row.querySelector('.txtPlaylistName') || { value: '' }).value,
                 PlaylistDescription: readPlaylistLook(row).PlaylistDescription, PlaylistPosterPath: readPlaylistLook(row).PlaylistPosterPath,
                 PlaylistPosterStyle: readPlaylistLook(row).PlaylistPosterStyle, PlaylistBackgroundStyle: readPlaylistLook(row).PlaylistBackgroundStyle,
@@ -5719,6 +6175,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 NextWatchUsersMigrated: row.dataset.nwMigrated === '1',
                 NextWatchSeedDays: readNwSeedDays(row), NextWatchUseTaste: readNwUseTaste(row)
             };
+            Object.assign(baseTag, readTopListTab(row));
 
             if (st === 'External') {
                 var pushedExternal = false;
@@ -5778,8 +6235,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         sourceRows.concat(otherRows).forEach(row => { flatTags.push.apply(flatTags, rowToFlatTags(row, forComparison)); });
 
         var hscEnabled      = view.querySelector('#chkHscEnabled');
-        var hscSource       = view.querySelector('#selHscSourceUser');
-        var hscLibraryOrder = view.querySelector('#chkHscLibraryOrder');
         var cwbEnabled      = view.querySelector('#chkCwbEnabled');
         var cwbMode         = view.querySelector('#selCwbMode');
         var cwbAllUsers     = view.querySelector('#chkCwbAllUsers');
@@ -5802,6 +6257,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             ClaudeModel: fieldOr('#txtClaudeModel', 'claude-haiku-4-5-20251001'),
             OllamaBaseUrl: fieldOr('#txtOllamaBaseUrl', 'http://localhost:11434'),
             OllamaModel: (view.querySelector('#txtOllamaModel') || {}).value || '',
+            AiConnections: readAiConnections(view),
             AiSystemPrompt: (view.querySelector('#txtAiSystemPrompt') || {}).value || '',
             ExtendedConsoleOutput: view.querySelector('#chkExtendedConsoleOutput').checked,
             LogMissingItems: view.querySelector('#chkLogMissingItems').checked,
@@ -5816,11 +6272,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             Tags: flatTags,
             SavedFilters: savedFilters,
             HomeSyncEnabled: hscEnabled ? hscEnabled.checked : (lastHscConfig.HomeSyncEnabled || false),
-            HomeSyncLibraryOrder: hscLibraryOrder ? hscLibraryOrder.checked : (lastHscConfig.HomeSyncLibraryOrder || false),
-            HomeSyncSourceUserId: hscSource ? (hscSource.value || '') : (lastHscConfig.HomeSyncSourceUserId || ''),
-            HomeSyncTargetUserIds: hscEnabled
-                ? Array.from(view.querySelectorAll('.hsc-target-chk:checked')).map(function(c) { return c.value; })
-                : (lastHscConfig.HomeSyncTargetUserIds || []),
+            HomeSyncProfiles: hscEnabled ? readHscProfiles(view) : (lastHscConfig.HomeSyncProfiles || []),
+            // Replaced by HomeSyncProfiles (see effectiveHscProfiles): cleared on save.
+            HomeSyncLibraryOrder: false, HomeSyncSourceUserId: '', HomeSyncTargetUserIds: [],
             ContinueWatchingBumpEnabled: cwbEnabled ? cwbEnabled.checked : (lastHscConfig.ContinueWatchingBumpEnabled || false),
             ContinueWatchingBumpMode: cwbMode ? (cwbMode.value || 'AllEpisodes') : (lastHscConfig.ContinueWatchingBumpMode || 'AllEpisodes'),
             ContinueWatchingBumpAllUsers: cwbAllUsers ? cwbAllUsers.checked : (lastHscConfig.ContinueWatchingBumpAllUsers || false),
@@ -5828,6 +6282,242 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 ? Array.from(view.querySelectorAll('.cwb-user-chk:checked')).map(function(c) { return c.value; })
                 : (lastHscConfig.ContinueWatchingBumpUserIds || [])
         };
+    }
+
+    // ---- AI: OpenAI-compatible connections and model lists ----
+    // Settings holds any number of OpenAI-compatible connections (Groq, OpenRouter, LM Studio …).
+    // A source uses one with AiProvider "Compat:<id>", so renaming it keeps the sources on it.
+    var AI_COMPAT = 'Compat:';
+    var _aiConnections = [];   // the connections as they are in Settings now, for the provider menus
+    var AI_BUILTIN_PROVIDERS = [['Claude', 'Anthropic Claude'], ['Gemini', 'Google Gemini'], ['Ollama', 'Ollama (Local)'], ['OpenAI', 'OpenAI (ChatGPT)']];
+
+    function newAiConnId() {
+        return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    }
+    function aiConnName(c) { return (c && (c.Name || '').trim()) || 'OpenAI-compatible'; }
+    function aiProviderMissing(value) {
+        if ((value || '').indexOf(AI_COMPAT) !== 0) return false;
+        var id = value.substring(AI_COMPAT.length);
+        return !_aiConnections.some(function (c) { return c.Id === id; });
+    }
+    function aiProviderLabel(value) {
+        var b = AI_BUILTIN_PROVIDERS.filter(function (p) { return p[0] === value; })[0];
+        if (b) return b[1];
+        var id = (value || '').indexOf(AI_COMPAT) === 0 ? value.substring(AI_COMPAT.length) : null;
+        var c = id && _aiConnections.filter(function (x) { return x.Id === id; })[0];
+        return c ? aiConnName(c) : (id ? 'Missing connection' : (value || ''));
+    }
+    // The AI Provider options of a source: the built-in providers, then each connection by name.
+    // A connection that was removed stays selected as "Missing connection", so a save keeps it
+    // pointing there (and the source shows it needs a provider) instead of moving it to Claude.
+    function aiProviderOptionsHtml(value) {
+        var opts = AI_BUILTIN_PROVIDERS.map(function (p) {
+            return '<option value="' + p[0] + '"' + (p[0] === value ? ' selected' : '') + '>' + p[1] + '</option>';
+        });
+        _aiConnections.slice().sort(function (a, b) { return aiConnName(a).localeCompare(aiConnName(b)); }).forEach(function (c) {
+            var v = AI_COMPAT + c.Id;
+            opts.push('<option value="' + escapeHtml(v) + '"' + (v === value ? ' selected' : '') + '>' + escapeHtml(aiConnName(c)) + '</option>');
+        });
+        if (aiProviderMissing(value))
+            opts.push('<option value="' + escapeHtml(value) + '" selected>Missing connection</option>');
+        return opts.join('');
+    }
+    function updateAiProviderMissing(row) {
+        var sel = row.querySelector('.selAiProvider'), hint = row.querySelector('.ai-provider-missing');
+        if (sel && hint) hint.style.display = aiProviderMissing(sel.value) ? 'block' : 'none';
+    }
+    function refreshAiProviderSelects(view) {
+        _aiConnections = readAiConnections(view);
+        view.querySelectorAll('.tag-row .selAiProvider').forEach(function (sel) {
+            var v = sel.value;
+            sel.innerHTML = aiProviderOptionsHtml(v);
+            sel.value = v;
+            updateAiProviderMissing(sel.closest('.tag-row'));
+        });
+    }
+
+    function aiConnCardHtml(c) {
+        var id = escapeHtml(c.Id);
+        return '<div class="hsc-ai-conn" data-id="' + id + '">' +
+            '<div class="inputContainer"><input is="emby-input" type="text" class="txtAiConnName" label="Name" placeholder="Groq" value="' + escapeHtml(c.Name || '') + '" /></div>' +
+            '<div class="inputContainer"><input is="emby-input" type="text" class="txtAiConnBaseUrl" label="Base URL" placeholder="https://api.groq.com/openai/v1" value="' + escapeHtml(c.BaseUrl || '') + '" /></div>' +
+            '<div class="inputContainer"><input is="emby-input" type="text" class="api-key-field txtAiConnApiKey" autocomplete="off" spellcheck="false" data-lpignore="true" data-1p-ignore id="txtAiConnKey_' + id + '" label="API Key" value="' + escapeHtml(c.ApiKey || '') + '" />' +
+                '<label style="display:inline-flex; align-items:center; gap:5px; font-size:0.85em; opacity:0.75; margin-top:4px; cursor:pointer;">' +
+                '<input type="checkbox" class="chkShowApiKey" data-target="txtAiConnKey_' + id + '" style="margin:0;" /> Show</label></div>' +
+            '<div class="inputContainer hsc-model-field" data-provider="Compat">' +
+                '<label class="selectLabel">Model</label>' +
+                '<div class="hsc-model-row"><div class="hsc-model-sel"><select is="emby-select" class="selAiModel"></select></div>' +
+                '<button type="button" is="emby-button" class="raised hsc-btn-ghost btnAiModelsReload" title="Reload models"><i class="md-icon">refresh</i></button></div>' +
+                '<div class="hsc-model-custom"><input is="emby-input" type="text" class="txtAiConnModel" label="Model name" value="' + escapeHtml(c.Model || '') + '" /></div>' +
+                '<div class="hsc-model-status"></div>' +
+            '</div>' +
+            '<div class="hsc-ai-conn-foot"><button type="button" is="emby-button" class="raised hsc-btn-danger btnRemoveAiConn"><i class="md-icon" style="font-size:1em; margin-right:4px;">delete</i><span>Remove</span></button></div>' +
+            '</div>';
+    }
+    function readAiConnections(view) {
+        return Array.from(view.querySelectorAll('#aiConnList .hsc-ai-conn')).map(function (card) {
+            function val(cls) { return ((card.querySelector(cls) || {}).value || '').trim(); }
+            return { Id: card.dataset.id, Name: val('.txtAiConnName'), BaseUrl: val('.txtAiConnBaseUrl'), ApiKey: val('.txtAiConnApiKey'), Model: val('.txtAiConnModel') };
+        });
+    }
+    function renderAiConnections(view, list) {
+        var box = view.querySelector('#aiConnList');
+        if (!box) return;
+        box.innerHTML = (list || []).filter(function (c) { return c && c.Id; }).map(aiConnCardHtml).join('');
+        _aiConnections = readAiConnections(view);
+        box.querySelectorAll('.hsc-model-field').forEach(function (f) { syncModelField(f); });
+    }
+
+    // ---- Model dropdowns ----
+    // Each Model field is a list read from the provider (HomeScreenCompanion/Ai/Models, the key
+    // stays on the server) plus "Custom…", which shows the text field. The text field holds the
+    // value that is saved; a saved model that is not in the list stays selected.
+    var AI_MODEL_CUSTOM = '__hsc_custom__';
+    function modelFieldInput(field) { return field.querySelector('.hsc-model-custom input'); }
+    function modelFieldRequest(field) {
+        var view = field.closest('#HomeScreenCompanionConfigPage') || document;
+        var card = field.closest('.hsc-ai-conn');
+        function byId(id) { return id ? ((view.querySelector('#' + id) || {}).value || '').trim() : ''; }
+        if (card) return {
+            Provider: 'Compat', ConnectionId: card.dataset.id,
+            BaseUrl: ((card.querySelector('.txtAiConnBaseUrl') || {}).value || '').trim(),
+            ApiKey: ((card.querySelector('.txtAiConnApiKey') || {}).value || '').trim()
+        };
+        return { Provider: field.dataset.provider, ConnectionId: '', BaseUrl: byId(field.dataset.url), ApiKey: byId(field.dataset.key) };
+    }
+    function modelFieldReady(req) {
+        return req.Provider === 'Compat' || req.Provider === 'Ollama' ? !!req.BaseUrl : !!req.ApiKey;
+    }
+    function syncModelField(field) {
+        var sel = field.querySelector('.selAiModel'), input = modelFieldInput(field);
+        if (!sel || !input) return;
+        var models = field._models || [], v = (input.value || '').trim();
+        var custom = field.classList.contains('is-custom');
+        var html = [];
+        if (!v && !custom) html.push('<option value=""></option>');
+        if (v && !custom && models.indexOf(v) < 0) html.push('<option value="' + escapeHtml(v) + '">' + escapeHtml(v) + '</option>');
+        models.forEach(function (m) { html.push('<option value="' + escapeHtml(m) + '">' + escapeHtml(m) + '</option>'); });
+        html.push('<option value="' + AI_MODEL_CUSTOM + '">Custom…</option>');
+        sel.innerHTML = html.join('');
+        sel.value = custom ? AI_MODEL_CUSTOM : v;
+    }
+    function loadModelField(field, force) {
+        var req = modelFieldRequest(field), status = field.querySelector('.hsc-model-status');
+        if (!modelFieldReady(req)) { field._models = []; field._sig = ''; if (status) status.textContent = ''; syncModelField(field); return; }
+        var sig = JSON.stringify(req);
+        if (!force && field._sig === sig) return;
+        field._sig = sig;
+        field.classList.add('is-loading');
+        fetch(window.ApiClient.getUrl('HomeScreenCompanion/Ai/Models'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-MediaBrowser-Token': window.ApiClient.accessToken() },
+            body: JSON.stringify(req)
+        }).then(function (r) { return r.json(); }).then(function (res) {
+            if (field._sig !== sig) return;
+            field._models = res.Success ? (res.Models || []) : [];
+            if (status) status.textContent = res.Success ? (field._models.length ? '' : (res.Message || 'No models')) : (res.Message || 'Failed');
+            syncModelField(field);
+        }).catch(function (err) {
+            if (field._sig !== sig) return;
+            field._models = [];
+            if (status) status.textContent = err && err.message ? err.message : 'Failed';
+            syncModelField(field);
+        }).finally(function () { field.classList.remove('is-loading'); });
+    }
+    function syncModelFields(view) {
+        view.querySelectorAll('.hsc-model-field').forEach(function (f) {
+            f.classList.remove('is-custom');
+            f._sig = '';
+            syncModelField(f);
+            if (f.offsetParent) loadModelField(f);
+        });
+    }
+
+    // ---- What is unsaved, in words ----
+    // Compares two getUiConfig(view, true) results (saved, current) and returns
+    // { settings: [label], sources: [{ name, what }] } for the unsaved-changes popup.
+    var _settingLabels = {
+        OpenAiModel: 'OpenAI model', GeminiModel: 'Gemini model', ClaudeModel: 'Claude model',
+        OllamaBaseUrl: 'Ollama URL', OllamaModel: 'Ollama model', AiConnections: 'OpenAI-compatible connections', AiSystemPrompt: 'AI system prompt',
+        ExtendedConsoleOutput: 'Extended log', LogMissingItems: 'Log missing movies and shows',
+        DryRunMode: 'Dry Run Mode', PreserveTagsOnEmptyResult: 'Preserve tags and collections on empty result',
+        IgnoreMarkedAsWatched: 'Ignore titles only marked as watched',
+        TopListMirrorCollections: 'Show collections on top-list items', HideTopListLibraries: 'Hide HSC libraries',
+        ShowCopyPasteButtons: 'Copy & paste sources', ShowImportCollectionButton: 'Import collection',
+        RankedCollectionsEnabled: 'Ranked collections', SavedFilters: 'Saved filters',
+        HomeSyncEnabled: 'Home Screen sync: on/off', HomeSyncProfiles: 'Home Screen sync: profiles',
+        ContinueWatchingBumpEnabled: 'Continue Watching bump: on/off', ContinueWatchingBumpMode: 'Continue Watching bump: mode',
+        ContinueWatchingBumpAllUsers: 'Continue Watching bump: all users', ContinueWatchingBumpUserIds: 'Continue Watching bump: users'
+    };
+    // A source card's field → the card tab it lives on.
+    function sourceFieldArea(k) {
+        if (k === 'Name') return 'name';
+        if (k === 'Tag') return 'tag name';
+        if (k === 'Active') return 'on/off';
+        if (k === 'Blacklist') return 'blacklist';
+        if (k === 'ActiveIntervals') return 'schedule';
+        if (k === 'EnableTag' || /^Tag(Target|Poster|Background|ArtTitle)/.test(k)) return 'tag settings';
+        if (/^(Enable)?Collection|^OverrideWhenActive$/.test(k)) return 'collection';
+        if (/^(Enable)?Playlist/.test(k)) return 'playlist';
+        if (/^(Enable)?HomeSection/.test(k)) return 'home screen';
+        return 'source';
+    }
+    function describeUnsavedChanges(saved, current) {
+        var same = function (a, b) { return JSON.stringify(a) === JSON.stringify(b); };
+        var out = { settings: [], sources: [] };
+        Object.keys(_settingLabels).forEach(function (k) {
+            if (!same(saved[k], current[k])) out.settings.push(_settingLabels[k]);
+        });
+        // A card is one or more flat entries in a row (one per URL / local source).
+        function groups(tags) {
+            var gs = [];
+            (tags || []).forEach(function (t) {
+                var last = gs[gs.length - 1];
+                if (last && last.name === t.Name && last.tag === t.Tag) last.items.push(t);
+                else gs.push({ name: t.Name, tag: t.Tag, lm: t.LastModified, items: [t] });
+            });
+            return gs;
+        }
+        var before = groups(saved.Tags), after = groups(current.Tags);
+        var match = new Array(after.length).fill(-1), used = new Set();
+        // By name first, then (a renamed card) by the saved card's LastModified, which stays put.
+        after.forEach(function (g, i) {
+            var j = before.findIndex(function (b, x) { return !used.has(x) && b.name === g.name && b.tag === g.tag; });
+            if (j >= 0) { match[i] = j; used.add(j); }
+        });
+        after.forEach(function (g, i) {
+            if (match[i] >= 0) return;
+            var j = before.findIndex(function (b, x) { return !used.has(x) && b.lm && b.lm === g.lm; });
+            if (j >= 0) { match[i] = j; used.add(j); }
+        });
+        function label(g) { return g.name || g.tag || '(unnamed source)'; }
+        after.forEach(function (g, i) {
+            if (match[i] < 0) { out.sources.push({ name: label(g), what: 'new source' }); return; }
+            var b = before[match[i]];
+            var areas = [];
+            function add(a) { if (areas.indexOf(a) < 0) areas.push(a); }
+            if (b.items.length !== g.items.length) add('source');
+            var keys = new Set();
+            b.items.concat(g.items).forEach(function (t) { Object.keys(t).forEach(function (k) { keys.add(k); }); });
+            keys.delete('LastModified');
+            keys.forEach(function (k) {
+                for (var n = 0; n < Math.max(b.items.length, g.items.length); n++) {
+                    var x = b.items[n] || b.items[0], y = g.items[n] || g.items[0];
+                    if (!same(x[k], y[k])) { add(sourceFieldArea(k)); break; }
+                }
+            });
+            if (!areas.length) return;
+            var name = label(g);
+            if (label(b) !== name) name = label(b) + ' → ' + name;
+            out.sources.push({ name: name, what: areas.join(', ') });
+        });
+        before.forEach(function (b, x) {
+            if (!used.has(x)) out.sources.push({ name: label(b), what: 'deleted', deleted: true });
+        });
+        // Same cards, other order.
+        var kept = match.filter(function (j) { return j >= 0; });
+        if (kept.some(function (j, n) { return n > 0 && j < kept[n - 1]; })) out.settings.push('Order of sources');
+        return out;
     }
 
     function checkFormState() {
@@ -6083,7 +6773,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var key = t.Name ? t.Name + '\x1F' + t.Tag : t.Tag;
             if (!grouped[key]) {
                 grouped[key] = {
-                    Tag: t.Tag, Name: t.Name || '', Urls: [], LocalSources: [], Active: t.Active !== false, Blacklist: t.Blacklist, ActiveIntervals: t.ActiveIntervals,
+                    Tag: t.Tag, ExtraTags: t.ExtraTags || [], Name: t.Name || '', Urls: [], LocalSources: [], Active: t.Active !== false, Blacklist: t.Blacklist, ActiveIntervals: t.ActiveIntervals,
                     EnableTag: t.EnableTag !== false, EnableCollection: t.EnableCollection, CollectionName: t.CollectionName, CollectionSortName: t.CollectionSortName || '', CollectionDescription: t.CollectionDescription || '', CollectionPosterPath: t.CollectionPosterPath || '',
                     CollectionPosterStyle: t.CollectionPosterStyle || '', CollectionBackgroundStyle: t.CollectionBackgroundStyle || '',
                     CollectionBackgroundPath: t.CollectionBackgroundPath || '', CollectionKeepOrder: !!t.CollectionKeepOrder, CollectionImported: !!t.CollectionImported,
@@ -6115,6 +6805,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     CollectionTargetSeason:  t.CollectionTargetSeason  || false,
                     CollectionTargetSeries:  t.CollectionTargetSeries  || false,
                     EnablePlaylist:   t.EnablePlaylist   || false,
+                    EnableCollectionTag: !!t.EnableCollectionTag, CollectionTag: t.CollectionTag || '', CollectionExtraTags: t.CollectionExtraTags || [],
+                    EnablePlaylistTag: !!t.EnablePlaylistTag, PlaylistTag: t.PlaylistTag || '', PlaylistExtraTags: t.PlaylistExtraTags || [],
                     PlaylistName:     t.PlaylistName     || '',
                     PlaylistDescription: t.PlaylistDescription || '', PlaylistPosterPath: t.PlaylistPosterPath || '',
                     PlaylistPosterStyle: t.PlaylistPosterStyle || '', PlaylistBackgroundStyle: t.PlaylistBackgroundStyle || '',
@@ -6124,6 +6816,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     PlaylistMappings: t.PlaylistMappings || [],
                     NextWatchUsersMigrated: !!t.NextWatchUsersMigrated,
                     NextWatchSeedDays: t.NextWatchSeedDays > 0 ? t.NextWatchSeedDays : 90, NextWatchUseTaste: t.NextWatchUseTaste !== false,
+                    EnableTopList: !!t.EnableTopList, TopListContentType: (t.TopListContentType === 'Shows' || t.TopListContentType === 'Movies') ? t.TopListContentType : 'Auto',
+                    TopListMaxItems: t.TopListMaxItems || 0, TopListBadgeStyle: t.TopListBadgeStyle || 'neutral',
+                    TopListBadgeOptions: t.TopListBadgeOptions || '', TopListRealPoster: t.TopListRealPoster || '',
                     LastRuns: [],
                 };
             }
@@ -6170,75 +6865,287 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         });
     }
 
-    function renderHscTab(container, config, users) {
-        var sourceOptions = users.map(function (u) {
-            return '<option value="' + u.Id + '"' + (config.HomeSyncSourceUserId === u.Id ? ' selected' : '') + '>' + escapeHtml(u.Name + userRatingSuffix(u)) + '</option>';
-        }).join('');
+    // Copy & Sync profiles as the page edits them: HomeSyncProfiles, or the old single source
+    // user (HomeSyncSourceUserId …) as one profile. Saving writes profiles and clears the old fields.
+    function effectiveHscProfiles(config) {
+        if ((config.HomeSyncProfiles || []).length) {
+            return config.HomeSyncProfiles.map(function (p) {
+                return {
+                    Active: p.Active !== false, SourceUserId: p.SourceUserId || '', TargetUserIds: (p.TargetUserIds || []).slice().sort(), LibraryOrder: !!p.LibraryOrder,
+                    Mode: p.Mode === 'selected' ? 'selected' : 'all', KeepOwnRows: p.KeepOwnRows !== false, AddToSources: !!p.AddToSources, SelectedRows: (p.SelectedRows || []).slice().sort()
+                };
+            });
+        }
+        if (!config.HomeSyncSourceUserId) return [];
+        return [{
+            Active: true, SourceUserId: config.HomeSyncSourceUserId, TargetUserIds: (config.HomeSyncTargetUserIds || []).slice().sort(), LibraryOrder: !!config.HomeSyncLibraryOrder,
+            Mode: 'all', KeepOwnRows: true, AddToSources: false, SelectedRows: []
+        }];
+    }
 
+    // The profiles in the Copy & Sync tab, in page order.
+    function readHscProfiles(view) {
+        return Array.from(view.querySelectorAll('#hscContainer .hsc-profile')).map(function (el) {
+            return {
+                Active: !!(el.querySelector('.chkHscProfileActive') || {}).checked,
+                SourceUserId: (el.querySelector('.selHscProfileSource') || {}).value || '',
+                TargetUserIds: Array.from(el.querySelectorAll('.hsc-target-chk:checked')).map(function (c) { return c.value; }).sort(),  // sorted: the dirty check compares with effectiveHscProfiles
+                LibraryOrder: !!(el.querySelector('.chkHscProfileLibraryOrder') || {}).checked,
+                Mode: (el.querySelector('.selHscProfileMode') || {}).value === 'selected' ? 'selected' : 'all',
+                KeepOwnRows: !!(el.querySelector('.chkHscProfileKeepOwn') || {}).checked,
+                AddToSources: !!(el.querySelector('.chkHscProfileAddToSources') || {}).checked,
+                SelectedRows: hscSelectedRows(el)
+            };
+        });
+    }
+
+    // The rows a profile copies with Copy selected (sorted, like effectiveHscProfiles): the ticked
+    // boxes once the source user's rows are listed, else what was saved.
+    function hscSelectedRows(el) {
+        var list = el.querySelector('.hsc-profile-row-list');
+        if (!list || !list.dataset.source) return (el._hscSavedRows || []).slice().sort();
+        return Array.from(list.querySelectorAll('.hsc-row-chk:checked')).map(function (c) { return c.value; }).sort();
+    }
+
+    // Copy selected: the source user's home rows to tick (GET Hsc/SourceRows). Rows ticked before
+    // that are not on that home screen now stay listed (and ticked), so a save keeps them.
+    function loadHscProfileRows(el, users) {
+        var list = el.querySelector('.hsc-profile-row-list');
+        var source = (el.querySelector('.selHscProfileSource') || {}).value || '';
+        if (!list || list.dataset.loading === source) return;
+        var keep = hscSelectedRows(el);
+        el._hscSavedRows = keep;
+        delete list.dataset.source;
+        if (!source) {
+            list.innerHTML = '<p class="textMuted" style="font-size:0.85em;">Select a source user first.</p>';
+            return;
+        }
+        list.dataset.loading = source;
+        list.innerHTML = '<p class="textMuted" style="font-size:0.85em;">Loading rows…</p>';
+        var sourceUser = (users || []).filter(function (u) { return u.Id === source; })[0];
+        var sourceName = sourceUser ? sourceUser.Name : 'the source user';
+        window.ApiClient.getJSON(window.ApiClient.getUrl('HomeScreenCompanion/Hsc/SourceRows', { UserId: source }))
+            .then(function (rows) { return rows || []; }, function () { return null; })
+            .then(function (rows) {
+                if (list.dataset.loading !== source) return;   // the source user was changed meanwhile
+                delete list.dataset.loading;
+                if (rows === null) {
+                    list.innerHTML = '<p class="textMuted" style="font-size:0.85em;">Could not load the rows of ' + escapeHtml(sourceName) + '.</p>';
+                    return;
+                }
+                var kinds = { source: 'Source', playlist: 'Playlist', toplist: 'Top-list' };
+                function rowHtml(key, title, kind, missing) {
+                    var chip = kinds[kind] ? '<span style="margin-left:8px;font-size:0.75em;padding:1px 8px;border-radius:10px;border:1px solid var(--line-color);color:var(--theme-text-secondary);">' + kinds[kind] + '</span>' : '';
+                    var note = missing ? '<span style="margin-left:auto;font-size:0.8em;color:var(--theme-text-secondary);">Not on ' + escapeHtml(sourceName) + '\'s home screen</span>' : '';
+                    return '<div class="hsc-user-row"' + (missing ? ' style="opacity:0.6;"' : '') + '><label style="display:flex;align-items:center;gap:10px;cursor:pointer;width:100%;">' +
+                        '<input is="emby-checkbox" type="checkbox" class="hsc-row-chk" value="' + escapeHtml(key) + '"' + (keep.indexOf(key) >= 0 ? ' checked' : '') + ' />' +
+                        '<span>' + escapeHtml(title) + chip + '</span>' + note + '</label></div>';
+                }
+                var keys = rows.map(function (r) { return r.Key; });
+                var missing = keep.filter(function (k) { return keys.indexOf(k) < 0; });
+                list.dataset.source = source;
+                list.innerHTML = rows.length || missing.length
+                    ? buildSelectAllRowHtml('hsc-user-row') +
+                      rows.map(function (r) { return rowHtml(r.Key, r.Title, r.Kind, false); }).join('') +
+                      missing.map(function (k) { return rowHtml(k, hscRowKeyLabel(k), '', true); }).join('')
+                    : '<p class="textMuted" style="font-size:0.85em;">' + escapeHtml(sourceName) + ' has no home screen rows.</p>';
+                list._syncAll = wireSelectAll(list, '.hsc-row-chk');
+                var container = el.closest('#hscContainer');
+                if (container) refreshHscProfiles(container);
+                setTimeout(checkFormState, 0);
+            });
+    }
+
+    // A saved row key the source user does not have now, as a readable name.
+    function hscRowKeyLabel(key) {
+        var k = key.replace(/^(src|tl|row):/, '');
+        if (key.indexOf('src:') === 0) {
+            // "src:<name>/<tag>", each URI-escaped (HomeSectionSyncTask.SourceKey).
+            var parts = k.split('/').map(function (x) { try { return decodeURIComponent(x); } catch (e) { return x; } });
+            return parts[0] || parts[1] || k;
+        }
+        if (k.indexOf('name:') === 0) return k.substring(5);
+        if (k.indexOf('type:') === 0) return k.substring(5).split('|')[0] + ' row';
+        return k;
+    }
+
+    // One profile: its header names the source user and who it copies to; the body holds its settings.
+    function hscProfileHtml(p, users, open) {
+        var sourceOptions = users.map(function (u) {
+            return '<option value="' + u.Id + '"' + (p.SourceUserId === u.Id ? ' selected' : '') + '>' + escapeHtml(u.Name + userRatingSuffix(u)) + '</option>';
+        }).join('');
         var targetRows = users.map(function (u) {
-            var checked = (config.HomeSyncTargetUserIds || []).indexOf(u.Id) >= 0 ? ' checked' : '';
+            var checked = (p.TargetUserIds || []).indexOf(u.Id) >= 0 ? ' checked' : '';
             return '<div class="hsc-user-row"><label style="display:flex;align-items:center;gap:10px;cursor:pointer;width:100%;">' +
                 '<input is="emby-checkbox" type="checkbox" class="hsc-target-chk" value="' + u.Id + '" data-restricted="' + (isUserRestricted(u) ? '1' : '0') + '"' + checked + ' />' +
                 '<span>' + escapeHtml(u.Name) + userRatingChipHtml(u) + '</span>' +
+                '<span class="hsc-target-note" style="margin-left:auto;font-size:0.8em;color:var(--theme-text-secondary);"></span>' +
                 '</label></div>';
         }).join('');
+        return [
+            '<div class="advanced-section settings-panel hsc-profile">',
+            '<div class="advanced-header settings-panel-toggle">',
+            '<i class="md-icon hsc-panel-icon">person</i>',
+            '<div style="min-width:0; flex:1;">',
+            '<div class="hsc-title hsc-profile-source"></div>',
+            '<div class="hsc-profile-targets" style="font-size:0.85em; color:var(--theme-text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>',
+            '</div>',
+            '<span class="hsc-profile-off" style="display:none; margin-left:8px; font-size:0.75em; padding:1px 8px; border-radius:10px; border:1px solid var(--line-color); color:var(--theme-text-secondary);">Off</span>',
+            '<button type="button" is="emby-button" class="raised btnRemoveHscProfile btn-row-remove" title="Remove profile" style="margin:0 0 0 8px;"><i class="md-icon">delete</i></button>',
+            '<i class="md-icon settings-panel-chevron" style="margin-left:4px; transition:transform 0.2s;' + (open ? ' transform:rotate(180deg);' : '') + '">expand_more</i>',
+            '</div>',
+            '<div class="advanced-body settings-panel-body" style="display:' + (open ? 'block' : 'none') + '; padding-top:4px;">',
+            '<div class="checkboxContainer checkboxContainer-withDescription">',
+            '<label><input is="emby-checkbox" type="checkbox" class="chkHscProfileActive"' + (p.Active !== false ? ' checked' : '') + ' /><span>Sync this profile</span></label>',
+            '<div class="fieldDescription">Untick to pause this profile: its users keep the home screen they have, and stay on the sources and top-lists Copy & Sync added them to.</div>',
+            '</div>',
+            '<div class="inputContainer" style="margin-top:16px;">',
+            '<select is="emby-select" class="selHscProfileSource" label="Source User">',
+            '<option value="">— Select source user —</option>',
+            sourceOptions,
+            '</select>',
+            '<div class="fieldDescription">Home screen sections are copied FROM this user to the users selected below.</div>',
+            '</div>',
+            '<div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:8px;">',
+            '<label><input is="emby-checkbox" type="checkbox" class="chkHscProfileLibraryOrder"' + (p.LibraryOrder ? ' checked' : '') + ' /><span>Also copy library order</span></label>',
+            '<div class="fieldDescription">Also copies the order of media libraries in the navigation sidebar.</div>',
+            '</div>',
+            '<div class="inputContainer" style="margin-top:16px;">',
+            '<select is="emby-select" class="selHscProfileMode" label="What to copy">',
+            '<option value="all"' + (p.Mode !== 'selected' ? ' selected' : '') + '>Everything (replaces the home screen)</option>',
+            '<option value="selected"' + (p.Mode === 'selected' ? ' selected' : '') + '>Selected rows only</option>',
+            '</select>',
+            '</div>',
+            '<div class="hsc-mode-all"' + (p.Mode === 'selected' ? ' style="display:none;"' : '') + '>',
+            '<div class="checkboxContainer checkboxContainer-withDescription">',
+            '<label><input is="emby-checkbox" type="checkbox" class="chkHscProfileKeepOwn"' + (p.KeepOwnRows !== false ? ' checked' : '') + ' /><span>Keep each user\'s own rows</span></label>',
+            '</div>',
+            '<div class="hsc-callout" style="margin-top:4px;"><i class="md-icon">info</i><span>',
+            'Each user\'s home screen is replaced by the source user\'s.<br>',
+            '<strong>On:</strong> rows from sources and top-lists the user is selected on, that the source user doesn\'t have, stay where they are.<br>',
+            '<strong>Off:</strong> an exact copy. Everything else is removed. With "Also add users to the sources and top-lists" on, the user is also taken off those sources and top-lists; without it, rows from their own sources come back with the next full sync.',
+            '</span></div>',
+            '</div>',
+            '<div class="hsc-mode-selected"' + (p.Mode === 'selected' ? '' : ' style="display:none;"') + '>',
+            '<div class="hsc-callout" style="margin-bottom:8px;"><i class="md-icon">info</i><span>',
+            'Only the ticked rows are copied: updated where a user already has them, else added at the same place as on the source user\'s home screen. Each user\'s other rows stay.<br>',
+            'Unticking a row later removes it again.',
+            '</span></div>',
+            '<div class="hsc-user-list hsc-profile-row-list"></div>',
+            '</div>',
+            '<div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:16px;">',
+            '<label><input is="emby-checkbox" type="checkbox" class="chkHscProfileAddToSources"' + (p.AddToSources ? ' checked' : '') + ' /><span>Also add users to the sources and top-lists of copied rows</span></label>',
+            '<div class="fieldDescription">Each user is added to the source or top-list of every row they get, so the full sync keeps that row updated for them and makes their own playlist rows (such as Your Next Watch). They show up in its user list. Copy & Sync takes them off again when the row is no longer copied or the user leaves the profile, and the row stays as a plain copy (a personal playlist row goes). Users you added yourself stay. Off: the rows are only copied, and a top-list row only goes to the list\'s own users, as before 4.4.3.</div>',
+            '</div>',
+            '<div class="hsc-eyebrow" style="margin:16px 0 8px;">Copy to</div>',
+            (targetRows ? userListSelectLinksHtml() : ''),
+            '<div class="hsc-user-list hsc-profile-target-list">',
+            targetRows ? buildSelectAllRowHtml('hsc-user-row') + targetRows : '<p class="textMuted" style="font-size:0.85em;">No users found.</p>',
+            '</div>',
+            '</div>',
+            '</div>'
+        ].join('');
+    }
 
-        var enabled      = config.HomeSyncEnabled ? ' checked' : '';
-        var libOrderChk  = config.HomeSyncLibraryOrder ? ' checked' : '';
-
+    function renderHscTab(container, config, users) {
+        var profiles = config.HomeSyncProfiles || [];
         var syncDisplay = config.HomeSyncEnabled ? '' : 'none';
-
+        container._hscUsers = users;
         container.innerHTML = [
             '<div class="hsc-card">',
             '<h3 class="hsc-section-title">Configuration</h3>',
             '<div class="checkboxContainer checkboxContainer-withDescription">',
-            '<label><input is="emby-checkbox" type="checkbox" id="chkHscEnabled"' + enabled + ' /><span>Enable Home Screen sync</span></label>',
-            '<div class="fieldDescription">When enabled, the plugin syncs all Home Sections from the target user and applies it to those selected. When disabled, the task always skips — even if triggered manually.</div>',
-            '</div>',
-            '<div id="hscSyncConfig" style="display:' + syncDisplay + '">',
-            '<div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:8px;">',
-            '<label><input is="emby-checkbox" type="checkbox" id="chkHscLibraryOrder"' + libOrderChk + ' /><span>Also copy library order</span></label>',
-            '<div class="fieldDescription">Also syncs the order of media libraries in the navigation sidebar.</div>',
-            '</div>',
-            '<div class="inputContainer" style="margin-top:16px;">',
-            '<select is="emby-select" id="selHscSourceUser" label="Source User">',
-            '<option value="">— Select source user —</option>',
-            sourceOptions,
-            '</select>',
-            '<div class="fieldDescription">Home screen sections will be copied FROM this user to all users selected below.</div>',
+            '<label><input is="emby-checkbox" type="checkbox" id="chkHscEnabled"' + (config.HomeSyncEnabled ? ' checked' : '') + ' /><span>Enable Home Screen sync</span></label>',
+            '<div class="fieldDescription">When enabled, each profile copies its source user\'s home screen (everything, or the rows you select) to the users it lists. When disabled, nothing changes, even if the task is triggered manually: users keep their home screens and stay on the sources and top-lists Copy & Sync added them to. Delete a profile to take its users off those again.</div>',
             '</div>',
             '</div>',
+            '<div id="hscProfilesWrap" class="hsc-card" style="display:' + syncDisplay + '">',
+            '<h3 class="hsc-section-title">Profiles</h3>',
+            '<p class="textMuted" style="font-size:0.88em; margin-bottom:12px;">Each profile copies one user\'s home screen to other users, e.g. one for the adults and one for the children. Several profiles can use the same source user, e.g. to copy different rows to different users. A user can get their home screen from one profile only.</p>',
+            '<p class="hsc-profile-empty textMuted" style="font-size:0.85em; display:' + (profiles.length ? 'none' : 'block') + ';">No profiles yet.</p>',
+            '<div class="hsc-profile-list">',
+            profiles.map(function (p) { return hscProfileHtml(p, users, false); }).join(''),
             '</div>',
-
-            '<div class="hsc-card" id="hscSyncToCard" style="display:' + syncDisplay + '">',
-            '<h3 class="hsc-section-title">Sync to</h3>',
-            '<p class="textMuted" style="font-size:0.88em;margin-bottom:12px;">These users will receive the source user\'s home screen layout on each sync.</p>',
-            (targetRows ? userListSelectLinksHtml() : ''),
-            '<div class="hsc-user-list" id="hscTargetList">',
-            targetRows ? buildSelectAllRowHtml('hsc-user-row') + targetRows : '<p class="textMuted" style="font-size:0.85em;">No users found.</p>',
-            '</div>',
-            '</div>',
-
+            '<button type="button" is="emby-button" class="raised btnAddHscProfile hsc-btn-dashed" style="width:100%;"><i class="md-icon" style="margin-right:5px;">add</i>Add profile</button>',
+            '</div>'
         ].join('');
-
         container.dataset.loaded = '1';
     }
 
-    function enforceHscSourceTargetConflict(container) {
-        var sourceId = (container.querySelector('#selHscSourceUser') || {}).value || '';
-        container.querySelectorAll('.hsc-target-chk').forEach(function (chk) {
-            var isConflict = sourceId && chk.value === sourceId;
-            if (isConflict) {
-                chk.checked = false;
-                chk.disabled = true;
-                chk.closest('.hsc-user-row').title = 'Cannot sync a user to themselves';
-                chk.closest('.hsc-user-row').style.opacity = '0.45';
-            } else {
-                chk.disabled = false;
-                chk.closest('.hsc-user-row').title = '';
-                chk.closest('.hsc-user-row').style.opacity = '';
-            }
+    // Select-all and the Unrestricted / Restricted links of one profile's target list.
+    function wireHscProfile(el) {
+        var list = el.querySelector('.hsc-profile-target-list');
+        if (!list) return;
+        list._syncAll = wireSelectAll(list, '.hsc-target-chk');
+        wireUserListSelectLinks(list.previousElementSibling, list);
+    }
+
+    // Locks what would make two profiles write the same user: a source user is never a target,
+    // and a user is the target of one profile only (the first that has them). Several profiles
+    // may share a source user (e.g. different rows to different users). Then the headers.
+    function refreshHscProfiles(container) {
+        var users = container._hscUsers || [];
+        function nameOf(id) { var u = users.filter(function (x) { return x.Id === id; })[0]; return u ? u.Name : id; }
+        var els = Array.from(container.querySelectorAll('.hsc-profile'));
+        var sources = els.map(function (el) { return (el.querySelector('.selHscProfileSource') || {}).value || ''; });
+        var owner = {};
+        els.forEach(function (el, i) {
+            el.querySelectorAll('.hsc-target-chk').forEach(function (chk) {
+                if (chk.checked && sources.indexOf(chk.value) < 0 && !(chk.value in owner)) owner[chk.value] = i;
+            });
         });
+        els.forEach(function (el, i) {
+            el.querySelectorAll('.hsc-target-chk').forEach(function (chk) {
+                var why = '';
+                if (chk.value === sources[i]) why = 'Source user of this profile';
+                else if (sources.indexOf(chk.value) >= 0) why = 'Source user of another profile';
+                else if ((chk.value in owner) && owner[chk.value] !== i) why = 'Copied from ' + (sources[owner[chk.value]] ? nameOf(sources[owner[chk.value]]) : 'another profile');
+                var row = chk.closest('.hsc-user-row');
+                if (why) chk.checked = false;
+                chk.disabled = !!why;
+                row.title = why;
+                row.style.opacity = why ? '0.45' : '';
+                var note = row.querySelector('.hsc-target-note');
+                if (note) note.textContent = why;
+            });
+            var sel = el.querySelector('.selHscProfileSource');
+            if (sel) Array.from(sel.options).forEach(function (o) {
+                if (!o.value) return;
+                o.disabled = o.value !== sources[i] && (o.value in owner);
+            });
+            var list = el.querySelector('.hsc-profile-target-list');
+            if (list && list._syncAll) list._syncAll();
+
+            var targets = Array.from(el.querySelectorAll('.hsc-target-chk:checked')).map(function (c) { return nameOf(c.value); });
+            var selectedMode = (el.querySelector('.selHscProfileMode') || {}).value === 'selected';
+            el.querySelector('.hsc-mode-all').style.display = selectedMode ? 'none' : '';
+            el.querySelector('.hsc-mode-selected').style.display = selectedMode ? '' : 'none';
+            var rowList = el.querySelector('.hsc-profile-row-list');
+            if (selectedMode && rowList && (rowList.dataset.source || '') !== sources[i] && rowList.dataset.loading !== sources[i]) loadHscProfileRows(el, users);
+            var nSelected = hscSelectedRows(el).length;
+            var what = selectedMode ? nSelected + ' selected row' + (nSelected === 1 ? '' : 's')
+                : (el.querySelector('.chkHscProfileKeepOwn') || {}).checked ? '' : 'exact copy';
+            el.querySelector('.hsc-profile-source').textContent = sources[i] ? nameOf(sources[i]) : 'No source user';
+            el.querySelector('.hsc-profile-targets').textContent = (targets.length ? '→ ' + targets.join(', ') : 'Copies to nobody yet') + (what ? '  ·  ' + what : '');
+            el.querySelector('.hsc-profile-off').style.display = (el.querySelector('.chkHscProfileActive') || {}).checked ? 'none' : '';
+        });
+        var empty = container.querySelector('.hsc-profile-empty');
+        if (empty) empty.style.display = els.length ? 'none' : 'block';
+    }
+
+    // A profile set to an exact copy (Everything, own rows not kept) that also changes the lists.
+    function hscProfileMirrors(el) {
+        return (el.querySelector('.selHscProfileMode') || {}).value !== 'selected'
+            && !(el.querySelector('.chkHscProfileKeepOwn') || {}).checked
+            && !!(el.querySelector('.chkHscProfileAddToSources') || {}).checked;
+    }
+
+    function confirmHscMirror(el) {
+        var n = el.querySelectorAll('.hsc-target-chk:checked').length;
+        return confirm('Exact copy with "Also add users to the sources and top-lists" on takes '
+            + (n === 1 ? 'this user' : 'these ' + n + ' users')
+            + ' off every source and top-list the source user isn\'t on, also those you selected them on yourself. '
+            + 'Turning it off again later does not put them back. Continue?');
     }
 
     function loadHscUsers(view) {
@@ -6248,46 +7155,64 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         getHseUsers()
             .then(function (users) {
                 renderHscTab(container, lastHscConfig, users || []);
+                var savedProfiles = lastHscConfig.HomeSyncProfiles || [];
+                container.querySelectorAll('.hsc-profile').forEach(function (el, i) {
+                    el._hscSavedRows = ((savedProfiles[i] || {}).SelectedRows || []).slice();
+                    wireHscProfile(el);
+                });
+                refreshHscProfiles(container);
 
-                enforceHscSourceTargetConflict(container);
-                var syncTargetSelectAll = wireSelectAll(container.querySelector('#hscTargetList'), '.hsc-target-chk');
-
-                var enableChk = container.querySelector('#chkHscEnabled');
-                if (enableChk) {
-                    enableChk.addEventListener('change', function () {
-                        var show = this.checked;
-                        var syncConfig = container.querySelector('#hscSyncConfig');
-                        var syncToCard = container.querySelector('#hscSyncToCard');
-                        if (syncConfig) syncConfig.style.display = show ? '' : 'none';
-                        if (syncToCard) syncToCard.style.display = show ? '' : 'none';
-                        setTimeout(checkFormState, 0);
-                    });
-                }
-
-                var sourceSelect = container.querySelector('#selHscSourceUser');
-                if (sourceSelect) {
-                    sourceSelect.addEventListener('change', function () {
-                        enforceHscSourceTargetConflict(container);
-                        syncTargetSelectAll();
-                        setTimeout(checkFormState, 0);
-                    });
-                }
-
-                container.querySelectorAll('.hsc-target-chk').forEach(function (chk) {
-                    chk.addEventListener('change', function () {
-                        enforceHscSourceTargetConflict(container);
-                        setTimeout(checkFormState, 0);
-                    });
+                container.querySelector('#chkHscEnabled').addEventListener('change', function () {
+                    container.querySelector('#hscProfilesWrap').style.display = this.checked ? '' : 'none';
+                    setTimeout(checkFormState, 0);
                 });
 
-                var hscList = container.querySelector('#hscTargetList');
-                wireUserListSelectLinks(hscList && hscList.previousElementSibling, hscList);
-
-                container.querySelectorAll('input:not(.hsc-target-chk), select:not(#selHscSourceUser)').forEach(function (el) {
-                    el.addEventListener('change', function () { setTimeout(checkFormState, 0); });
-                    el.addEventListener('input',  function () { setTimeout(checkFormState, 0); });
+                container.querySelector('.btnAddHscProfile').addEventListener('click', function () {
+                    var list = container.querySelector('.hsc-profile-list');
+                    list.insertAdjacentHTML('beforeend', hscProfileHtml({ Active: true, SourceUserId: '', TargetUserIds: [], LibraryOrder: false, Mode: 'all', KeepOwnRows: true, AddToSources: false, SelectedRows: [] }, container._hscUsers || [], true));
+                    wireHscProfile(list.lastElementChild);
+                    refreshHscProfiles(container);
+                    setTimeout(checkFormState, 0);
                 });
 
+                // On the container, which outlives a reload (a backup restore loads the tab
+                // again): the earlier handlers go first, so each runs once.
+                if (container._hscHandlers) {
+                    container.removeEventListener('click', container._hscHandlers.click);
+                    container.removeEventListener('change', container._hscHandlers.change);
+                    container.removeEventListener('input', container._hscHandlers.input);
+                }
+                container._hscHandlers = {
+                    // Before the page's own panel toggle (on the view): removing must not fold the panel.
+                    click: function (e) {
+                        var del = e.target.closest('.btnRemoveHscProfile');
+                        if (!del) return;
+                        e.stopPropagation();
+                        var gone = del.closest('.hsc-profile');
+                        var src = (gone.querySelector('.hsc-profile-source') || {}).textContent || 'this user';
+                        var n = gone.querySelectorAll('.hsc-target-chk:checked').length;
+                        if (!confirm('Delete the profile that copies from ' + src + ' to ' + n + ' user' + (n === 1 ? '' : 's') + '? '
+                            + 'After saving, they are taken off the sources and top-lists Copy & Sync added them to. Their home screens stay as they are, except a personal playlist row.')) return;
+                        gone.remove();
+                        refreshHscProfiles(container);
+                        setTimeout(checkFormState, 0);
+                    },
+                    change: function (e) {
+                        var profile = e.target.closest('.hsc-profile');
+                        // An exact copy that changes the lists cannot be undone: asked first.
+                        if (profile && e.target.matches('.chkHscProfileKeepOwn, .chkHscProfileAddToSources, .selHscProfileMode')
+                            && hscProfileMirrors(profile) && !confirmHscMirror(profile)) {
+                            if (e.target.matches('.selHscProfileMode')) e.target.value = 'selected';
+                            else e.target.checked = !e.target.checked;
+                        }
+                        if (profile) refreshHscProfiles(container);
+                        setTimeout(checkFormState, 0);
+                    },
+                    input: function () { setTimeout(checkFormState, 0); }
+                };
+                container.addEventListener('click', container._hscHandlers.click);
+                container.addEventListener('change', container._hscHandlers.change);
+                container.addEventListener('input', container._hscHandlers.input);
             })
             .catch(function () {
                 container.innerHTML = '<p class="textMuted" style="padding:20px;">Failed to load users. Check server connection.</p>';
@@ -6430,15 +7355,21 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var token = window.ApiClient.accessToken();
         var pendingTagDeletes = {};       // tagName.toLowerCase() -> { name, itemCount }
         var pendingCollDeletes = {};      // collectionId -> { id, name, itemCount }
+        var pendingPlDeletes = {};        // playlistId -> { id, name, itemCount, owner, managed }
 
         Promise.all([
             fetch(window.ApiClient.getUrl('HomeScreenCompanion/Manage/Tags'), { headers: { 'X-MediaBrowser-Token': token } }).then(function (r) { return r.json(); }),
             fetch(window.ApiClient.getUrl('HomeScreenCompanion/Manage/Collections'), { headers: { 'X-MediaBrowser-Token': token } }).then(function (r) { return r.json(); }),
-            window.ApiClient.getPluginConfiguration(pluginId).catch(function () { return { Tags: [] }; })
+            window.ApiClient.getPluginConfiguration(pluginId).catch(function () { return { Tags: [] }; }),
+            fetch(window.ApiClient.getUrl('HomeScreenCompanion/Manage/Playlists'), { headers: { 'X-MediaBrowser-Token': token } })
+                .then(function (r) { return r.ok ? r.json() : { Playlists: [] }; }).catch(function () { return { Playlists: [] }; })
         ]).then(function (results) {
             var tagsData = results[0];
             var collectionsData = results[1];
             var pluginConfig = results[2];
+            var playlists = (results[3] && results[3].Playlists) || [];
+            var playlistById = {};
+            playlists.forEach(function (p) { playlistById[p.Id] = p; });
 
             // Build maps: which tags/collections are managed by a plugin group
             // Each logical group may appear multiple times in cfg.Tags (one entry per URL/source).
@@ -6506,6 +7437,79 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     '</div>';
             }
 
+            // Playlists: every user's, with the owner on a line under the name (several users often
+            // have a playlist with the same name, e.g. one per user from an HSC source).
+            function renderPlaylistSection(headerExtra) {
+                var cell = 'padding:9px 4px;border-bottom:1px solid var(--line-color);';
+                var rows = playlists.length === 0
+                    ? '<div style="color:var(--theme-text-secondary);padding:8px 0;">No items found.</div>'
+                    : playlists.map(function (p) {
+                        var id = p.Id || '';
+                        var name = p.Name || '';
+                        var count = p.ItemCount != null ? p.ItemCount : 0;
+                        var owner = p.OwnerName || '';
+                        var shared = p.SharedWith || [];
+                        var ownerTip = (owner ? 'Owner: ' + owner : 'No user owns this playlist (e.g. its owner was removed, or Emby found its playlist file again).') +
+                            (p.IsPublic ? '\nPublic: every user sees it' : '') +
+                            (shared.length ? '\n' + (owner ? 'Also shared with: ' : 'Shared with: ') + shared.join(', ') : '');
+                        var ownerHtml = '<span title="' + escAttr(ownerTip) + '" style="display:inline-flex;align-items:center;gap:4px;max-width:100%;color:var(--theme-text-secondary);">' +
+                            (owner
+                                ? '<i class="md-icon" style="font-size:1.1em;">person</i><span style="overflow:hidden;text-overflow:ellipsis;">' + escHtml(owner) + '</span>'
+                                : '<span style="display:inline-flex;align-items:center;gap:4px;color:var(--hsc-warning-text);"><i class="md-icon" style="font-size:1.1em;">person_off</i>No owner</span>') +
+                            (shared.length ? '<span style="opacity:0.8;">+' + shared.length + '</span>' : '') +
+                            (p.IsPublic ? '<span style="display:inline-flex;align-items:center;gap:2px;margin-left:6px;"><i class="md-icon" style="font-size:1.1em;">public</i>Public</span>' : '') +
+                            '</span>';
+                        var badge = p.ManagedBy ? '<span class="hsc-managed-pill">Managed by HSC Plugin</span>' : '';
+                        return '<tr class="tc-manage-row" data-rowname="' + escAttr(name.toLowerCase()) + '" data-owner="' + escAttr(owner.toLowerCase()) + '" data-ownerid="' + escAttr(p.OwnerId || '') + '" data-managed="' + (p.ManagedBy ? '1' : '0') + '" data-count="' + count + '">' +
+                            '<td style="' + cell + 'width:100%;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+                            (id
+                                ? '<a class="tc-item-name tc-nav-link" href="javascript:void(0)" data-navid="' + escAttr(id) + '" style="color:inherit;text-decoration:none;cursor:pointer;" onmouseover="this.style.textDecoration=\'underline\'" onmouseout="this.style.textDecoration=\'none\'">' + escHtml(name) + '</a>'
+                                : '<span class="tc-item-name">' + escHtml(name) + '</span>') +
+                            badge +
+                            '<div style="font-size:0.85em;margin-top:2px;overflow:hidden;">' + ownerHtml + '</div>' +
+                            '</td>' +
+                            '<td style="' + cell + 'padding-left:16px;white-space:nowrap;color:var(--theme-text-secondary);font-size:0.88em;">' + count + ' items</td>' +
+                            '<td style="' + cell + 'padding-left:8px;white-space:nowrap;">' +
+                            '<button type="button" class="btnTcMark" data-id="' + escAttr(id) + '" data-name="' + escAttr(name) + '" data-count="' + count + '" data-type="pl">Remove</button>' +
+                            '</td>' +
+                            '</tr>';
+                    }).join('');
+
+                return '<div id="tcPlSection" style="flex:1 1 300px;min-width:0;">' +
+                    '<div style="display:flex;align-items:center;gap:30px;margin-bottom:12px;">' +
+                    '<h3 class="hsc-title" style="margin:0;">Playlists</h3>' +
+                    (headerExtra || '') +
+                    '<button type="button" class="btnTcRefresh" style="background:transparent;color:var(--theme-text-secondary);border:1px solid var(--hsc-hairline-strong);margin-left:auto;"><i class="md-icon" style="font-size:1em;vertical-align:middle;">refresh</i></button>' +
+                    '</div>' +
+                    '<table class="tc-manage-list" style="width:100%;border-collapse:collapse;"><tbody>' + rows + '</tbody></table>' +
+                    '</div>';
+            }
+
+            // The owners present, for the Playlists filter ("" = No owner).
+            var plOwners = [];
+            var plOwnerSeen = {};
+            playlists.forEach(function (p) {
+                var key = p.OwnerId || '';
+                if (plOwnerSeen[key]) return;
+                plOwnerSeen[key] = true;
+                plOwners.push({ id: key, name: p.OwnerName || '' });
+            });
+            plOwners.sort(function (a, b) { return (a.id === '') - (b.id === '') || natCmp(a.name.toLowerCase(), b.name.toLowerCase()); });
+            var ownerFilterDropdownHtml = plOwners.length > 1
+                ? '<div class="filter-dropdown-wrapper" id="tcOwnerFilterWrap">' +
+                  '<div class="filter-dropdown-btn" id="tcOwnerFilterBtn">' +
+                  '<i class="md-icon" style="font-size:1.1em;">filter_list</i>' +
+                  '<span id="tcOwnerFilterLabel">Filter users</span>' +
+                  '<i class="md-icon" style="font-size:0.9em;opacity:0.6;" id="tcOwnerFilterCaret">expand_more</i>' +
+                  '</div>' +
+                  '<div class="filter-dropdown-panel" id="tcOwnerFilterDropdown">' +
+                  '<div class="filter-dropdown-label">Owner</div>' +
+                  plOwners.map(function (o) {
+                      return '<label class="filter-chk-row"><input type="checkbox" class="cbOwnerFilter" data-owner="' + escAttr(o.id) + '"> <span>' + (o.id ? escHtml(o.name) : '<em>No owner</em>') + '</span></label>';
+                  }).join('') +
+                  '</div></div>'
+                : '';
+
             var searchInputStyle = 'background:rgba(128,128,128,0.08);border:1px solid var(--line-color);border-radius:6px;padding:5px 10px;font-size:0.9em;color:inherit;width:400px;max-width:100%;';
 
             var tcTypeGroups = [
@@ -6559,7 +7563,30 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<span>Include extras</span>' +
                 '</label>';
 
+            // One list at a time, picked with the segmented control at the top (remembered in this browser).
+            var tcSections = [
+                { key: 'tags', label: 'Tags',        icon: 'label',              id: 'tcTagSection' },
+                { key: 'coll', label: 'Collections', icon: 'video_library',      id: 'tcCollSection' },
+                { key: 'pl',   label: 'Playlists',   icon: 'playlist_play',      id: 'tcPlSection' }
+            ];
+            var shownSection = 'tags';
+            try {
+                var savedShown = localStorage.getItem('HomeScreenCompanion_CleanupList');
+                if (tcSections.some(function (s) { return s.key === savedShown; })) shownSection = savedShown;
+            } catch (e) {}
+
+            var tcSegBase = 'flex:1;cursor:pointer;border:none;border-radius:6px;padding:8px 12px;font-family:inherit;font-size:0.9em;font-weight:500;display:flex;align-items:center;justify-content:center;gap:6px;color:inherit;';
+            var tcSegOn  = tcSegBase + 'background:var(--plugin-popup-bg2, var(--theme-background-level3));';
+            var tcSegOff = tcSegBase + 'background:transparent;opacity:0.7;';
+            var listPickerHtml =
+                '<div id="tcListPicker" style="display:flex;border:1px solid var(--plugin-popup-border,rgba(255,255,255,0.12));border-radius:8px;overflow:hidden;margin-bottom:16px;padding:2px;gap:2px;background:var(--hsc-tint-1);max-width:560px;">' +
+                tcSections.map(function (s) {
+                    return '<button type="button" class="btnTcList" data-key="' + s.key + '" style="' + (s.key === shownSection ? tcSegOn : tcSegOff) + '"><i class="md-icon" style="font-size:1.1em;">' + s.icon + '</i>' + s.label + '</button>';
+                }).join('') +
+                '</div>';
+
             container.innerHTML =
+                listPickerHtml +
                 '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">' +
                 '<input type="text" id="tcSearch" placeholder="Search…" style="' + searchInputStyle + '" />' +
                 '<select is="emby-select" id="tcSort" style="color:inherit;background:rgba(128,128,128,0.08);border:1px solid var(--line-color);padding:5px;border-radius:6px;font-size:0.9em;cursor:pointer;">' +
@@ -6574,15 +7601,39 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<span>Only managed by HSC</span>' +
                 '</label>' +
                 '</div>' +
-                '<div id="tcSectionsWrap" style="display:flex;gap:40px;align-items:flex-start;">' +
+                '<div id="tcSectionsWrap" style="display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start;">' +
                 renderSection('Tags', tagsData.Tags || [], true, typeFilterDropdownHtml + extrasCheckboxHtml) +
                 renderSection('Collections', collectionsData.Collections || [], false) +
+                renderPlaylistSection(ownerFilterDropdownHtml) +
                 '</div>';
 
             container.dataset.loaded = '1';
 
+            function applyShownSection() {
+                tcSections.forEach(function (s) {
+                    var el = container.querySelector('#' + s.id);
+                    if (el) el.style.display = s.key === shownSection ? '' : 'none';
+                });
+                container.querySelectorAll('.btnTcList').forEach(function (btn) {
+                    btn.style.cssText = btn.dataset.key === shownSection ? tcSegOn : tcSegOff;
+                });
+            }
+            applyShownSection();
+
+            container.querySelectorAll('.btnTcList').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    shownSection = this.dataset.key;
+                    try { localStorage.setItem('HomeScreenCompanion_CleanupList', shownSection); } catch (e) {}
+                    applyShownSection();
+                });
+            });
+
             function getSelectedTypeGroups() {
                 return Array.from(container.querySelectorAll('.cbTypeFilter:checked')).map(function (cb) { return cb.dataset.group; });
+            }
+
+            function getSelectedOwners() {
+                return Array.from(container.querySelectorAll('.cbOwnerFilter:checked')).map(function (cb) { return cb.dataset.owner || ''; });
             }
 
             function rowMatchesTypeFilter(row, selectedGroups) {
@@ -6611,23 +7662,27 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var selectedGroups = getSelectedTypeGroups();
                 var includeExtras = !!(container.querySelector('#cbIncludeExtras') || {}).checked;
                 var onlyManaged = !!(container.querySelector('#cbTcOnlyManaged') || {}).checked;
+                var selectedOwners = getSelectedOwners();
 
-                ['tcTagSection', 'tcCollSection'].forEach(function (sectionId) {
+                ['tcTagSection', 'tcCollSection', 'tcPlSection'].forEach(function (sectionId) {
                     var section = container.querySelector('#' + sectionId);
                     if (!section) return;
                     var rows = Array.from(section.querySelectorAll('.tc-manage-row'));
                     var isTagSection = sectionId === 'tcTagSection';
+                    var isPlSection = sectionId === 'tcPlSection';
 
                     rows.forEach(function (row) {
                         var rowName = row.dataset.rowname || '';
-                        var nameMatch = !query || rowName.indexOf(query) !== -1;
+                        // A playlist is also found by its owner's name.
+                        var nameMatch = !query || rowName.indexOf(query) !== -1 || (isPlSection && (row.dataset.owner || '').indexOf(query) !== -1);
+                        var ownerOk = !isPlSection || selectedOwners.length === 0 || selectedOwners.indexOf(row.dataset.ownerid || '') !== -1;
                         var typeMatch = !isTagSection || rowMatchesTypeFilter(row, selectedGroups);
                         var extrasOk = !isTagSection || includeExtras || (function () {
                             var types = (row.dataset.types || '').split(',').filter(Boolean);
                             return types.length === 0 || !types.every(function (t) { return tcExtraTypes.indexOf(t) !== -1; });
                         })();
                         var managedOk = !onlyManaged || row.dataset.managed === '1';
-                        row.style.display = (nameMatch && typeMatch && extrasOk && managedOk) ? '' : 'none';
+                        row.style.display = (nameMatch && typeMatch && extrasOk && managedOk && ownerOk) ? '' : 'none';
                     });
 
                     var list = section.querySelector('.tc-manage-list');
@@ -6640,8 +7695,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         var countB = parseInt(b.dataset.count || '0', 10);
                         var managedA = a.dataset.managed === '1';
                         var managedB = b.dataset.managed === '1';
-                        if (sort === 'name-asc') return natCmp(nameA, nameB);
-                        if (sort === 'name-desc') return natCmp(nameB, nameA);
+                        // Same-named playlists stay in owner order.
+                        var ownerCmp = natCmp(a.dataset.owner || '', b.dataset.owner || '');
+                        if (sort === 'name-asc') return natCmp(nameA, nameB) || ownerCmp;
+                        if (sort === 'name-desc') return natCmp(nameB, nameA) || ownerCmp;
                         if (sort === 'count-desc') return countB - countA;
                         if (sort === 'count-asc') return countA - countB;
                         if (sort === 'managed') return (managedB ? 1 : 0) - (managedA ? 1 : 0) || natCmp(nameA, nameB);
@@ -6685,6 +7742,32 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         if (typeFilterCaret) typeFilterCaret.textContent = 'expand_more';
                     }
                     if (!container.isConnected) document.removeEventListener('click', closeTypeFilter);
+                });
+            }
+
+            var ownerFilterBtn = container.querySelector('#tcOwnerFilterBtn');
+            var ownerFilterDropdown = container.querySelector('#tcOwnerFilterDropdown');
+            var ownerFilterCaret = container.querySelector('#tcOwnerFilterCaret');
+            if (ownerFilterBtn && ownerFilterDropdown) {
+                ownerFilterBtn.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    var open = ownerFilterDropdown.classList.toggle('open');
+                    if (ownerFilterCaret) ownerFilterCaret.textContent = open ? 'expand_less' : 'expand_more';
+                });
+                ownerFilterDropdown.addEventListener('change', function (e) {
+                    if (!e.target.classList.contains('cbOwnerFilter')) return;
+                    var n = getSelectedOwners().length;
+                    var lbl = container.querySelector('#tcOwnerFilterLabel');
+                    if (lbl) lbl.textContent = n === 0 ? 'Filter users' : n + ' user' + (n > 1 ? 's' : '');
+                    ownerFilterBtn.classList.toggle('active', n > 0);
+                    applySearchSort();
+                });
+                document.addEventListener('click', function closeOwnerFilter(e) {
+                    if (!ownerFilterDropdown.contains(e.target) && !ownerFilterBtn.contains(e.target)) {
+                        ownerFilterDropdown.classList.remove('open');
+                        if (ownerFilterCaret) ownerFilterCaret.textContent = 'expand_more';
+                    }
+                    if (!container.isConnected) document.removeEventListener('click', closeOwnerFilter);
                 });
             }
 
@@ -6755,7 +7838,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
 
             function updateSaveButton() {
-                var hasPending = Object.keys(pendingTagDeletes).length > 0 || Object.keys(pendingCollDeletes).length > 0;
+                var hasPending = Object.keys(pendingTagDeletes).length > 0 || Object.keys(pendingCollDeletes).length > 0 || Object.keys(pendingPlDeletes).length > 0;
                 container._tcHasPending = hasPending;
                 checkFormState();
             }
@@ -6783,6 +7866,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var name = btn.dataset.name;
                     var count = parseInt(btn.dataset.count || '0', 10);
                     if (type === 'tag') pendingTagDeletes[id.toLowerCase()] = { name: name, itemCount: count };
+                    else if (type === 'pl') pendingPlDeletes[id] = { id: id, name: name, itemCount: count, playlist: playlistById[id] || {} };
                     else pendingCollDeletes[id] = { id: id, name: name, itemCount: count };
                     var row = btn.closest('.tc-manage-row');
                     if (row) {
@@ -6802,6 +7886,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var type = btn.dataset.type;
                     var id = btn.dataset.id;
                     if (type === 'tag') delete pendingTagDeletes[id.toLowerCase()];
+                    else if (type === 'pl') delete pendingPlDeletes[id];
                     else delete pendingCollDeletes[id];
                     var row = btn.closest('.tc-manage-row');
                     if (row) {
@@ -6865,16 +7950,50 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     }).join('');
                 }
 
+                function buildPlRows(items) {
+                    return items.map(function (item) {
+                        var p = item.playlist || {};
+                        var warning = '';
+                        if (p.ManagedBy && p.ManagedActive) {
+                            warning =
+                                '<div style="color:var(--hsc-warning-text);margin-top:6px;font-size:0.88em;">' +
+                                '<i class="md-icon" style="font-size:1em;vertical-align:middle;margin-right:4px;">warning</i>' +
+                                'Group <strong>' + escHtml(p.ManagedBy) + '</strong> is active and may recreate this playlist on next sync.' +
+                                '<label style="display:flex;align-items:center;gap:6px;margin-top:5px;cursor:pointer;">' +
+                                '<input type="checkbox" class="cbInactivateGroup" data-group-indices="' + escAttr(JSON.stringify([p.ManagedIndex])) + '"> ' +
+                                'Deactivate <strong>' + escHtml(p.ManagedBy) + '</strong>' +
+                                '</label></div>';
+                        }
+                        return '<div style="padding:10px 0;border-bottom:1px solid var(--line-color);display:flex;align-items:flex-start;">' +
+                            '<button type="button" class="btnModalUndo" style="' + undoBtnStyle + '" data-key="' + escAttr(item.id) + '" data-type="pl" title="Keep this one">✕</button>' +
+                            '<div style="flex:1;">' +
+                            '<span style="font-weight:500;">' + escHtml(item.name) + '</span>' +
+                            '<span style="color:var(--theme-text-secondary);font-size:0.88em;margin-left:8px;">(' + item.itemCount + ' items)</span>' +
+                            '<div style="color:var(--theme-text-secondary);font-size:0.88em;margin-top:2px;">' +
+                            (p.OwnerName ? 'Owner: ' + escHtml(p.OwnerName) : 'No owner') +
+                            (p.IsPublic ? ' · public (every user sees it)' : '') +
+                            ((p.SharedWith || []).length ? (p.OwnerName ? ' · also shared with ' : ' · shared with ') + escHtml(p.SharedWith.join(', ')) : '') +
+                            '</div>' +
+                            warning +
+                            '</div>' +
+                            '</div>';
+                    }).join('');
+                }
+
                 function buildContent() {
                     var tagList = Object.values(pendingTagDeletes);
                     var collList = Object.values(pendingCollDeletes);
+                    var plList = Object.values(pendingPlDeletes);
                     var tagSection = tagList.length > 0
                         ? '<div style="margin-bottom:20px;"><h4 style="margin:0 0 8px;font-weight:600;">Tags to remove (' + tagList.length + ')</h4>' + buildRows(tagList, true) + '</div>'
                         : '';
                     var collSection = collList.length > 0
                         ? '<div style="margin-bottom:20px;"><h4 style="margin:0 0 8px;font-weight:600;">Collections to remove (' + collList.length + ')</h4>' + buildRows(collList, false) + '</div>'
                         : '';
-                    return tagSection + collSection;
+                    var plSection = plList.length > 0
+                        ? '<div style="margin-bottom:20px;"><h4 style="margin:0 0 8px;font-weight:600;">Playlists to remove (' + plList.length + ')</h4>' + buildPlRows(plList) + '</div>'
+                        : '';
+                    return tagSection + collSection + plSection;
                 }
 
                 var modal = document.createElement('div');
@@ -6883,7 +8002,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 function renderModal() {
                     var tagList = Object.values(pendingTagDeletes);
                     var collList = Object.values(pendingCollDeletes);
-                    if (tagList.length === 0 && collList.length === 0) { modal.remove(); updateSaveButton(); return; }
+                    var plList = Object.values(pendingPlDeletes);
+                    if (tagList.length === 0 && collList.length === 0 && plList.length === 0) { modal.remove(); updateSaveButton(); return; }
                     modal.innerHTML =
                         '<div style="background:var(--plugin-popup-bg,#2a2a2a);color:var(--plugin-popup-color,#e8e8e8);border:1px solid var(--plugin-popup-border,rgba(255,255,255,0.12));border-radius:12px;box-shadow:var(--hsc-shadow-modal);overscroll-behavior:contain;padding:28px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;">' +
                         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">' +
@@ -6905,6 +8025,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         var type = undoBtn.dataset.type;
                         var key = undoBtn.dataset.key;
                         if (type === 'tag') delete pendingTagDeletes[key];
+                        else if (type === 'pl') delete pendingPlDeletes[key];
                         else delete pendingCollDeletes[key];
 
                         // Restore the row in the main list directly (no .click() to avoid re-triggering handler)
@@ -6933,6 +8054,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                         var tagList = Object.values(pendingTagDeletes);
                         var collList = Object.values(pendingCollDeletes);
+                        var plList = Object.values(pendingPlDeletes);
 
                         var groupsToInactivate = new Set();
                         modal.querySelectorAll('.cbInactivateGroup:checked').forEach(function (cb) {
@@ -6958,6 +8080,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json', 'X-MediaBrowser-Token': tok },
                                     body: JSON.stringify({ CollectionId: c.id })
+                                }).then(function (r) { return r.json(); });
+                            });
+                        });
+                        plList.forEach(function (p) {
+                            collOps.push(function () {
+                                return fetch(window.ApiClient.getUrl('HomeScreenCompanion/Manage/DeletePlaylist'), {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json', 'X-MediaBrowser-Token': tok },
+                                    body: JSON.stringify({ PlaylistId: p.id })
                                 }).then(function (r) { return r.json(); });
                             });
                         });
@@ -7003,6 +8134,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             });
                             pendingTagDeletes = {};
                             pendingCollDeletes = {};
+                            pendingPlDeletes = {};
                             container._tcHasPending = false;
                             checkFormState();
                             container.dataset.loaded = '';
@@ -7194,6 +8326,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var cardSizeOffset = ui.cardSizeOffset != null ? normCardSize(ui.cardSizeOffset) : normCardSize(storedSettings.CardSizeOffset);
                 if (badgeOptions == null) badgeOptions = storedSettings.BadgeOptions || '';
                 if (realPoster == null) realPoster = storedSettings.RealPosterBadge || '';
+                // Callers without a Position field keep the list's saved one.
+                var position = ui.position != null ? ui.position : (storedSettings._position || '');
                 var hseSettings = JSON.stringify({
                     SectionType: 'items',
                     DisplayMode: displayMode,
@@ -7209,7 +8343,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     ItemTypes: JSON.stringify([isShows ? 'Series' : 'Movie']),
                     _queryIsPlayed: '',
                     _queryExcludeViewIds: ctx.excludedViewIds,
-                    ExcludedFolders: ctx.excludedViewIds
+                    ExcludedFolders: ctx.excludedViewIds,
+                    _position: position
                 });
                 if (existing) {
                     existing.HomeSectionUserIds = selectedUserIds;
@@ -7428,8 +8563,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var cardActive = cardBase + 'border-color:var(--hsc-primary);';
         var cardInactive = cardBase + 'border-color:var(--line-color,rgba(255,255,255,0.12));';
         var tileSel = sel === 'top10';
-        // Same Customise chip as the art pickers, under the tiles (Top 10 tile only).
-        var custBtn = '<button type="button" is="emby-button" class="btnBadgeCustomise raised"' + custDisabledAttrs(!tileSel, BADGE_NOTHING_TIP) + ' style="background:transparent; border:1px solid rgba(128,128,128,0.35); color:var(--theme-text-secondary); font-size:0.82em; padding:0 10px; min-width:0;' + (!tileSel ? 'opacity:0.45;cursor:not-allowed;' : '') + '"><i class="md-icon" style="font-size:1em; margin-right:4px;">settings</i><span>Customise</span></button>';
+        // Same Customise button as the art pickers, under the tiles; shown for the Top 10 tile only.
+        var custBtn = '<button type="button" class="btnBadgeCustomise hsc-mbtn hsc-btn-secondary"><i class="md-icon" style="font-size:1.1em;">settings</i><span>Customise</span></button>';
         // Each picker gets its own radio group: with one shared name, opening a second top-list
         // card (or the create popup) unticked the first card's choice, so its Save lit up.
         var radioName = 'tlBadgeStyle_' + (++_badgePickerSeq);
@@ -7453,13 +8588,20 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     '</label>';
             }).join('') +
             '</div>' +
-            '<div class="tl-badge-medal-row checkboxContainer" style="margin:8px 0 0;' + (isBadgePreset(sel) ? '' : 'display:none;') + '"><label>' +
+            // One slot under the tiles: Top 3 medal colours for a colour preset, Customise for the Top 10 tile.
+            '<div class="tl-badge-extra" style="display:flex;align-items:center;min-height:36px;margin-top:8px;">' +
+            '<div class="tl-badge-medal-row checkboxContainer" style="margin:0;' + (isBadgePreset(sel) ? '' : 'display:none;') + '"><label>' +
                 '<input is="emby-checkbox" type="checkbox" class="tl-badge-medals"' + (medalsOn ? ' checked' : '') + ' />' +
                 '<span style="display:inline-flex;align-items:center;gap:6px;">Top 3 medal colours ' +
                     '<span style="display:inline-flex;gap:3px;">' + medalDot('#d4af37') + medalDot('#b8bcc6') + medalDot('#b87333') + '</span></span></label></div>' +
-            '<div class="tl-badge-custom-row" style="display:flex;align-items:center;gap:8px;margin-top:8px;">' + custBtn +
+            '<div class="tl-badge-custom-row" style="display:' + (tileSel ? 'flex' : 'none') + ';align-items:center;gap:8px;">' + custBtn +
                 '<span class="tl-badge-custom-note fieldDescription" style="margin:0;' + (tileSel && optionsJson ? '' : 'display:none;') + '">Customised</span>' +
             '</div>' +
+            '</div>' +
+            // The tile's big numeral has room for 1-10 (BadgeRenderer.RenderRanked).
+            '<div class="tl-badge-top10-note fieldDescription" style="margin:2px 0 6px;' + (tileSel ? '' : 'display:none;') + '">' +
+                '<i class="md-icon" style="font-size:1.15em;vertical-align:-3px;margin-right:4px;color:var(--hsc-info-text);">info</i>' +
+                'The Top 10 tile has room for 10 titles. From number 11 on, titles get a round number badge instead: set Max items to 10 to keep the whole row as tiles.</div>' +
             buildRealPosterHtml(realPoster, contentKind) +
             '</div>';
     }
@@ -7495,9 +8637,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var lbl = 'font-size:0.82em;opacity:0.75;min-width:56px;';
         return '<div class="tl-rp" data-kind="' + (contentKind === 'shows' ? 'shows' : 'movies') + '" style="margin-top:14px;">' +
             '<span class=\"hsc-label\" style=\"display:block;margin-bottom:4px;color:inherit;opacity:0.75;\">Real posters</span>' +
-            '<div class="checkboxContainer" style="margin-bottom:6px;"><label>' +
+            '<div class="checkboxContainer" style="margin-bottom:2px;"><label>' +
                 '<input is="emby-checkbox" type="checkbox" class="tl-rp-on"' + (rp.on ? ' checked' : '') + ' />' +
                 '<span>Badge the real posters too</span></label></div>' +
+            '<div class="fieldDescription" style="margin:0 0 8px;">Puts a TOP 10 square on each listed title\'s own poster everywhere on the server (libraries, search, the item page, other rows and every app), not only in this top list. The image files are not changed.</div>' +
             '<div class="tl-rp-opts" style="' + (rp.on ? '' : 'display:none;') + 'margin-left:4px;">' +
                 '<div style="display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap;">' +
                 '<div>' +
@@ -7622,7 +8765,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }).catch(function () { /* keep the original icon */ });
     }
 
-    var BADGE_NOTHING_TIP = 'Customise is for the Top 10 tile';
     function initBadgePicker(container, tagName) {
         if (container && container.dataset) container.dataset.tlTag = tagName || '';
         initRealPoster(container);
@@ -7633,14 +8775,17 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 label.style.borderColor = 'var(--hsc-primary)';
             });
         });
-        // One Customise button: the Top 10 tile's popup; greyed for the presets and No number.
+        // One Customise button: the Top 10 tile's popup; hidden for the presets and No number.
         container.querySelectorAll('.tl-badge-picker').forEach(function (picker) {
             var btn = picker.querySelector('.btnBadgeCustomise');
             if (!btn) return;
             function sync() {
                 var checked = picker.querySelector('input[name^="tlBadgeStyle"]:checked');
                 var tile = !!checked && checked.value === 'top10';
-                setCustomiseEnabled(btn, tile, BADGE_NOTHING_TIP);
+                var custRow = picker.querySelector('.tl-badge-custom-row');
+                if (custRow) custRow.style.display = tile ? 'flex' : 'none';
+                var top10Note = picker.querySelector('.tl-badge-top10-note');
+                if (top10Note) top10Note.style.display = tile ? '' : 'none';
                 var medalRow = picker.querySelector('.tl-badge-medal-row');
                 if (medalRow) medalRow.style.display = checked && isBadgePreset(checked.value) ? '' : 'none';
                 var note = picker.querySelector('.tl-badge-custom-note'), optsIn = picker.querySelector('.tl-badge-opts');
@@ -8132,7 +9277,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             modal.innerHTML =
                 '<div style="background:var(--plugin-popup-bg,#2a2a2a);color:var(--plugin-popup-color,#e8e8e8);' +
                 'border:1px solid var(--plugin-popup-border,rgba(255,255,255,0.12));border-radius:12px;box-shadow:var(--hsc-shadow-modal);overscroll-behavior:contain;' +
-                'padding:28px;max-width:520px;width:90%;max-height:85vh;overflow-y:auto;">' +
+                'padding:28px;max-width:860px;width:95%;max-height:90vh;overflow-y:auto;">' +
                 content + '</div>';
         }
 
@@ -8172,6 +9317,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<input type="text" class="tlm-custom-name" style="' + inputStyle + '" placeholder="' + escAttr(displayName) + '" />' +
                 '</div>' +
 
+                '<div style="' + fieldStyle + '">' + positionFieldHtml(preset ? preset.position : '', '', labelStyle, HSC_POSITION_DESC) + '</div>' +
+
                 '<div style="' + fieldStyle + '">' +
                 '<label style="' + labelStyle + '">Image Type</label>' +
                 '<select is="emby-select" class="tlm-image-type" style="width:100%;">' +
@@ -8201,6 +9348,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             renderBox(html);
             initBadgePicker(modal, tagName);
             wireUserMultiSelect(modal);
+            wirePositionField(modal);
+            fillPositionRows(modal, ((preset && preset.userIds) || [])[0] || ((users || [])[0] || {}).Id, function () {
+                var el = modal.querySelector('.tlm-custom-name');
+                return (el && (el.value || el.placeholder)) || '';
+            });
 
             if (preset) {
                 if (preset.customName) modal.querySelector('.tlm-custom-name').value = preset.customName;
@@ -8249,7 +9401,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     if (isShows && !prepareResult.FilesCreated) throw new Error('No shows with episode files carry this tag.');
                     executeTopListCreationSteps(
                         tagName, displayName, selectedUserIds, displayMode, customName, imageType, maxItems,
-                        prepareResult, { saveBtn: saveBtn, errEl: errEl, modal: modal, badgeStyle: badgeStyle, badgeOptions: badgeOptions, realPoster: realPoster, cardSizeOffset: cardSize, contentType: isShows ? 'Shows' : 'Movies' }, onSuccess
+                        prepareResult, { saveBtn: saveBtn, errEl: errEl, modal: modal, badgeStyle: badgeStyle, badgeOptions: badgeOptions, realPoster: realPoster, cardSizeOffset: cardSize, position: readPositionValue(modal), contentType: isShows ? 'Shows' : 'Movies' }, onSuccess
                     );
                 })
                 .catch(function (err) {
@@ -8293,7 +9445,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         modal.innerHTML =
             '<div style="background:var(--plugin-popup-bg,#2a2a2a);color:var(--plugin-popup-color,#e8e8e8);' +
             'border:1px solid var(--plugin-popup-border,rgba(255,255,255,0.12));border-radius:12px;box-shadow:var(--hsc-shadow-modal);overscroll-behavior:contain;' +
-            'padding:28px;max-width:720px;width:95%;max-height:90vh;overflow-y:auto;">' +
+            'padding:28px;max-width:860px;width:95%;max-height:90vh;overflow-y:auto;">' +
             '<div style="padding:10px 0;display:flex;align-items:center;gap:10px;">Loading <span class="tc-dot-loader"><span></span><span></span><span></span></span></div>' +
             '</div>';
         document.body.appendChild(modal);
@@ -8374,6 +9526,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<div style="' + fieldStyle + '"><span style="' + labelStyle + '">Target Users</span>' +
                 '<div>' + usersHtml + '</div></div>' +
 
+                '<div style="' + fieldStyle + '">' + positionFieldHtml(preset ? preset.position : '', '', labelStyle, HSC_POSITION_DESC) + '</div>' +
+
                 '<div style="' + fieldStyle + '">' +
                 '<label style="' + labelStyle + '">Show this section</label>' +
                 '<select is="emby-select" class="mtlDisplayMode" style="width:100%;">' + displayOptions + '</select></div>' +
@@ -8409,14 +9563,17 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 '<div class="mtl-error" style="color:var(--hsc-danger-text);font-size:0.85em;min-height:1.2em;margin-top:12px;margin-bottom:4px;"></div>' +
                 '<div style="border-top:1px solid var(--line-color);padding-top:16px;margin-top:8px;display:flex;gap:10px;align-items:center;justify-content:flex-end;">' +
-                '<span class="mtl-create-hint" style="margin-right:auto;font-size:0.82em;opacity:0.65;"></span>' +
                 '<button type="button" class="btnMtlCancel hsc-mbtn hsc-btn-secondary">Cancel</button>' +
-                '<button type="button" class="btnMtlCreate hsc-mbtn hsc-btn-primary" disabled>' +
+                '<button type="button" class="btnMtlCreate hsc-mbtn hsc-btn-primary">' +
                 '<i class="md-icon" style="font-size:1em;">playlist_add</i>' + escHtml(createBtnLabel) + '</button>' +
                 '</div>';
 
             initBadgePicker(modal);
             wireUserMultiSelect(modal);
+            wirePositionField(modal);
+            fillPositionRows(modal, presetUserIds[0] || ((users || [])[0] || {}).Id, function () {
+                return (modal.querySelector('.mtlCustomName') || {}).value || (modal.querySelector('.mtlListName') || {}).value || '';
+            });
 
             // In edit mode, set list name field readonly again (the value= attr trick above may not
             // work if the readonly attr comes after a style attr — set it via JS to be safe)
@@ -8449,31 +9606,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 }).join('');
             }
 
-            function updateCreateBtn() {
-                var nameVal  = (modal.querySelector('.mtlListName').value || '').trim();
-                var hasUsers = modal.querySelectorAll('.chkMtlUser:checked').length > 0;
-                modal.querySelector('.btnMtlCreate').disabled = (nameVal.length === 0 || selectedMovies.length === 0 || !hasUsers);
-                // Says why the button is disabled, so a missing user doesn't look like a dead button.
-                var missing = [];
-                if (nameVal.length === 0) missing.push('a list name');
-                if (selectedMovies.length === 0) missing.push('at least one ' + itemWord);
-                if (!hasUsers) missing.push('at least one user');
-                modal.querySelector('.mtl-create-hint').textContent = missing.length
-                    ? 'Still needed: ' + missing.join(', ').replace(/, ([^,]*)$/, ' and $1') + '.'
-                    : '';
-            }
-
             renderSelectedList();
-            updateCreateBtn();
 
             modal.querySelector('.btnMtlClose').addEventListener('click', function () { modal.remove(); document.removeEventListener('keydown', onEsc); });
             modal.querySelector('.btnMtlCancel').addEventListener('click', function () { modal.remove(); document.removeEventListener('keydown', onEsc); });
-
-            modal.querySelector('.mtlListName').addEventListener('input', updateCreateBtn);
-
-            modal.querySelectorAll('.chkMtlUser').forEach(function (cb) {
-                cb.addEventListener('change', updateCreateBtn);
-            });
 
             var searchInput  = modal.querySelector('.mtlMovieSearch');
             var resultsBox   = modal.querySelector('.mtlSearchResults');
@@ -8519,7 +9655,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 searchInput.value = '';
                 resultsBox.style.display = 'none';
                 renderSelectedList();
-                updateCreateBtn();
             });
 
             searchInput.addEventListener('blur', function () {
@@ -8544,7 +9679,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     selectedMovies.splice(idx, 1);
                 }
                 renderSelectedList();
-                updateCreateBtn();
             });
 
             modal.querySelector('.btnMtlCreate').addEventListener('click', function () {
@@ -8610,9 +9744,78 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         });
     }
 
+    // Shows the Tag & Collection tab with the source card open on one of its tabs.
+    function openSourceRowTab(view, row, tabName) {
+        if (view._hscShowPageTab) view._hscShowPageTab('TagCollection');
+        var body = row.querySelector('.tag-body'), icon = row.querySelector('.expand-icon');
+        if (body && body.style.display === 'none') {
+            body.style.display = 'block';
+            if (icon) icon.innerText = 'expand_less';
+        }
+        var tab = row.querySelector('.tag-tab[data-tab="' + tabName + '"]');
+        if (tab) tab.click();
+        setTimeout(function () { try { row.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { row.scrollIntoView(); } }, 50);
+    }
+
+    // A source top-list (Top-Lists tab): its source's Home Screen tab (Create as top-list); switchOff unticks it there
+    // (removed on Save, like every source change).
+    function openSourceTopListTab(view, tagName, switchOff) {
+        var want = (tagName || '').trim().toLowerCase();
+        var rows = Array.from(view.querySelectorAll('#tagListContainer .tag-row')).filter(function (r) {
+            var tag = ((r.querySelector('.txtTagName') || {}).value || (r.querySelector('.txtEntryLabel') || {}).value || '').trim().toLowerCase();
+            return r.querySelector('.selSourceType') && tag === want;
+        });
+        var row = rows.filter(function (r) { return (r.querySelector('.chkEnableTopList') || {}).checked; })[0] || rows[0];
+        if (!row) { window.Dashboard.alert('No source with the tag "' + tagName + '" was found on this page.'); return; }
+        openSourceRowTab(view, row, 'homescreen');
+        if (switchOff) {
+            var chk = row.querySelector('.chkEnableTopList');
+            if (chk && chk.checked) {
+                chk.checked = false;
+                chk.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            // Nothing else to show (Apply Tag went off with the top-list): no plain row either.
+            var hseChk = row.querySelector('.chkEnableHomeSection');
+            if (hseChk && hseChk.checked && !hseAllowed(row)) {
+                hseChk.checked = false;
+                hseChk.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            showToast('Top-list switched off in its source — press Save to remove it');
+        }
+    }
+
+    function renderSourceTopListSummary(body, d) {
+        function escAttr(s) { return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;'); }
+        function escHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+        var displayModeLabel = ({ '': 'Always', 'tv': 'TV mode only', 'mobile,desktop': 'Non-TV only' })[d.displayMode || ''] || 'Always';
+        var line = function (k, v) { return '<div style="display:flex;gap:10px;padding:4px 0;font-size:0.9em;"><span style="min-width:120px;opacity:0.7;">' + k + '</span><span>' + v + '</span></div>'; };
+        getHseUsers().catch(function () { return []; }).then(function (users) {
+            var names = (d.userIds || []).map(function (id) {
+                var u = (users || []).find(function (x) { return (x.Id || '').toLowerCase() === (id || '').toLowerCase(); });
+                return u ? u.Name : null;
+            }).filter(Boolean);
+            body.innerHTML =
+                '<div style="display:flex;justify-content:flex-end;margin-bottom:4px;">' +
+                '<button type="button" is="emby-button" class="btnCopyTopList raised hsc-btn-ghost hsc-btn-sm" title="Copy this top-list to the clipboard, to paste it on another server"><i class="md-icon" style="font-size:1em;margin-right:4px;">share</i><span>Copy</span></button>' +
+                '</div>' +
+                '<div class="hsc-callout" style="margin-bottom:12px;"><i class="md-icon">info</i><span>Set in the <strong>Home Screen</strong> tab of the source <strong>' + escHtml(d.sourceName || d.tagName) + '</strong> (<em>Create as top-list</em>), with its users, title and position.</span></div>' +
+                (d.noLibrary ? '<div class="hsc-callout warning" style="margin-bottom:12px;"><i class="md-icon">schedule</i><span>Not made yet: the next run of the source (or a full sync) makes its library and rows.</span></div>' : '') +
+                line('Content', d.contentType === 'Shows' ? 'TV Shows' : 'Movies') +
+                line('Max items', d.maxItems && d.maxItems !== '0' ? escHtml(d.maxItems) : 'All') +
+                line('Users', names.length ? escHtml(names.join(', ')) : '<em style="opacity:0.6;">none</em>') +
+                line('Show', displayModeLabel) +
+                '<div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:16px;border-top:1px solid var(--line-color);padding-top:10px;flex-wrap:wrap;">' +
+                '<button type="button" is="emby-button" class="raised btnTlOpenSource hsc-btn-secondary" data-name="' + escAttr(d.tagName) + '"><i class="md-icon" style="margin-right:5px;">open_in_new</i>Open source</button>' +
+                '<button type="button" is="emby-button" class="raised button-submit btnRunEntry btnTlRun hsc-btn-activity" data-name="' + escAttr(d.tagName) + '"><i class="md-icon" style="margin-right:5px;">play_arrow</i><span class="btnRunEntryLabel">Run Group</span></button>' +
+                '<button type="button" is="emby-button" class="raised btnTlSourceOff hsc-btn-danger" data-name="' + escAttr(d.tagName) + '" title="Switches Top-List off in the source; Save removes the list"><i class="md-icon" style="margin-right:5px;">delete</i>Delete top-list</button>' +
+                '</div>';
+        });
+    }
+
     function loadInlineEditForm(row, body, onSuccess) {
         var editJson;
         try { editJson = JSON.parse(row.dataset.editjson || '{}'); } catch (e) { editJson = {}; }
+        if (editJson.fromSource) { renderSourceTopListSummary(body, editJson); return; }
 
         var tagName     = editJson.tagName     || '';
         var isManual    = !!editJson.isManual;
@@ -9081,9 +10284,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '</button>' +
                 '<button type="button" class="btnChooseByTag" style="flex:1;cursor:pointer;background:var(--plugin-input-bg,rgba(255,255,255,0.05));border:1px solid var(--plugin-input-border,rgba(255,255,255,0.12));border-radius:8px;padding:20px 16px;text-align:left;color:inherit;">' +
                 '<div style="font-size:1.4em;margin-bottom:10px;color:var(--hsc-primary-text);"><i class="md-icon">label</i></div>' +
-                '<div style="font-weight:600;font-size:0.95em;margin-bottom:6px;">By tag</div>' +
-                '<div style="font-size:0.82em;color:var(--theme-text-secondary);line-height:1.5;">Create from an existing tag in your library</div>' +
+                '<div style="font-weight:600;font-size:0.95em;margin-bottom:6px;">From a source</div>' +
+                '<div style="font-size:0.82em;color:var(--theme-text-secondary);line-height:1.5;">Rank a source\'s titles: set in the source\'s Home Screen tab</div>' +
                 '</button>' +
+                '</div>' +
+                // A top-list is a library of its own, and every user it is shown to gets access to it.
+                '<div class="hsc-callout warning" style="margin-top:20px;">' +
+                '<i class="md-icon">warning</i>' +
+                '<span><strong>Library access is not checked per title.</strong> A top-list gets a library of its own, and every user you show it to gets access to that library. Its ' + (isShows ? 'shows' : 'movies') + ' can come from any library on the server, so those users can see and play them even from libraries they otherwise have no access to.</span>' +
                 '</div>' +
                 '</div>';
 
@@ -9107,8 +10315,52 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 showManualTopListModal(onSuccess, null, contentType);
             });
 
-            btnByTagCard.addEventListener('click', function () { renderStep2(); });
+            btnByTagCard.addEventListener('click', function () { renderSourceStep(); });
 
+        }
+
+        // From a source: pick the source; its Home Screen tab opens (the list is set there and made on Save).
+        function renderSourceStep() {
+            var view = activeView();
+            var rows = view ? Array.from(view.querySelectorAll('#tagListContainer .tag-row')).filter(function (r) { return r.querySelector('.selSourceType'); }) : [];
+            var listHtml = rows.length === 0
+                ? '<p style="padding:12px 4px;color:var(--theme-text-secondary);font-size:0.88em;font-style:italic;">No sources yet. Add one in the Tag &amp; Collection tab.</p>'
+                : rows.map(function (r, i) {
+                    var label = ((r.querySelector('.txtEntryLabel') || {}).value || '').trim();
+                    var tag = ((r.querySelector('.txtTagName') || {}).value || '').trim() || label;
+                    var on = !!(r.querySelector('.chkEnableTopList') || {}).checked;
+                    return '<button type="button" class="btnSelectSource" data-idx="' + i + '" ' +
+                        'style="width:100%;cursor:pointer;background:transparent;border:none;border-bottom:1px solid var(--line-color);' +
+                        'padding:10px 4px;display:flex;align-items:center;color:inherit;text-align:left;">' +
+                        '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escHtml(label || tag || 'New source') +
+                        (on ? '<span class="tag-indicator toplist" style="margin-left:6px;font-size:0.72em;">top-list</span>' : '') + '</span>' +
+                        (tag && tag !== label ? '<span style="margin-left:12px;white-space:nowrap;font-size:0.85em;color:var(--theme-text-secondary);">' + escHtml(tag) + '</span>' : '') +
+                        '</button>';
+                }).join('');
+            modal.innerHTML =
+                '<div style="' + innerStyle + 'max-width:520px;">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">' +
+                '<div style="display:flex;align-items:center;gap:10px;">' +
+                '<button type="button" class="btnChooserBack" style="background:transparent;border:none;color:var(--theme-text-secondary);cursor:pointer;padding:2px;line-height:1;opacity:0.7;"><i class="md-icon">arrow_back</i></button>' +
+                '<h3 style="margin:0;font-size:1.05em;font-weight:600;">Select Source</h3>' +
+                '</div>' +
+                '<button type="button" class="btnChooserClose hsc-x" aria-label="Close" title="Close" style="background:transparent;border:none;color:inherit;cursor:pointer;padding:2px;opacity:0.6;line-height:1;border-radius:8px;"><i class="md-icon">close</i></button>' +
+                '</div>' +
+                '<p style="margin:0 0 12px;font-size:0.88em;color:var(--theme-text-secondary);line-height:1.5;">The source opens on its <strong>Home Screen</strong> tab. Tick <em>Add as home screen section</em> and <em>Create as top-list</em> there and press Save: the next run makes the list.</p>' +
+                '<div style="max-height:50vh;overflow-y:auto;">' + listHtml + '</div>' +
+                '</div>';
+            modal.querySelector('.btnChooserClose').addEventListener('click', function () { modal.remove(); document.removeEventListener('keydown', onEsc); });
+            modal.querySelector('.btnChooserBack').addEventListener('click', function () { renderStep1(); });
+            modal.querySelectorAll('.btnSelectSource').forEach(function (btn) {
+                btn.addEventListener('mouseover', function () { this.style.background = 'rgba(82,181,75,0.08)'; });
+                btn.addEventListener('mouseout',  function () { this.style.background = 'transparent'; });
+                btn.addEventListener('click', function () {
+                    var r = rows[parseInt(this.dataset.idx, 10)];
+                    modal.remove();
+                    document.removeEventListener('keydown', onEsc);
+                    if (r) openSourceRowTab(view, r, 'homescreen');
+                });
+            });
         }
 
         function renderStep2() {
@@ -9123,7 +10375,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var name  = tag.Name || '';
                     var count = isShows ? (tag.SeriesCount || 0)
                         : (tag.MovieCount != null ? tag.MovieCount : (tag.ItemCount != null ? tag.ItemCount : 0));
-                    var countText = count + (isShows ? ' shows' : ' movies');
+                    var countText = count + (isShows ? (count === 1 ? ' show' : ' shows') : (count === 1 ? ' movie' : ' movies'));
                     var hasTopList = existingTopLists.has(sanitizeName(name).toLowerCase());
                     var badge = hasTopList
                         ? '<span class="tag-indicator toplist" style="margin-left:6px;font-size:0.72em;">top-list</span>'
@@ -9189,11 +10441,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // sync tasks generate (tags, collections, playlists, top-list files, images) is rebuilt on run.
     var _backupSections = [
         { key: 'Settings',     label: 'General settings',          desc: 'AI models, system prompt, logging, dry run, preserve-on-empty.' },
-        { key: 'ApiKeys',      label: 'API keys',                  desc: 'Trakt, MDBList, TMDB, OpenAI, Gemini, Claude. Stored in plain text in the file.' },
+        { key: 'ApiKeys',      label: 'API keys',                  desc: 'Trakt, MDBList, TMDB, OpenAI, Gemini, Claude, OpenAI-compatible. Stored in plain text in the file.' },
         { key: 'Tags',         label: 'Tag & collection groups',   desc: 'All source groups incl. schedules, blacklists, filters, collection settings, home sections and playlists.' },
         { key: 'SavedFilters', label: 'Saved media-info filters',  desc: 'Your saved filter presets.' },
         { key: 'TopLists',     label: 'Top lists',                 desc: 'Top-list settings and the movie and show lists of manual top-lists.' },
-        { key: 'HomeSync',     label: 'Home screen sync',          desc: 'Source user, target users, library-order sync and Continue Watching bump.' }
+        { key: 'HomeSync',     label: 'Home screen sync',          desc: 'Copy & Sync profiles (source and target users, library order) and Continue Watching bump.' }
     ];
 
     function buildBackupModalShell() {
@@ -9800,6 +11052,84 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         });
     }
 
+    // Download logs: one zip for troubleshooting (see LogBundle.cs on the server). API keys are always
+    // masked there; user names only when "Anonymise user names" is ticked (the default). "Who is who"
+    // lists the number each user gets, here only (never in the zip).
+    function showDownloadLogsModal() {
+        var modal = buildBackupModalShell();
+        // Opened from the log window (.modal-backdrop, z-index 99999): on top of it.
+        modal.style.zIndex = '100000';
+        modal.renderBox(
+            '<h3 style="' + _backupTitleStyle + '">Download logs</h3>' +
+            '<p style="' + _backupHintStyle + '">One zip file with everything needed to look into a problem: the plugin\'s own log of the last 7 days (all detail lines, also when Extended log is off), the latest run of each task, the plugin settings and a snapshot of the server right now – libraries, users and their library access, every user\'s home rows and the top-lists.</p>' +
+            '<label style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;cursor:pointer;">' +
+            '<input type="checkbox" class="chkLogsAnonymise" checked style="margin-top:3px;" />' +
+            '<span style="flex:1;">' +
+            '<span style="display:block;font-weight:600;font-size:0.95em;">Anonymise user names</span>' +
+            '<span style="display:block;font-size:0.82em;opacity:0.65;margin-top:2px;">Each user\'s name and id becomes User 1, User 2 … – the same one in every file, so a user can still be followed. Names you typed into sources, tags or libraries yourself may still contain them.</span>' +
+            '</span></label>' +
+            '<details class="help-more logs-who" style="margin:0 0 4px 23px;">' +
+            '<summary><i class="md-icon">expand_more</i><span class="help-more-closed">Show who is who</span><span class="help-more-open">Hide who is who</span></summary>' +
+            '<div style="font-size:0.82em;opacity:0.65;margin:6px 0 8px;">Only shown here, never put in the zip – so you can tell the one you send it to which user you mean.</div>' +
+            '<div class="logs-who-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:3px 16px;font-size:0.85em;max-height:180px;overflow-y:auto;">Loading…</div>' +
+            '</details>' +
+            '<div class="hsc-callout" style="margin:12px 0 16px;">' +
+            '<i class="md-icon">lock</i>' +
+            '<span><strong>API keys are always hidden.</strong> Keys and tokens (Trakt, MDBList, TMDb, OpenAI, Gemini, Claude, OpenAI-compatible, and keys in list URLs) are replaced by *** in every file, whether or not names are anonymised. Titles, source and library names stay as they are.</span>' +
+            '</div>' +
+            '<div class="logs-error" style="color:var(--hsc-danger-text);font-size:0.85em;min-height:1.2em;margin-bottom:6px;"></div>' +
+            '<div style="display:flex;gap:10px;justify-content:flex-end;align-items:center;">' +
+            '<button type="button" class="btnLogsCancel hsc-mbtn hsc-btn-secondary">Cancel</button>' +
+            '<button type="button" class="btnLogsDownload hsc-mbtn hsc-btn-primary"><i class="md-icon" style="font-size:1em;vertical-align:middle;margin-right:6px;">download</i>Download</button>' +
+            '</div>'
+        );
+        // "Who is who": the number each user gets in an anonymised zip (the server's order).
+        var chkAnon = modal.querySelector('.chkLogsAnonymise');
+        var whoBox = modal.querySelector('.logs-who');
+        chkAnon.addEventListener('change', function () { whoBox.style.display = chkAnon.checked ? '' : 'none'; });
+        var tokWho = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+        fetch(window.ApiClient.getUrl('HomeScreenCompanion/Logs/UserNumbers'), { headers: { 'X-Emby-Token': tokWho } })
+        .then(function (r) { if (!r.ok) throw new Error('Server returned ' + r.status); return r.json(); })
+        .then(function (res) {
+            var users = (res && res.Users) || [];
+            modal.querySelector('.logs-who-list').innerHTML = users.length === 0 ? 'No users.' : users.map(function (u) {
+                return '<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="User ' + u.Number + ' = ' + escapeHtml(u.Name) + '">' +
+                    '<span style="opacity:0.6;margin-right:6px;">User ' + u.Number + '</span>' + escapeHtml(u.Name) + '</span>';
+            }).join('');
+        })
+        .catch(function () { modal.querySelector('.logs-who-list').textContent = 'The list could not be loaded.'; });
+        modal.querySelector('.btnLogsCancel').addEventListener('click', modal.close);
+        modal.querySelector('.btnLogsDownload').addEventListener('click', function () {
+            var btn = this;
+            var errEl = modal.querySelector('.logs-error');
+            var anonymise = modal.querySelector('.chkLogsAnonymise').checked;
+            errEl.textContent = '';
+            btn.disabled = true;
+            btn.innerHTML = 'Preparing <span class="tc-dot-loader"><span></span><span></span><span></span></span>';
+            modal.dataset.busy = '1';
+            var tok = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+            fetch(window.ApiClient.getUrl('HomeScreenCompanion/Logs/Download', { Anonymize: anonymise }), { headers: { 'X-Emby-Token': tok } })
+            .then(function (r) { if (!r.ok) throw new Error('Server returned ' + r.status); return r.json(); })
+            .then(function (res) {
+                if (!res.Success) throw new Error(res.Message || 'The logs could not be put together.');
+                var bin = atob(res.Data);
+                var bytes = new Uint8Array(bin.length);
+                for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                var url = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
+                var a = document.createElement('a');
+                a.href = url; a.download = res.FileName || 'hsc-logs.zip';
+                document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+                modal.close();
+            })
+            .catch(function (err) {
+                delete modal.dataset.busy;
+                btn.disabled = false;
+                btn.innerHTML = '<i class="md-icon" style="font-size:1em;vertical-align:middle;margin-right:6px;">download</i>Download';
+                errEl.textContent = 'Download failed: ' + (err.message || err);
+            });
+        });
+    }
+
     // Reads which sections a backup file contains. Current files list them; legacy files were a
     // raw config dump, so infer from the keys that are present.
     function detectBackupSections(parsed) {
@@ -10039,8 +11369,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
             var realTagNamesLower = new Set((tagsData.Tags || []).map(function (t) { return (t.Name || '').toLowerCase(); }));
 
+            // The source that sets each source top-list (Create as top-list in its Home Screen tab).
+            var sourceNameByTag = {};
+            (pluginConfig.Tags || []).forEach(function (t) {
+                var k = (t.Tag || '').trim().toLowerCase();
+                if (t.EnableTopList && k && !sourceNameByTag[k]) sourceNameByTag[k] = (t.Name || '').trim() || (t.Tag || '').trim();
+            });
+            // Every list, also one whose folder is gone (the sync then asks to open it and Save; the
+            // card says so).
             var allExistingTopLists = (pluginConfig.TopLists || []).filter(function (tl) {
-                return tl.TagName && existingTopLists.has(sanitizeTlName(tl.TagName).toLowerCase());
+                return !!tl.TagName;
             }).map(function (tl) {
                 var key = sanitizeTlName(tl.TagName || '').toLowerCase();
                 var settings = {};
@@ -10048,7 +11386,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 return {
                     tagName:     tl.TagName || '',
                     displayName: settings.CustomName || tl.TagName || '',
-                    isManual:    !realTagNamesLower.has((tl.TagName || '').toLowerCase()),
+                    fromSource:  !!tl.FromSource,
+                    sourceName:  sourceNameByTag[(tl.TagName || '').trim().toLowerCase()] || '',
+                    noLibrary:   !tl.HomeSectionLibraryId || tl.HomeSectionLibraryId === 'auto',
+                    isManual:    !tl.FromSource && !realTagNamesLower.has((tl.TagName || '').toLowerCase()),
                     contentType: tl.ContentType === 'Shows' ? 'Shows' : 'Movies',
                     count:       (results[3].MovieCounts || {})[key] || 0,
                     userIds:     tl.HomeSectionUserIds || [],
@@ -10059,7 +11400,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     badgeStyle:  settings.BadgeStyle  || 'neutral',
                     badgeOptions: settings.BadgeOptions || '',
                     realPoster:  settings.RealPosterBadge || '',
-                    maxItems:    settings.MaxItems    || 0
+                    maxItems:    settings.MaxItems    || 0,
+                    position:    settings._position   || ''
                 };
             });
 
@@ -10080,9 +11422,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var displayModeLabel = ({'': 'Always', 'tv': 'TV mode only', 'mobile,desktop': 'Non-TV only'})[item.displayMode] || 'Always';
                     var imageTypeLabel = item.imageType || 'Auto';
                     var maxItemsLabel  = item.maxItems ? String(item.maxItems) : '0 (all)';
+                    if (item.fromSource)
+                        typeBadge = '<span class="tag-indicator tag" style="flex-shrink:0;" title="Set in the source\'s Home Screen tab"><i class="md-icon" style="font-size:1.1em;">label</i> ' + escHtml(item.sourceName || item.tagName) + '</span>';
                     var editJson = escAttr(JSON.stringify({
                         tagName:     item.tagName,
                         displayName: item.displayName,
+                        fromSource:  item.fromSource,
+                        sourceName:  item.sourceName,
+                        noLibrary:   item.noLibrary,
                         isManual:    item.isManual,
                         contentType: item.contentType,
                         userIds:     item.userIds,
@@ -10093,7 +11440,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         badgeStyle:  item.badgeStyle,
                         badgeOptions: item.badgeOptions || '',
                         realPoster:  item.realPoster || '',
-                        maxItems:    String(item.maxItems || '0')
+                        maxItems:    String(item.maxItems || '0'),
+                        position:    item.position || ''
                     }));
                     return '<div class="tag-row" data-tlname="' + escAttr(item.tagName.toLowerCase()) + '" data-ismanual="' + (isManual ? '1' : '0') + '" data-isshows="' + (isShows ? '1' : '0') + '" data-count="' + item.count + '" data-editjson="' + editJson + '">' +
                         '<div class="tl-row-header tag-header">' +
@@ -10101,7 +11449,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         '<div style="display:flex;align-items:center;flex-wrap:wrap;row-gap:4px;min-width:0;">' +
                         '<span class="tag-title" style="margin-left:0;">' + escHtml(item.displayName) + '</span>' +
                         contentBadge + typeBadge +
-                        '<span class="tag-indicator" style="flex-shrink:0;font-variant-numeric:tabular-nums;">' + item.count + (isShows ? ' shows' : ' movies') + '</span>' +
+                        '<span class="tag-indicator" style="flex-shrink:0;font-variant-numeric:tabular-nums;">' + item.count + (isShows ? (item.count === 1 ? ' show' : ' shows') : (item.count === 1 ? ' movie' : ' movies')) + '</span>' +
+                        (!item.fromSource && item.count === 0 ? '<span class="hsc-run-issue"><i class="md-icon" style="font-size:1.3em;" title="This list has no titles: its folder is empty or gone. Open it, add titles and click Save to make it again, or delete it.">warning</i></span>' : '') +
                         '</div>' +
                         '<i class="md-icon expand-icon" style="flex-shrink:0;margin-left:12px;">expand_more</i>' +
                         '</div>' +
@@ -10124,14 +11473,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '</button>' +
                 '</div>' +
                 '<div style="margin-bottom:16px;font-size:0.9em;color:var(--theme-text-secondary);line-height:1.5;">' +
-                'Create a top-list home section from a tag managed by the plugin, or from movies or TV shows you pick yourself. Each list gets its own hidden library with numbered posters.' +
+                'All top-lists. A list from a source is set in that source\'s <strong>Home Screen</strong> tab (<em>Create as top-list</em>, Tag &amp; Collection); a manual list, with movies or TV shows you pick yourself, is made and edited here. Each list gets its own hidden library with numbered posters.' +
                 '</div>' +
                 '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">' +
                 '<input type="text" id="tlSearch" placeholder="Search…" style="' + searchInputStyle + '" />' +
                 '<select is="emby-select" id="tlFilter" style="color:var(--plugin-popup-color);background:var(--plugin-input-bg);border:1px solid var(--plugin-input-border);padding:5px;border-radius:6px;font-size:0.9em;cursor:pointer;">' +
                 '<option value="all">All</option>' +
                 '<option value="manual">Manual</option>' +
-                '<option value="bytag">By tag</option>' +
+                '<option value="bytag">From a source</option>' +
                 '<option value="movies">Movies</option>' +
                 '<option value="shows">TV shows</option>' +
                 '</select>' +
@@ -10240,6 +11589,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 if (btn.classList.contains('btnCopyTopList')) {
                     copyTopListToClipboard(btn.closest('.tag-row'), btn);
+                    return;
+                }
+
+                if (btn.classList.contains('btnTlOpenSource') || btn.classList.contains('btnTlSourceOff')) {
+                    openSourceTopListTab(view, btn.dataset.name, btn.classList.contains('btnTlSourceOff'));
                     return;
                 }
 
@@ -10683,7 +12037,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             form.addEventListener('click', (e) => {
                 var dayBtn = e.target.closest('.day-toggle');
                 if (dayBtn) dayBtn.classList.toggle('active');
-                if (e.target.closest('.btnRemoveUrl, .btnAddUrl, .btnRemoveLocal, .btnAddLocal, .btnRemoveDate, .btnAddDate, .btnRemoveFilterGroup, .btnAddMediaInfoFilter, .btnClearAllFilters, .btnGroupOpChoice, .btnGroupInnerOpChoice, .btnAddMiRule, .btnRemoveMiRule, .btnRemoveGroup, .day-toggle, .btnRemovePoster, .btnApplyMiPreset, .btnApplySchedulePreset')) {
+                if (e.target.closest('.btnRemoveUrl, .btnAddUrl, .btnRemoveExtraTag, .btnAddExtraTag, .btnAddOutTag, .btnRemoveLocal, .btnAddLocal, .btnRemoveDate, .btnAddDate, .btnRemoveFilterGroup, .btnAddMediaInfoFilter, .btnClearAllFilters, .btnGroupOpChoice, .btnGroupInnerOpChoice, .btnAddMiRule, .btnRemoveMiRule, .btnRemoveGroup, .day-toggle, .btnRemovePoster, .btnApplyMiPreset, .btnApplySchedulePreset')) {
                     changeHandler();
                 }
             }, { signal: _signal });
@@ -10695,6 +12049,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 view.querySelector('#btnOpenLogs').addEventListener('click', e => { e.preventDefault(); _logTab = null; renderLogModal(view); logOverlay.classList.add('modal-visible'); });
                 view.querySelector('#btnCloseLogs').addEventListener('click', () => { _logTab = null; logOverlay.classList.remove('modal-visible'); });
+                view.querySelector('#btnDownloadLogs').addEventListener('click', () => showDownloadLogsModal());
                 logOverlay.addEventListener('click', e => { if (e.target === logOverlay) { _logTab = null; logOverlay.classList.remove('modal-visible'); } });
                 view.querySelectorAll('#logTabs .log-tab').forEach(function (tab) {
                     if (tab.id === 'btnLogIssuesOnly') { tab.addEventListener('click', function () { _logIssuesOnly = !_logIssuesOnly; renderLogModal(view); }); return; }
@@ -11134,15 +12489,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 bar.className = 'hsc-draft-bar';
                 bar.style.cssText = 'max-width:900px;box-sizing:border-box;display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 14px;margin-bottom:16px;border-radius:8px;background:rgba(82,181,75,0.08);border:1px solid rgba(82,181,75,0.45);';
                 bar.innerHTML = '<i class="md-icon" style="font-size:1.3em;">restore</i><span class="hsc-draft-text" style="flex:1;min-width:200px;"></span>' +
+                    '<button type="button" is="emby-button" class="raised button-cancel hsc-draft-show" style="margin:0;"><span>Show changes</span></button>' +
                     '<button type="button" is="emby-button" class="raised button-cancel hsc-draft-discard" style="margin:0;"><span>Discard</span></button>';
                 // Above every page tab, since restored settings can live on any of them.
                 var firstTab = view.querySelector('.page-tab-content');
                 firstTab.parentNode.insertBefore(bar, firstTab);
-                bar.querySelector('.hsc-draft-discard').addEventListener('click', function () {
-                    writeLeaveState(null);
-                    hideDraftBar();
-                    loadConfig();
-                });
+                bar.querySelector('.hsc-draft-show').addEventListener('click', showDraftChanges);
+                bar.querySelector('.hsc-draft-discard').addEventListener('click', discardDraft);
             }
             bar.style.background = serverChanged ? 'rgba(230,193,90,0.08)' : 'rgba(82,181,75,0.08)';
             bar.style.borderColor = serverChanged ? 'rgba(230,193,90,0.45)' : 'rgba(82,181,75,0.45)';
@@ -11154,6 +12507,51 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         function hideDraftBar() {
             var bar = view.querySelector('.hsc-draft-bar');
             if (bar) bar.style.display = 'none';
+        }
+        function discardDraft() {
+            writeLeaveState(null);
+            hideDraftBar();
+            loadConfig();
+        }
+        // Show changes: what is unsaved right now compared with the saved settings.
+        function showDraftChanges() {
+            var ch = null;
+            try { ch = describeUnsavedChanges(JSON.parse(originalConfigState), getUiConfig(view, true)); } catch (e) { }
+            var item = function (main, sub, deleted) {
+                return '<li style="padding:6px 0;border-bottom:1px solid var(--line-color,rgba(255,255,255,0.08));">' +
+                    '<span style="font-weight:600;' + (deleted ? 'text-decoration:line-through;opacity:0.8;' : '') + '">' + escapeHtml(main) + '</span>' +
+                    (sub ? ' <span style="opacity:0.65;font-size:0.9em;">— ' + escapeHtml(sub) + '</span>' : '') + '</li>';
+            };
+            var list = '';
+            if (ch && ch.sources.length) {
+                list += '<div style="font-size:0.8em;text-transform:uppercase;letter-spacing:0.5px;opacity:0.6;margin:4px 0 2px;">Sources</div>' +
+                    '<ul style="list-style:none;margin:0 0 12px;padding:0;">' +
+                    ch.sources.map(function (s) { return item(s.name, s.what, s.deleted); }).join('') + '</ul>';
+            }
+            if (ch && ch.settings.length) {
+                list += '<div style="font-size:0.8em;text-transform:uppercase;letter-spacing:0.5px;opacity:0.6;margin:4px 0 2px;">Settings</div>' +
+                    '<ul style="list-style:none;margin:0 0 12px;padding:0;">' +
+                    ch.settings.map(function (s) { return item(s); }).join('') + '</ul>';
+            }
+            if (!list) list = '<p style="' + _backupHintStyle + '">Nothing differs from the saved settings any more.</p>';
+            var modal = buildBackupModalShell();
+            modal.renderBox(
+                '<h3 style="' + _backupTitleStyle + '">Unsaved changes</h3>' +
+                '<p style="' + _backupHintStyle + '">These changes are not saved yet. <strong>Save and apply</strong> keeps them; <strong>Discard</strong> puts everything back as last saved.</p>' +
+                list +
+                '<div style="display:flex;gap:10px;justify-content:flex-end;align-items:center;flex-wrap:wrap;margin-top:6px;">' +
+                '<button type="button" class="btnDraftClose hsc-mbtn hsc-btn-secondary">Close</button>' +
+                '<button type="button" class="btnDraftDiscard hsc-mbtn hsc-btn-danger"><i class="md-icon" style="font-size:1em;vertical-align:middle;margin-right:6px;">undo</i>Discard</button>' +
+                '<button type="button" class="btnDraftSave hsc-mbtn hsc-btn-primary"><i class="md-icon" style="font-size:1em;vertical-align:middle;margin-right:6px;">save</i>Save and apply</button>' +
+                '</div>'
+            );
+            modal.querySelector('.btnDraftClose').addEventListener('click', modal.close);
+            modal.querySelector('.btnDraftDiscard').addEventListener('click', function () { modal.close(); discardDraft(); });
+            // Same as the page's Save Settings button (disabled with it, e.g. while a run is going).
+            var pageSave = view.querySelector('.btn-save');
+            var popupSave = modal.querySelector('.btnDraftSave');
+            if (!pageSave || pageSave.disabled) { popupSave.disabled = true; popupSave.style.opacity = '0.5'; }
+            popupSave.addEventListener('click', function () { modal.close(); pageSave.click(); });
         }
 
         view.addEventListener('viewhide', function () {
@@ -11169,7 +12567,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 current = getUiConfig(view, true);
                 dirty = JSON.stringify(current) !== originalConfigState;
             } catch (e) { }
-            writeLeaveState(dirty ? { draft: stripSecrets(current), serverStamp: view._hscServerStamp || '' } : null);
+            writeLeaveState(dirty ? { draft: stripSecrets(current), serverStamp: view._hscServerStamp || '', serverUsers: view._hscLoadedUsers || null } : null);
         });
 
         // Save submits this copy's own form. (A form="…" attribute would submit the first form with
@@ -11183,6 +12581,30 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
         view.querySelector('.HomeScreenCompanionForm').addEventListener('submit', e => {
             e.preventDefault();
+
+            // A home row with nothing to show (no tag, collection, playlist or top-list) is not saved.
+            var _hseEmpty = Array.from(view.querySelectorAll('#tagListContainer .tag-row')).filter(function (r) {
+                return r.querySelector('.selSourceType') && rowChangedHere(r) && !!(r.querySelector('.chkEnableHomeSection') || {}).checked && !hseAllowed(r);
+            });
+            if (_hseEmpty.length > 0) {
+                var _emptyNames = _hseEmpty.map(function (r) {
+                    return ((r.querySelector('.txtEntryLabel') || {}).value || (r.querySelector('.txtTagName') || {}).value || 'New source').trim();
+                });
+                openSourceRowTab(view, _hseEmpty[0], 'homescreen');
+                window.Dashboard.alert('Not saved: the home screen section of ' + _emptyNames.join(', ') + ' has nothing to show. Tick Apply Tag, Create Collection, Create Playlist or Create as top-list, or untick Add as home screen section.');
+                return;
+            }
+
+            // A top-list needs its users before it can be saved (it can be ticked without them).
+            var _tlNoUsers = topListsWithoutUsers(view);
+            if (_tlNoUsers.length > 0) {
+                var _names = _tlNoUsers.map(function (r) {
+                    return ((r.querySelector('.txtEntryLabel') || {}).value || (r.querySelector('.txtTagName') || {}).value || 'New source').trim();
+                });
+                openSourceRowTab(view, _tlNoUsers[0], 'homescreen');
+                window.Dashboard.alert('Not saved: pick at least one user for the top-list under Target Users in the Home Screen tab of ' + _names.join(', ') + '. They get the top-list row.');
+                return;
+            }
 
             // First: were the settings changed elsewhere since this page loaded? Then the save
             // below is replayed (synchronously, flagged) once the server says it is unchanged.
@@ -11260,6 +12682,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 configObj.Tags.forEach(function(t) {
                     var key = t.Name ? t.Name + '\x1F' + t.Tag : t.Tag;
                     var existing = currentGrouped[key];
+                    // Users put on or taken off on the server since the page loaded (Copy & Sync,
+                    // another tab) are kept, as are the user changes made here.
+                    var loadedUsers = (view._hscLoadedUsers || {})[key];
+                    if (existing && loadedUsers) {
+                        t.HomeSectionUserIds = mergeUserIds(t.HomeSectionUserIds, loadedUsers.Home, existing.HomeSectionUserIds);
+                        t.PlaylistUserIds = mergeUserIds(t.PlaylistUserIds, loadedUsers.Playlist, existing.PlaylistUserIds);
+                    }
                     if (existing && existing.HomeSectionTracked && existing.HomeSectionTracked.length > 0
                         && (!t.HomeSectionTracked || t.HomeSectionTracked.length === 0)) {
                         t.HomeSectionTracked = existing.HomeSectionTracked;
@@ -11331,6 +12760,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }).then(r => {
                 window.Dashboard.processPluginConfigurationUpdateResult(r);
                 _topListTagNames = new Set((configObj.TopLists || []).map(function (tl) { return (tl.TagName || '').toLowerCase(); }).filter(Boolean));
+                noteTopListTypes(configObj.TopLists);
 
                 var newGrouped = groupConfigTags(configObj.Tags);
                 view.querySelectorAll('.tag-row').forEach(row => {
@@ -11347,6 +12777,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             hseTab.dataset.hseSettings = encodeURIComponent(tc.HomeSectionSettings || '{}');
                             hseTab.dataset.hseUserids = encodeURIComponent(JSON.stringify(tc.HomeSectionUserIds || []));
                         }
+                        // What the server now has for Create as top-list (its notes compare with it).
+                        row.dataset.tlSaved = tc.EnableTopList ? '1' : '0';
+                        row.dataset.tlSavedTag = (tc.Tag || '').trim().toLowerCase();
+                        updateTopListTab(row);
                     }
                 });
 
@@ -11356,7 +12790,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 writeLeaveState(null);
                 hideDraftBar();
                 // The server now holds what was just saved: that is the new "as fetched" state.
-                window.ApiClient.getPluginConfiguration(pluginId).then(function (c) { view._hscServerStamp = serverStamp(c); }).catch(function () { });
+                window.ApiClient.getPluginConfiguration(pluginId).then(function (c) { view._hscServerStamp = serverStamp(c); view._hscLoadedUsers = sourceUserLists(c); }).catch(function () { });
 
                 // Apply home section settings immediately for existing tracked sections (fire-and-forget)
                 configObj.Tags.forEach(function(tc) {
@@ -11375,6 +12809,22 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         console.log('[HSC] ApplyTagHomeSections', tc.Name || tc.Tag, res);
                     }).catch(function(e) { console.warn('[HSC] ApplyTagHomeSections failed', tc.Name || tc.Tag, e); });
                 });
+                // Top-lists of sources: a changed title, position or look reaches their rows now
+                // (fire-and-forget; a list without a library yet gets its rows from the next run).
+                var tlDone = {};
+                configObj.Tags.forEach(function (tc) {
+                    var tag = (tc.Tag || '').trim();
+                    if (!tc.EnableTopList || !tag || tlDone[tag.toLowerCase()]) return;
+                    tlDone[tag.toLowerCase()] = 1;
+                    var tok = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+                    fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/SyncHomeSections'), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Emby-Token': tok },
+                        body: JSON.stringify({ TagName: tag })
+                    }).then(function (r) { return r.json(); }).then(function (res) {
+                        console.log('[HSC] Top-list rows', tag, res);
+                    }).catch(function (e) { console.warn('[HSC] Top-list rows failed', tag, e); });
+                });
             });
             } // end doSave
         });
@@ -11387,9 +12837,21 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             syncMenu.classList.toggle('open', isOpen);
         });
 
+        // Other: opens the less used runs above it, inside the open menu.
+        var otherBtn = view.querySelector('#btnDialOther'), otherGroup = view.querySelector('#runDialOther');
+        function setOtherOpen(open) {
+            otherGroup.classList.toggle('open', open);
+            otherBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
+        otherBtn.addEventListener('click', function (e) {
+            e.stopPropagation(); // a click outside the menu closes it
+            setOtherOpen(!otherGroup.classList.contains('open'));
+        });
+
         function closeSpeedDial() {
             speedDial.classList.remove('open');
             syncMenu.classList.remove('open');
+            setOtherOpen(false);
         }
         // Starts one of HSC's tasks through the plugin, so the tasks hidden from Emby's Scheduled
         // Tasks (which Emby's own task list may leave out) can be run here too.
@@ -11468,13 +12930,20 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         originalConfigState = null;
                     }
                     view._hscServerStamp = fetchedStamp;
+                    view._hscLoadedUsers = sourceUserLists(config);
                     var restored = false, serverChanged = false;
                     if (leave && leave.draft) {
+                        // The draft holds no keys: a connection still on the server gets its key back.
+                        if (Array.isArray(leave.draft.AiConnections)) leave.draft.AiConnections.forEach(function (c) {
+                            var s = (config.AiConnections || []).filter(function (x) { return x.Id === c.Id; })[0];
+                            if (c.ApiKey === undefined) c.ApiKey = s ? (s.ApiKey || '') : '';
+                        });
                         renderConfig(view, Object.assign({}, config, leave.draft));
                         restored = true;
                         serverChanged = !!leave.serverStamp && leave.serverStamp !== fetchedStamp;
                         // Keep the stamp the draft was based on, so the warning stays until Save/Discard.
                         if (leave.serverStamp) view._hscServerStamp = leave.serverStamp;
+                        if (leave.serverUsers) view._hscLoadedUsers = leave.serverUsers;
                     }
                     view._hscLoading = false;
                     replayLoadEdits(view);
@@ -11500,9 +12969,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         function renderConfig(view, config) {
                 lastHscConfig = {
                     HomeSyncEnabled:       config.HomeSyncEnabled       || false,
-                    HomeSyncLibraryOrder:  config.HomeSyncLibraryOrder  || false,
-                    HomeSyncSourceUserId:  config.HomeSyncSourceUserId  || '',
-                    HomeSyncTargetUserIds: config.HomeSyncTargetUserIds || [],
+                    HomeSyncProfiles:      effectiveHscProfiles(config),
                     ContinueWatchingBumpEnabled:  config.ContinueWatchingBumpEnabled  || false,
                     ContinueWatchingBumpMode:     config.ContinueWatchingBumpMode     || 'AllEpisodes',
                     ContinueWatchingBumpAllUsers: config.ContinueWatchingBumpAllUsers || false,
@@ -11522,6 +12989,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var clmElInit = view.querySelector('#txtClaudeModel'); if (clmElInit) clmElInit.value = config.ClaudeModel || 'claude-haiku-4-5-20251001';
                 var olElInit = view.querySelector('#txtOllamaBaseUrl'); if (olElInit) olElInit.value = config.OllamaBaseUrl || 'http://localhost:11434';
                 var omElInit = view.querySelector('#txtOllamaModel'); if (omElInit) omElInit.value = config.OllamaModel || '';
+                renderAiConnections(view, config.AiConnections || []);
+                syncModelFields(view);
                 var spElInit = view.querySelector('#txtAiSystemPrompt'); if (spElInit) spElInit.value = config.AiSystemPrompt || ''; updateSystemPromptResetBtn(view);
                 view.querySelector('#chkExtendedConsoleOutput').checked = config.ExtendedConsoleOutput || false;
                 view.querySelector('#chkLogMissingItems').checked = config.LogMissingItems || false;
@@ -11545,6 +13014,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var btn = view.querySelector('#btnFilterDropdown'); if (btn) btn.classList.remove('active');
 
                 _topListTagNames = new Set((config.TopLists || []).map(function (tl) { return (tl.TagName || '').toLowerCase(); }).filter(Boolean));
+                noteTopListTypes(config.TopLists);
 
                 var grouped = groupConfigTags(config.Tags);
 
@@ -11569,6 +13039,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }
 
         // Shows a top page tab (and runs its lazy loader), without the unsaved-changes question.
+        view._hscShowPageTab = function (target) { showPageTab(target); };
         function showPageTab(target) {
                 var tabBtn = view.querySelector('.page-tab-btn[data-page-tab="' + target + '"]');
                 var tabEl = view.querySelector('#tab' + target);
@@ -11604,6 +13075,61 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 if (wasDirty) { writeLeaveState(null); hideDraftBar(); loadConfig(); }
                 showPageTab(target);
             });
+        });
+
+        // AI: OpenAI-compatible connections (Add / Remove) and the Model dropdowns.
+        view.addEventListener('click', function (e) {
+            if (e.target.closest('#btnAddAiConn')) {
+                var box = view.querySelector('#aiConnList');
+                box.insertAdjacentHTML('beforeend', aiConnCardHtml({ Id: newAiConnId() }));
+                syncModelField(box.lastElementChild.querySelector('.hsc-model-field'));
+                refreshAiProviderSelects(view);
+                var nm = box.lastElementChild.querySelector('.txtAiConnName'); if (nm) nm.focus();
+                setTimeout(checkFormState, 0);
+                return;
+            }
+            var rm = e.target.closest('.btnRemoveAiConn');
+            if (rm) {
+                rm.closest('.hsc-ai-conn').remove();
+                refreshAiProviderSelects(view);
+                setTimeout(checkFormState, 0);
+                return;
+            }
+            var rl = e.target.closest('.btnAiModelsReload');
+            if (rl) { loadModelField(rl.closest('.hsc-model-field'), true); return; }
+            // Opening a provider's panel loads its models (once per key / URL).
+            var hd = e.target.closest('.settings-panel-toggle');
+            if (hd) setTimeout(function () {
+                var panel = hd.closest('.settings-panel');
+                if (panel) panel.querySelectorAll('.hsc-model-field').forEach(function (f) { if (f.offsetParent) loadModelField(f); });
+            }, 0);
+        });
+        view.addEventListener('change', function (e) {
+            var sel = e.target.closest('.selAiModel');
+            if (sel) {
+                var field = sel.closest('.hsc-model-field'), input = modelFieldInput(field);
+                if (sel.value === AI_MODEL_CUSTOM) {
+                    field.classList.add('is-custom');
+                    syncModelField(field);
+                    if (input) input.focus();
+                } else if (input) {
+                    field.classList.remove('is-custom');
+                    input.value = sel.value;
+                    syncModelField(field);
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                return;
+            }
+            // A key or URL filled in or changed: read that provider's models again.
+            var t = e.target;
+            if (t.matches && t.matches('.txtAiConnBaseUrl, .txtAiConnApiKey')) {
+                loadModelField(t.closest('.hsc-ai-conn').querySelector('.hsc-model-field'), true);
+                return;
+            }
+            if (t.id) view.querySelectorAll('.hsc-model-field[data-key="' + t.id + '"], .hsc-model-field[data-url="' + t.id + '"]').forEach(function (f) { loadModelField(f, true); });
+        });
+        view.addEventListener('input', function (e) {
+            if (e.target.closest && e.target.closest('.txtAiConnName')) refreshAiProviderSelects(view);
         });
 
         view.addEventListener('change', function (e) {

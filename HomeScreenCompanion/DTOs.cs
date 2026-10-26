@@ -5,17 +5,17 @@ namespace HomeScreenCompanion
 {
     public class ExternalItemDto
     {
-        public string Name { get; set; }
-        public string Imdb { get; set; }
-        public string Tmdb { get; set; }
+        public string Name { get; set; } = null!;
+        public string Imdb { get; set; } = null!;
+        public string? Tmdb { get; set; }
     }
 
     public class MdbListItem
     {
-        public string title { get; set; }
-        public string imdb_id { get; set; }
+        public string? title { get; set; }
+        public string? imdb_id { get; set; }
         public int? id { get; set; }
-        public string mediatype { get; set; }
+        public string? mediatype { get; set; }
     }
 
     public class MdbListResponse
@@ -27,31 +27,31 @@ namespace HomeScreenCompanion
     public class TraktBaseObject
     {
         public int rank { get; set; }
-        public string type { get; set; }
-        public TraktMovie movie { get; set; }
-        public TraktShow show { get; set; }
+        public string? type { get; set; }
+        public TraktMovie? movie { get; set; }
+        public TraktShow? show { get; set; }
     }
 
     public class TraktMovie
     {
-        public string title { get; set; }
+        public string? title { get; set; }
         public int year { get; set; }
-        public TraktIds ids { get; set; }
+        public TraktIds? ids { get; set; }
     }
 
     public class TraktShow
     {
-        public string title { get; set; }
+        public string? title { get; set; }
         public int year { get; set; }
-        public TraktIds ids { get; set; }
+        public TraktIds? ids { get; set; }
     }
 
     public class TraktIds
     {
         public int trakt { get; set; }
-        public string slug { get; set; }
+        public string? slug { get; set; }
         public int? tmdb { get; set; }
-        public string imdb { get; set; }
+        public string? imdb { get; set; }
     }
 
     public class HscUserDto
@@ -186,7 +186,7 @@ namespace HomeScreenCompanion
     {
         public string title { get; set; } = "";
         public int? year { get; set; }
-        public string imdb_id { get; set; }
+        public string? imdb_id { get; set; }
         public string type { get; set; } = "";
     }
 
@@ -236,14 +236,14 @@ namespace HomeScreenCompanion
 
     public class TmdbListItem
     {
-        public string title { get; set; }
-        public string name { get; set; }
+        public string? title { get; set; }
+        public string? name { get; set; }
         public int id { get; set; }
-        public string media_type { get; set; }
+        public string? media_type { get; set; }
     }
 
     public class TmdbExternalIds
     {
-        public string imdb_id { get; set; }
+        public string? imdb_id { get; set; }
     }
 }

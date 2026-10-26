@@ -22,7 +22,7 @@ namespace HomeScreenCompanion
         private readonly ILibraryManager _libraryManager;
         private readonly IUserManager _userManager;
         private readonly IUserDataManager _userDataManager;
-        private readonly ILogger _logger;
+        private readonly PluginLogger _logger;
 
         public static List<string> ExecutionLog { get; } = new List<string>();
 
@@ -31,7 +31,7 @@ namespace HomeScreenCompanion
             _libraryManager = libraryManager;
             _userManager = userManager;
             _userDataManager = userDataManager;
-            _logger = logManager.GetLogger("HomeScreenCompanion_CWBump");
+            _logger = PluginLog.Wrap(logManager.GetLogger("HomeScreenCompanion_CWBump"), "CW Bump");
         }
 
         public string Key => "ContinueWatchingBumpTask";

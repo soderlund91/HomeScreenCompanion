@@ -47,7 +47,7 @@ namespace HomeScreenCompanion
         }
 
         /// <summary>Waits (asynchronously) until no other run holds the gate. Dispose the result to release it.</summary>
-        public static async Task<IDisposable> EnterAsync(string name, ILogger? logger, CancellationToken cancellationToken)
+        public static async Task<IDisposable> EnterAsync(string name, PluginLogger? logger, CancellationToken cancellationToken)
         {
             if (!Gate.Wait(0))
             {
@@ -70,7 +70,7 @@ namespace HomeScreenCompanion
         }
 
         /// <summary>Blocking variant for the synchronous entry points.</summary>
-        public static IDisposable Enter(string name, ILogger? logger, CancellationToken cancellationToken)
+        public static IDisposable Enter(string name, PluginLogger? logger, CancellationToken cancellationToken)
             => EnterAsync(name, logger, cancellationToken).GetAwaiter().GetResult();
 
         private sealed class Releaser : IDisposable

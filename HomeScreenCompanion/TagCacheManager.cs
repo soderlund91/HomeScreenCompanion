@@ -12,8 +12,8 @@ namespace HomeScreenCompanion
 
         private Dictionary<string, HashSet<string>> _cache = new Dictionary<string, HashSet<string>>();
         private readonly object _lock = new object();
-        private string _cacheFilePath;
-        private IJsonSerializer _jsonSerializer;
+        private string _cacheFilePath = null!;
+        private IJsonSerializer _jsonSerializer = null!;
 
         private TagCacheManager() { }
 
@@ -79,7 +79,7 @@ namespace HomeScreenCompanion
                 {
                     _jsonSerializer.SerializeToFile(_cache, _cacheFilePath);
                 }
-                catch { }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             }
         }
 
@@ -101,7 +101,7 @@ namespace HomeScreenCompanion
                         }
                     }
                 }
-                catch { }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             }
         }
     }

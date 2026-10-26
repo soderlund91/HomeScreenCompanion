@@ -13,6 +13,10 @@ namespace HomeScreenCompanion
     /// Emby server log. Status lines carry a leading symbol that the config page colours on:
     ///   ✔ ok · ⚠ warning · ✖ error · – skipped / informational
     /// Debug lines are written only when Extended log is enabled and never go to the server log.
+    ///
+    /// Every line, Debug lines included whatever Extended log is set to, also goes to the plugin's
+    /// own log file (<see cref="PluginLog"/>), tagged with the run ("[Sync #a1b2]"). A RunLog with
+    /// no file source (a preview) writes no file lines.
     /// </summary>
     internal sealed class RunLog
     {
@@ -21,6 +25,7 @@ namespace HomeScreenCompanion
         private readonly List<string> _sink;
         private readonly ILogger? _logger;
         private readonly string _serverPrefix;
+        private readonly string? _fileSource;
 
         public bool Extended { get; }
 
@@ -28,10 +33,15 @@ namespace HomeScreenCompanion
 
         /// <param name="progress">The running task's live step (shown next to "Running" on the page);
         /// null for logs that are not a real run (previews, restore).</param>
-        public RunLog(List<string> sink, ILogger? logger, string serverLogPrefix, bool extended, RunProgress? progress = null)
+        /// <param name="fileSource">The run's name in the plugin's log file; by default the logger's,
+        /// none without a logger.</param>
+        public RunLog(List<string> sink, PluginLogger? logger, string serverLogPrefix, bool extended, RunProgress? progress = null, string? fileSource = null)
         {
             _sink = sink;
-            _logger = logger;
+            // Lines reach the plugin's log file from here; the logger only takes them to Emby's log.
+            _logger = logger?.Emby;
+            var source = fileSource ?? logger?.Source;
+            _fileSource = source == null ? null : $"{source} #{Guid.NewGuid().ToString("N").Substring(0, 4)}";
             _serverPrefix = string.IsNullOrEmpty(serverLogPrefix) ? "" : serverLogPrefix + " ";
             Extended = extended;
             _progress = progress;
@@ -85,6 +95,7 @@ namespace HomeScreenCompanion
 
         public void Debug(string message)
         {
+            ToFile("DBG", message);
             if (!Extended) return;
             Add($"[{DateTime.Now:HH:mm:ss}] [DEBUG] {message}");
         }
@@ -92,7 +103,6 @@ namespace HomeScreenCompanion
         /// <summary>Debug section divider, e.g. "── Tags ────────".</summary>
         public void Section(string title)
         {
-            if (!Extended) return;
             const int width = 50;
             var head = "── " + title + " ";
             Debug(head.Length >= width ? head : head + new string('─', width - head.Length));
@@ -105,6 +115,8 @@ namespace HomeScreenCompanion
         private void Write(string line, LogSeverity severity)
         {
             Add($"[{DateTime.Now:HH:mm:ss}] {line}");
+            if (severity != LogSeverity.None)
+                ToFile(severity == LogSeverity.Error ? "ERR" : severity == LogSeverity.Warn ? "WRN" : "INF", line);
             if (_logger == null || severity == LogSeverity.None) return;
             var server = _serverPrefix + line.Trim();
             switch (severity)
@@ -118,6 +130,11 @@ namespace HomeScreenCompanion
         private void Add(string formatted)
         {
             lock (_sink) { _sink.Add(formatted); }
+        }
+
+        private void ToFile(string level, string line)
+        {
+            if (_fileSource != null) PluginLog.Write(level, _fileSource, line.TrimEnd());
         }
 
         // ── Small formatting helpers shared by the tasks ─────────────────────────

@@ -68,7 +68,7 @@ namespace HomeScreenCompanion
 
         private static string Norm(string? p) => (p ?? "").Replace("\\", "/").TrimEnd('/').ToLowerInvariant();
 
-        private static VirtualFolderInfo? LibraryFor(ILibraryManager libraryManager, string folderPath) =>
+        internal static VirtualFolderInfo? LibraryFor(ILibraryManager libraryManager, string folderPath) =>
             libraryManager.GetVirtualFolders().FirstOrDefault(f =>
                 (f.Locations ?? Array.Empty<string>()).Any(l => Norm(l) == Norm(folderPath)));
 
@@ -115,7 +115,7 @@ namespace HomeScreenCompanion
         {
             var name = Path.GetFileName(dir);
             string? collName = null;
-            try { var m = Path.Combine(dir, MarkerFile); if (File.Exists(m)) collName = File.ReadAllText(m).Trim(); } catch { }
+            try { var m = Path.Combine(dir, MarkerFile); if (File.Exists(m)) collName = File.ReadAllText(m).Trim(); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             var coll = string.IsNullOrEmpty(collName) ? null
                 : libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = collName, Recursive = true })
                     .OfType<BoxSet>().FirstOrDefault();
@@ -125,7 +125,7 @@ namespace HomeScreenCompanion
             if (coll != null && coll.DisplayOrder == CollectionDisplayOrder.SortName)
             {
                 coll.DisplayOrder = CollectionDisplayOrder.PremiereDate;
-                try { libraryManager.UpdateItem(coll, coll.Parent, ItemUpdateType.MetadataEdit, null); } catch { }
+                try { libraryManager.UpdateItem(coll, coll.Parent, ItemUpdateType.MetadataEdit, null); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             }
 
             // The collection gets its real films back (also an imported collection whose source is
@@ -141,7 +141,7 @@ namespace HomeScreenCompanion
                     {
                         // The film the .strm points at; else the film with the same IMDb id.
                         BaseItem? film = null;
-                        try { var target = File.ReadAllText(copy.Path).Trim(); if (target.Length > 0) film = libraryManager.FindByPath(target, false); } catch { }
+                        try { var target = File.ReadAllText(copy.Path).Trim(); if (target.Length > 0) film = libraryManager.FindByPath(target, false); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                         var imdb = copy.GetProviderId("Imdb");
                         if (film == null && !string.IsNullOrEmpty(imdb))
                             film = libraryManager.GetItemList(new InternalItemsQuery
@@ -253,7 +253,7 @@ namespace HomeScreenCompanion
             }
 
             Directory.CreateDirectory(folderPath);
-            try { File.WriteAllText(Path.Combine(folderPath, MarkerFile), cName); } catch { }
+            try { File.WriteAllText(Path.Combine(folderPath, MarkerFile), cName); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
 
             bool filesChanged = false;
             var newFiles = new HashSet<string>(wanted.Where(w => !File.Exists(Path.Combine(folderPath, w.BaseName + ".strm"))).Select(w => w.BaseName), StringComparer.OrdinalIgnoreCase);
@@ -271,7 +271,7 @@ namespace HomeScreenCompanion
             foreach (var f in Directory.GetFiles(folderPath))
             {
                 if (keepFiles.Contains(Path.GetFileName(f))) continue;
-                try { File.Delete(f); filesChanged = true; } catch { }
+                try { File.Delete(f); filesChanged = true; } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             }
 
             // Copies of films that left the list (or of rank-named files from older builds) are
@@ -280,7 +280,7 @@ namespace HomeScreenCompanion
             int removedCopies = 0;
             foreach (var stale in CopiesIn(libraryManager, folderPath).Where(c => !expectedPaths.Contains(c.Path)))
             {
-                try { libraryManager.DeleteItem(stale, new DeleteOptions { DeleteFileLocation = false }); removedCopies++; } catch { }
+                try { libraryManager.DeleteItem(stale, new DeleteOptions { DeleteFileLocation = false }); removedCopies++; } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             }
 
             // One hidden library per ranked source.
@@ -379,7 +379,7 @@ namespace HomeScreenCompanion
         private static HashSet<string> LoadSorted()
         {
             var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            try { var f = SortedListFile; if (f != null && File.Exists(f)) foreach (var l in File.ReadAllLines(f)) if (l.Trim().Length > 0) set.Add(l.Trim()); } catch { }
+            try { var f = SortedListFile; if (f != null && File.Exists(f)) foreach (var l in File.ReadAllLines(f)) if (l.Trim().Length > 0) set.Add(l.Trim()); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             return set;
         }
 
@@ -392,7 +392,7 @@ namespace HomeScreenCompanion
                 if (set.Count == 0) { if (File.Exists(f)) File.Delete(f); }
                 else File.WriteAllLines(f, set.OrderBy(x => x));
             }
-            catch { }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
         }
 
         // Sets the collection to sort by SortName (the copies' ranks). Called before the members
@@ -405,7 +405,7 @@ namespace HomeScreenCompanion
             if (sorted.Add(box.Name ?? "")) SaveSorted(sorted);
             if (box.DisplayOrder == CollectionDisplayOrder.SortName) return;
             box.DisplayOrder = CollectionDisplayOrder.SortName;
-            try { libraryManager.UpdateItem(box, box.Parent, ItemUpdateType.MetadataEdit, null); } catch { }
+            try { libraryManager.UpdateItem(box, box.Parent, ItemUpdateType.MetadataEdit, null); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
         }
 
         // Collections that are no longer ranked go back to Emby's default order. A name stays on
@@ -424,7 +424,7 @@ namespace HomeScreenCompanion
                     .OfType<BoxSet>().FirstOrDefault();
                 if (box == null || box.DisplayOrder != CollectionDisplayOrder.SortName) { sorted.Remove(name); changed = true; continue; }
                 box.DisplayOrder = CollectionDisplayOrder.PremiereDate;
-                try { libraryManager.UpdateItem(box, box.Parent, ItemUpdateType.MetadataEdit, null); } catch { }
+                try { libraryManager.UpdateItem(box, box.Parent, ItemUpdateType.MetadataEdit, null); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             }
             if (changed) SaveSorted(sorted);
         }
@@ -479,7 +479,7 @@ namespace HomeScreenCompanion
             {
                 if (File.Exists(path) && File.ReadAllText(path) == content) return false;
             }
-            catch { }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             File.WriteAllText(path, content);
             return true;
         }
@@ -510,6 +510,28 @@ namespace HomeScreenCompanion
         private static VirtualFolderInfo? CreateLibrary(string name, string folderPath, List<BaseItem> movies,
             ILibraryManager libraryManager, IUserManager userManager, RunLog log)
         {
+            var options = new LibraryOptions
+            {
+                PathInfos = new[] { new MediaPathInfo { Path = folderPath } },
+                TypeOptions = new[]
+                {
+                    new TypeOptions
+                    {
+                        Type = "Movie",
+                        MetadataFetchers = new[] { "Nfo", "TheMovieDb" },
+                        MetadataFetcherOrder = new[] { "Nfo", "TheMovieDb" },
+                        ImageFetchers = new[] { "TheMovieDb" },
+                        ImageFetcherOrder = new[] { "TheMovieDb" }
+                    }
+                }
+            };
+            return CreateLibrary(name, folderPath, "movies", options, "Ranked library", libraryManager, userManager, log);
+        }
+
+        // Also used for top-lists made by a source (SourceTopLists): label names it in the log.
+        internal static VirtualFolderInfo? CreateLibrary(string name, string folderPath, string collectionType, LibraryOptions options,
+            string label, ILibraryManager libraryManager, IUserManager userManager, RunLog log)
+        {
             dynamic mgr = userManager;
             var users = userManager.GetUserList(new UserQuery { IsDisabled = false }).ToList();
             var before = new Dictionary<long, PolicyState>();
@@ -521,31 +543,19 @@ namespace HomeScreenCompanion
                     if (p == null) continue;
                     before[u.InternalId] = new PolicyState { EnableAll = (bool)p.EnableAllFolders, Folders = ((string[])p.EnabledFolders) ?? Array.Empty<string>() };
                 }
-                catch { }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             }
 
             try
             {
-                var options = new LibraryOptions
-                {
-                    PathInfos = new[] { new MediaPathInfo { Path = folderPath } },
-                    TypeOptions = new[]
-                    {
-                        new TypeOptions
-                        {
-                            Type = "Movie",
-                            MetadataFetchers = new[] { "Nfo", "TheMovieDb" },
-                            MetadataFetcherOrder = new[] { "Nfo", "TheMovieDb" },
-                            ImageFetchers = new[] { "TheMovieDb" },
-                            ImageFetcherOrder = new[] { "TheMovieDb" }
-                        }
-                    }
-                };
-                libraryManager.AddVirtualFolder(name, "movies", options, false);
+                // The content type goes in the options (as Emby's own Add Library does): the
+                // (name, string, options, bool) overload takes a sort name, not the type.
+                options.ContentType = collectionType;
+                libraryManager.AddVirtualFolder(name, options, false);
             }
             catch (Exception ex)
             {
-                log.Error($"Ranked library '{name}' could not be created: {ex.Message}");
+                log.Error($"{label} '{name}' could not be created: {ex.Message}");
                 return null;
             }
 
@@ -571,10 +581,10 @@ namespace HomeScreenCompanion
             for (int i = 0; i < 10; i++)
             {
                 var lib = LibraryFor(libraryManager, folderPath);
-                if (lib != null && !string.IsNullOrEmpty(lib.ItemId)) { log.Ok($"Ranked library '{name}' created"); return lib; }
+                if (lib != null && !string.IsNullOrEmpty(lib.ItemId)) { log.Ok($"{label} '{name}' created"); return lib; }
                 Thread.Sleep(1000);
             }
-            log.Error($"Ranked library '{name}' was created but Emby does not list it");
+            log.Error($"{label} '{name}' was created but Emby does not list it");
             return null;
         }
 
@@ -593,7 +603,7 @@ namespace HomeScreenCompanion
                     foreach (var f in libraryManager.GetCollectionFolders(m))
                         sourceLibs.Add(f.Id.ToString("N"));
                 }
-                catch { }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             }
             if (sourceLibs.Count == 0) return;
 
@@ -603,8 +613,8 @@ namespace HomeScreenCompanion
                 try
                 {
                     dynamic p = TopListSyncTask.GetPolicy(mgr, u, u.InternalId);
-                    if (p == null || (bool)p.EnableAllFolders) continue;
-                    var folders = ((string[])p.EnabledFolders) ?? Array.Empty<string>();
+                    if (p == null || (bool)p!.EnableAllFolders) continue;
+                    var folders = ((string[])p!.EnabledFolders) ?? Array.Empty<string>();
                     var norm = folders.Select(f => f.Replace("-", "").ToLowerInvariant()).ToList();
                     if (norm.Contains(libGuid)) continue;
                     if (!norm.Any(sourceLibs.Contains)) continue;
