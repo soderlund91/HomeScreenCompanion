@@ -1,4 +1,4 @@
-using MediaBrowser.Common.Net;
+﻿using MediaBrowser.Common.Net;
 using HttpRequestOptions = MediaBrowser.Common.Net.HttpRequestOptions;
 using SkiaSharp;
 using MediaBrowser.Controller.Entities;
@@ -358,6 +358,33 @@ namespace HomeScreenCompanion
     public class ManagedCollectionInfo { public string Id { get; set; } = ""; public string Name { get; set; } = ""; public int ItemCount { get; set; } }
     public class GetManagedCollectionsResponse { public List<ManagedCollectionInfo> Collections { get; set; } = new List<ManagedCollectionInfo>(); }
 
+    // The Missing tab: list titles not in the library, and the shows' missing episodes (MissingTitles).
+    [Route("/HomeScreenCompanion/MissingTitles", "GET")]
+    [Authenticated(Roles = "Admin")]
+    public class GetMissingTitlesRequest : IReturn<MissingTitles.MissingTitlesResult> { }
+
+    // The Missing tab's Download: Format "json", "movies" (CSV) or "shows" (CSV).
+    [Route("/HomeScreenCompanion/MissingTitles/Export", "GET")]
+    [Authenticated(Roles = "Admin")]
+    public class ExportMissingTitlesRequest : IReturn<ExportMissingTitlesResponse>
+    {
+        public string Format { get; set; } = "json";
+        public bool IncludeGaps { get; set; }
+    }
+    public class ExportMissingTitlesResponse
+    {
+        public string FileName { get; set; } = "";
+        public string Content { get; set; } = "";
+    }
+
+    // Every aired episode of a show on the Missing tab that is not in the library (read when opened).
+    [Route("/HomeScreenCompanion/MissingTitles/Episodes", "GET")]
+    [Authenticated(Roles = "Admin")]
+    public class GetMissingShowEpisodesRequest : IReturn<List<MissingTitles.MissingSeason>>
+    {
+        public string Tmdb { get; set; } = "";
+    }
+
     // Every playlist on the server (Cleanup tab), with its owner and the users it is shared with.
     [Route("/HomeScreenCompanion/Manage/Playlists", "GET")]
     [Authenticated(Roles = "Admin")]
@@ -681,6 +708,13 @@ namespace HomeScreenCompanion
         public bool ShowCopyPasteButtons { get; set; }
         public bool ShowImportCollectionButton { get; set; }
         public bool RankedCollectionsEnabled { get; set; }
+        // Null in backups made before the Missing tab: the current setting is kept.
+        public bool? ShowMissingTitles { get; set; }
+        public bool? MissingIncludeGaps { get; set; }
+        public bool? MissingExportToFile { get; set; }
+        public string? MissingExportFolder { get; set; }
+        public bool? MissingExportJson { get; set; }
+        public bool? MissingExportCsv { get; set; }
         // Null in backups made before the settings level: the current level is kept.
         public string? SettingsLevel { get; set; }
     }
@@ -2232,6 +2266,33 @@ public class HomeScreenCompanionService : IService
         // Owner = the user whose share is ManageDelete (Emby gives it to the creator only; users it
         // is shared with get Read or Write). When the owner is deleted the others keep their share,
         // so the playlist has no owner but is still shared.
+        public object Get(GetMissingTitlesRequest request)
+        {
+            var config = Plugin.Instance?.Configuration;
+            if (config == null) return new MissingTitles.MissingTitlesResult();
+            var result = MissingTitles.Build(_libraryManager, config, _jsonSerializer);
+            result.ExportDefaultFolder = MissingTitlesExport.DefaultFolder;
+            result.ExportWrittenUtc = MissingTitlesExport.WrittenUtc(config)?.ToString("o");
+            result.ExportError = MissingTitlesExport.LastError;
+            return result;
+        }
+
+        public object Get(ExportMissingTitlesRequest request)
+        {
+            var config = Plugin.Instance?.Configuration;
+            if (config == null) return new ExportMissingTitlesResponse();
+            var result = MissingTitles.Build(_libraryManager, config, _jsonSerializer);
+            switch ((request.Format ?? "").ToLowerInvariant())
+            {
+                case "movies": return new ExportMissingTitlesResponse { FileName = MissingTitlesExport.MoviesCsvName, Content = MissingTitlesExport.MoviesCsv(result) };
+                case "shows": return new ExportMissingTitlesResponse { FileName = MissingTitlesExport.ShowsCsvName, Content = MissingTitlesExport.ShowsCsv(result, request.IncludeGaps) };
+                default: return new ExportMissingTitlesResponse { FileName = MissingTitlesExport.JsonName, Content = MissingTitlesExport.Json(result, request.IncludeGaps, _jsonSerializer) };
+            }
+        }
+
+        public object Get(GetMissingShowEpisodesRequest request) =>
+            MissingTitles.Episodes((request.Tmdb ?? "").Trim(), _jsonSerializer);
+
         public object Get(GetManagedPlaylistsRequest request)
         {
             var playlists = _libraryManager.GetItemList(new InternalItemsQuery
@@ -3898,6 +3959,12 @@ public class HomeScreenCompanionService : IService
                     ShowCopyPasteButtons      = config.ShowCopyPasteButtons,
                     ShowImportCollectionButton = config.ShowImportCollectionButton,
                     RankedCollectionsEnabled  = config.RankedCollectionsEnabled,
+                    ShowMissingTitles         = config.ShowMissingTitles,
+                    MissingIncludeGaps        = config.MissingIncludeGaps,
+                    MissingExportToFile       = config.MissingExportToFile,
+                    MissingExportFolder       = config.MissingExportFolder ?? "",
+                    MissingExportJson         = config.MissingExportJson,
+                    MissingExportCsv          = config.MissingExportCsv,
                     SettingsLevel             = config.SettingsLevel ?? ""
                 };
                 file.Sections.Add("Settings");
@@ -4037,6 +4104,12 @@ public class HomeScreenCompanionService : IService
                     config.ShowImportCollectionButton = s.ShowImportCollectionButton;
                     config.RankedCollectionsEnabled  = s.RankedCollectionsEnabled;
                     if (s.SettingsLevel != null) config.SettingsLevel = s.SettingsLevel;
+                    if (s.ShowMissingTitles != null) config.ShowMissingTitles = s.ShowMissingTitles.Value;
+                    if (s.MissingIncludeGaps != null) config.MissingIncludeGaps = s.MissingIncludeGaps.Value;
+                    if (s.MissingExportToFile != null) config.MissingExportToFile = s.MissingExportToFile.Value;
+                    if (s.MissingExportFolder != null) config.MissingExportFolder = s.MissingExportFolder;
+                    if (s.MissingExportJson != null) config.MissingExportJson = s.MissingExportJson.Value;
+                    if (s.MissingExportCsv != null) config.MissingExportCsv = s.MissingExportCsv.Value;
                     response.Applied.Add("Settings");
                 }
 

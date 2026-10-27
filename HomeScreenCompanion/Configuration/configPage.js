@@ -755,6 +755,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     function advInUse(el) {
         var kind = el.getAttribute('data-adv') || '';
         if (kind === 'check') return !!el.querySelector('input[type="checkbox"]:checked');
+        // The Missing tab's Export panel: in use when it writes a file or adds shows with gaps.
+        if (kind === 'export') return !!el.querySelector('#chkMissingExportToFile:checked, #chkMissingIncludeGaps:checked');
         if (kind === 'tag-art') {
             var poster = el.querySelector('.coll-style-picker[data-kind="poster"] input:checked');
             var bg = el.querySelector('.coll-style-picker[data-kind="background"] input:checked');
@@ -806,7 +808,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 || t.OverrideWhenActive || (t.Blacklist || []).length > 0
                 || hseSettingsUseAdvanced(t.HomeSectionSettings);
         }) || (config.TopLists || []).some(function (tl) { return hseSettingsUseAdvanced(tl.HomeSectionSettings); })
-          || (config.HomeSyncProfiles || []).some(function (p) { return p && p.AddToSources; });
+          || (config.HomeSyncProfiles || []).some(function (p) { return p && p.AddToSources; })
+          || !!config.MissingExportToFile || !!config.MissingIncludeGaps;
         return used ? 'Advanced' : 'Basic';
     }
 
@@ -6395,6 +6398,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             HideTopListLibraries: view.querySelector('#chkHideTopListLibraries').checked,
             ShowCopyPasteButtons: view.querySelector('#chkShowCopyPasteButtons').checked,
             ShowImportCollectionButton: view.querySelector('#chkShowImportCollectionButton').checked,
+            ShowMissingTitles: view.querySelector('#chkShowMissingTitles').checked,
+            MissingIncludeGaps: view.querySelector('#chkMissingIncludeGaps').checked,
+            MissingExportToFile: view.querySelector('#chkMissingExportToFile').checked,
+            MissingExportFolder: view.querySelector('#txtMissingExportFolder').value.trim(),
+            MissingExportJson: view.querySelector('#chkMissingExportJson').checked,
+            MissingExportCsv: view.querySelector('#chkMissingExportCsv').checked,
             RankedCollectionsEnabled: view.querySelector('#chkRankedCollectionsEnabled').checked,
             SettingsLevel: settingsLevel,
             Tags: flatTags,
@@ -6571,7 +6580,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         DryRunMode: 'Dry Run Mode', PreserveTagsOnEmptyResult: 'Preserve tags and collections on empty result',
         IgnoreMarkedAsWatched: 'Ignore titles only marked as watched',
         TopListMirrorCollections: 'Show collections on top-list items', HideTopListLibraries: 'Hide HSC libraries',
-        ShowCopyPasteButtons: 'Copy & paste sources', ShowImportCollectionButton: 'Import collection',
+        ShowCopyPasteButtons: 'Copy & paste sources', ShowImportCollectionButton: 'Import collection', ShowMissingTitles: 'Show missing titles',
+        MissingIncludeGaps: 'Missing: include shows that lack episodes', MissingExportToFile: 'Missing: keep the list in a file',
+        MissingExportFolder: 'Missing: file folder', MissingExportJson: 'Missing: JSON file', MissingExportCsv: 'Missing: CSV files',
         RankedCollectionsEnabled: 'Ranked collections', SavedFilters: 'Saved filters',
         HomeSyncEnabled: 'Home Screen sync: on/off', HomeSyncProfiles: 'Home Screen sync: profiles',
         ContinueWatchingBumpEnabled: 'Continue Watching bump: on/off', ContinueWatchingBumpMode: 'Continue Watching bump: mode',
@@ -6691,6 +6702,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             view.classList.toggle('hsc-no-copypaste', !saved.ShowCopyPasteButtons);
             view.classList.toggle('hsc-no-import', !saved.ShowImportCollectionButton);
             view.classList.toggle('hsc-no-ranked', !saved.RankedCollectionsEnabled);
+            view.classList.toggle('hsc-no-missing', !saved.ShowMissingTitles);
+            // Turned off while its tab is open: back to Settings, where it was turned off.
+            var mtTab = view.querySelector('#tabMissing');
+            if (!saved.ShowMissingTitles && mtTab && mtTab.style.display !== 'none' && view._hscShowPageTab) view._hscShowPageTab('Settings');
         } catch (e) { }
         // A power-user setting put back to its default in Basic goes once it is saved.
         refreshAdvanced(view);
@@ -7476,6 +7491,220 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             if (offset < 0 && offset > closest.offset) return { offset: offset, element: child };
             return closest;
         }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+
+    // ---- Missing tab (Settings > Show missing titles) ----
+    // The titles on the External and AI lists that are not in the library, and the aired episodes the
+    // library lacks of the shows on them (MissingTitles.cs). The sync saves the lists; the server
+    // compares them with the library each time the tab opens.
+    function loadMissingTab(view) {
+        var container = view.querySelector('#mtContainer');
+        if (!container) return;
+        container.innerHTML = '<div style="padding:20px;color:var(--theme-text-secondary);display:flex;align-items:center;gap:10px;">Loading <span class="tc-dot-loader"><span></span><span></span><span></span></span></div>';
+        fetch(window.ApiClient.getUrl('HomeScreenCompanion/MissingTitles'), { headers: { 'X-MediaBrowser-Token': window.ApiClient.accessToken() } })
+            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function (data) { renderMissingTab(view, container, data || {}); })
+            .catch(function (err) {
+                container.innerHTML = '<div class="hsc-callout danger"><i class="md-icon">error</i><span>The missing titles could not be loaded (' + escapeHtml(err.message) + ').</span></div>';
+            });
+    }
+
+    // The file options show only with "Keep the list in a file" on.
+    function updateMissingExportUi(view) {
+        var on = view.querySelector('#chkMissingExportToFile').checked;
+        view.querySelector('#mtExportFileOptions').style.display = on ? '' : 'none';
+    }
+
+    // Download: what the tab shows now (the saved lists against the library), as a file.
+    function downloadMissingTitles(view, btn) {
+        var err = view.querySelector('#mtDownloadError');
+        err.style.display = 'none';
+        btn.disabled = true;
+        var params = { Format: btn.dataset.format, IncludeGaps: view.querySelector('#chkMissingIncludeGaps').checked };
+        fetch(window.ApiClient.getUrl('HomeScreenCompanion/MissingTitles/Export', params), { headers: { 'X-MediaBrowser-Token': window.ApiClient.accessToken() } })
+            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function (res) {
+                var csv = /\.csv$/.test(res.FileName || '');
+                // A BOM lets Excel read the CSV as UTF-8 (å, ä, ö …).
+                var blob = new Blob([csv ? '\ufeff' + res.Content : res.Content], { type: csv ? 'text/csv;charset=utf-8' : 'application/json' });
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url; a.download = res.FileName || 'missing_titles.json';
+                document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+            })
+            .catch(function (e) { err.textContent = 'The download failed: ' + e.message; err.style.display = ''; })
+            .then(function () { btn.disabled = false; });
+    }
+
+    // The kept file: when it was last written, or why it could not be.
+    function renderMissingExportStatus(view, data) {
+        var def = view.querySelector('#mtDefaultFolder');
+        if (def) def.textContent = data.ExportDefaultFolder ? ' (' + data.ExportDefaultFolder + ')' : '';
+        var el = view.querySelector('#mtExportStatus');
+        if (!el) return;
+        if (data.ExportError) {
+            el.innerHTML = '<span style="color:var(--hsc-danger-text);">The file could not be written: ' + escapeHtml(data.ExportError) + '</span>';
+        } else if (data.ExportWrittenUtc) {
+            el.textContent = 'Last written ' + new Date(data.ExportWrittenUtc).toLocaleString() + '.';
+        } else {
+            el.textContent = 'Not written yet. It is written a few seconds after you save, and after every sync.';
+        }
+    }
+
+    function renderMissingTab(view, container, data) {
+        renderMissingExportStatus(view, data);
+        var movies = data.Movies || [], shows = data.Shows || [];
+        var shown = 'movies';
+        try { if (localStorage.getItem('HomeScreenCompanion_MissingList') === 'shows') shown = 'shows'; } catch (e) { }
+
+        function plural(n, one) { return n + ' ' + (n === 1 ? one : one + 's'); }
+        function yearHtml(y) { return y ? '<span class="mt-year">(' + y + ')</span>' : ''; }
+        function linksHtml(t, tmdbType) {
+            return '<span class="mt-links">' +
+                (t.Imdb ? '<a href="https://www.imdb.com/title/' + encodeURIComponent(t.Imdb) + '/" target="_blank" rel="noopener" title="Open on IMDb">IMDb</a>' : '') +
+                (t.Tmdb ? '<a href="https://www.themoviedb.org/' + tmdbType + '/' + encodeURIComponent(t.Tmdb) + '" target="_blank" rel="noopener" title="Open on TMDb">TMDb</a>' : '') +
+                '</span>';
+        }
+        function listsHtml(t) {
+            var lists = t.Lists || [];
+            return '<span class="mt-lists" title="' + escapeHtml('On: ' + lists.join(', ')) + '">' + escapeHtml(lists.join(', ')) + '</span>';
+        }
+        function searchText(t) { return ((t.Name || '') + ' ' + (t.Year || '') + ' ' + (t.Lists || []).join(' ')).toLowerCase(); }
+
+        function movieRow(m) {
+            return '<div class="mt-row" data-search="' + escapeHtml(searchText(m)) + '"><div class="mt-head"><span class="mt-chev-spacer"></span>' +
+                '<span class="mt-title">' + escapeHtml(m.Name) + yearHtml(m.Year) + '</span>' +
+                listsHtml(m) + linksHtml(m, 'movie') + '</div></div>';
+        }
+
+        function episodeRow(e) {
+            return '<div class="mt-ep"><span class="mt-ep-num">E' + String(e.Number).padStart(2, '0') + '</span>' +
+                '<span class="mt-ep-name">' + escapeHtml(e.Name || '') + '</span>' +
+                '<span class="mt-ep-date">' + escapeHtml(e.AirDate || '') + '</span></div>';
+        }
+        function seasonRow(se) {
+            // A show that is not in the library comes without its episodes: read when a season opens.
+            var later = se.Episodes.length === 0;
+            var all = later || se.Episodes.length === se.AiredEpisodes;
+            var label = all ? 'all ' + plural(se.AiredEpisodes, 'episode') : se.Episodes.length + ' of ' + plural(se.AiredEpisodes, 'episode');
+            // A season that is missing entirely opens on a click; a gap in a season shows its episodes.
+            return '<div class="mt-season' + (all ? '' : ' mt-open') + (later ? ' mt-later' : '') + '" data-season="' + se.Number + '"><div class="mt-head mt-toggle">' +
+                '<i class="md-icon mt-chev">chevron_right</i>' +
+                '<span class="mt-title">Season ' + se.Number + '</span><span class="mt-count">' + label + '</span></div>' +
+                '<div class="mt-body">' + (later ? '<div class="mt-ep" style="color:var(--theme-text-secondary);">Loading…</div>' : se.Episodes.map(episodeRow).join('')) + '</div></div>';
+        }
+        function showRow(s) {
+            var inLib = !!s.LibraryId;
+            var pill = inLib
+                ? '<a class="mt-pill lib mt-nav" href="javascript:void(0)" data-navid="' + escapeHtml(s.LibraryId) + '" title="Open the show in Emby" style="text-decoration:none;">In library</a>'
+                : '<span class="mt-pill nolib">Not in library</span>';
+            var count = !s.EpisodesKnown ? (inLib ? '' : '<span title="TMDb has no episodes for this show (no TMDb id, or it could not be read on the last sync).">episodes not known</span>')
+                : inLib ? s.MissingEpisodes + ' of ' + plural(s.AiredEpisodes, 'episode') + ' missing'
+                : plural(s.AiredEpisodes, 'episode');
+            var open = s.Seasons && s.Seasons.length > 0;
+            return '<div class="mt-row mt-show" data-tmdb="' + escapeHtml(s.Tmdb || '') + '" data-search="' + escapeHtml(searchText(s)) + '">' +
+                '<div class="mt-head' + (open ? ' mt-toggle' : '') + '">' +
+                (open ? '<i class="md-icon mt-chev">chevron_right</i>' : '<span class="mt-chev-spacer"></span>') +
+                '<span class="mt-title">' + escapeHtml(s.Name) + yearHtml(s.Year) + '</span>' +
+                listsHtml(s) + (count ? '<span class="mt-count">' + count + '</span>' : '') + pill + linksHtml(s, 'tv') + '</div>' +
+                (open ? '<div class="mt-body">' + s.Seasons.map(seasonRow).join('') + '</div>' : '') +
+                '</div>';
+        }
+
+        var segBase = 'flex:1;cursor:pointer;border:none;border-radius:6px;padding:8px 12px;font-family:inherit;font-size:0.9em;font-weight:500;display:flex;align-items:center;justify-content:center;gap:6px;color:inherit;';
+        var segOn = segBase + 'background:var(--plugin-popup-bg2, var(--theme-background-level3));';
+        var segOff = segBase + 'background:transparent;opacity:0.7;';
+        var sections = [
+            { key: 'movies', label: 'Movies', icon: 'movie', count: movies.length },
+            { key: 'shows', label: 'Shows & episodes', icon: 'tv', count: shows.length }
+        ];
+
+        var updated = data.UpdatedUtc ? new Date(data.UpdatedUtc) : null;
+        var intro = !data.HasData
+            ? '<div class="hsc-callout" style="margin-bottom:16px;"><i class="md-icon">info</i><span>Nothing here yet. The list is made during the next sync of Tags &amp; Collections (or <em>Run</em> on a source).</span></div>'
+            : '<p class="textMuted" style="font-size:0.9em;margin:0 0 16px;">Titles on your ' + plural(data.ListCount || 0, 'External or AI list') +
+              ' that are not in your library. A title on several lists is shown once.' +
+              (updated ? ' Lists read ' + escapeHtml(updated.toLocaleString()) + '.' : '') + '</p>';
+        var noKey = data.HasData && !data.HasTmdbKey
+            ? '<div class="hsc-callout warning" style="margin-bottom:12px;"><i class="md-icon">warning</i><span>Add a TMDb key under <em>Settings › External list settings</em> to see which episodes are missing. Until then only shows that are not in your library are listed.</span></div>'
+            : '';
+
+        view.querySelector('#mtIntro').innerHTML = intro;
+        container.innerHTML =
+            '<div style="display:flex;border:1px solid var(--plugin-popup-border,rgba(255,255,255,0.12));border-radius:8px;overflow:hidden;margin-bottom:16px;padding:2px;gap:2px;background:var(--hsc-tint-1);max-width:560px;">' +
+            sections.map(function (s) {
+                return '<button type="button" class="btnMtList" data-key="' + s.key + '" style="' + (s.key === shown ? segOn : segOff) + '"><i class="md-icon" style="font-size:1.1em;">' + s.icon + '</i>' + s.label + ' <span style="opacity:0.7;">(' + s.count + ')</span></button>';
+            }).join('') + '</div>' +
+            '<div style="margin-bottom:12px;"><input type="text" id="mtSearch" placeholder="Search titles or lists…" style="background:rgba(128,128,128,0.08);border:1px solid var(--line-color);border-radius:6px;padding:5px 10px;font-size:0.9em;color:inherit;width:400px;max-width:100%;" /></div>' +
+            '<div id="mtMovies" style="display:' + (shown === 'movies' ? '' : 'none') + ';">' +
+            (movies.length ? movies.map(movieRow).join('') : '<div style="color:var(--theme-text-secondary);padding:8px 0;">' + (data.HasData ? 'Every movie on your lists is in your library.' : '') + '</div>') +
+            '</div>' +
+            '<div id="mtShows" style="display:' + (shown === 'shows' ? '' : 'none') + ';">' + noKey +
+            (shows.length ? shows.map(showRow).join('') : '<div style="color:var(--theme-text-secondary);padding:8px 0;">' + (data.HasData ? 'No shows or episodes are missing.' : '') + '</div>') +
+            '</div>' +
+            '<div id="mtNoHits" style="display:none;color:var(--theme-text-secondary);padding:8px 0;">No titles match the search.</div>';
+
+        function applySearch() {
+            var q = (container.querySelector('#mtSearch').value || '').trim().toLowerCase();
+            var list = container.querySelector(shown === 'movies' ? '#mtMovies' : '#mtShows');
+            var hits = 0;
+            container.querySelectorAll('.mt-row').forEach(function (r) {
+                var hit = !q || r.dataset.search.indexOf(q) >= 0;
+                r.style.display = hit ? '' : 'none';
+                if (hit && list.contains(r)) hits++;
+            });
+            container.querySelector('#mtNoHits').style.display = q && hits === 0 ? '' : 'none';
+        }
+        container.querySelector('#mtSearch').addEventListener('input', applySearch);
+
+        container.onclick = function (e) {
+            var nav = e.target.closest('.mt-nav');
+            if (nav) {
+                var serverId = (window.ApiClient && window.ApiClient.serverId) ? window.ApiClient.serverId() : '';
+                window.open(window.location.href.split('#')[0] + '#!/item?id=' + encodeURIComponent(nav.dataset.navid) +
+                    (serverId ? '&serverId=' + encodeURIComponent(serverId) : ''), '_blank');
+                return;
+            }
+            if (e.target.closest('.mt-links a')) return;
+            var pick = e.target.closest('.btnMtList');
+            if (pick) {
+                shown = pick.dataset.key;
+                try { localStorage.setItem('HomeScreenCompanion_MissingList', shown); } catch (err) { }
+                container.querySelectorAll('.btnMtList').forEach(function (b) { b.setAttribute('style', b.dataset.key === shown ? segOn : segOff); });
+                container.querySelector('#mtMovies').style.display = shown === 'movies' ? '' : 'none';
+                container.querySelector('#mtShows').style.display = shown === 'shows' ? '' : 'none';
+                applySearch();
+                return;
+            }
+            var head = e.target.closest('.mt-toggle');
+            if (!head) return;
+            var box = head.parentElement;
+            box.classList.toggle('mt-open');
+            // A show without its episodes reads them as soon as it opens, so its seasons are ready.
+            if (box.classList.contains('mt-open') && (box.classList.contains('mt-later') || box.querySelector('.mt-later'))) loadShowEpisodes(box.closest('.mt-show'));
+        };
+
+        // Fills every season of a show that came without its episodes (one request per show).
+        function loadShowEpisodes(showEl) {
+            if (!showEl || showEl.dataset.loading) return;
+            showEl.dataset.loading = '1';
+            var fail = function (text) {
+                showEl.querySelectorAll('.mt-later > .mt-body').forEach(function (b) { b.innerHTML = '<div class="mt-ep" style="color:var(--theme-text-secondary);">' + escapeHtml(text) + '</div>'; });
+                delete showEl.dataset.loading;
+            };
+            fetch(window.ApiClient.getUrl('HomeScreenCompanion/MissingTitles/Episodes', { Tmdb: showEl.dataset.tmdb }), { headers: { 'X-MediaBrowser-Token': window.ApiClient.accessToken() } })
+                .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+                .then(function (seasons) {
+                    (seasons || []).forEach(function (se) {
+                        var el = showEl.querySelector('.mt-later[data-season="' + se.Number + '"]');
+                        if (!el) return;
+                        el.querySelector('.mt-body').innerHTML = (se.Episodes || []).map(episodeRow).join('');
+                        el.classList.remove('mt-later');
+                    });
+                    if (showEl.querySelector('.mt-later')) fail('The episodes are not known yet – they are read on the next sync.');
+                })
+                .catch(function (err) { fail('The episodes could not be loaded (' + err.message + ').'); });
+        }
     }
 
     function loadTagManageTab(view) {
@@ -11284,7 +11513,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var has = function (keys) { return keys.some(function (k) { return Object.prototype.hasOwnProperty.call(parsed, k); }); };
         if (has(['OpenAiModel', 'GeminiModel', 'ClaudeModel', 'OllamaBaseUrl', 'OllamaModel', 'AiSystemPrompt', 'ExtendedConsoleOutput',
             'LogMissingItems', 'DryRunMode', 'PreserveTagsOnEmptyResult', 'TopListMirrorCollections', 'ShowCopyPasteButtons',
-            'ShowImportCollectionButton', 'RankedCollectionsEnabled'])) info.sections.add('Settings');
+            'ShowImportCollectionButton', 'RankedCollectionsEnabled', 'ShowMissingTitles', 'MissingExportToFile'])) info.sections.add('Settings');
         if (has(['TraktClientId', 'MdblistApiKey', 'TmdbApiKey', 'OpenAiApiKey', 'GeminiApiKey', 'ClaudeApiKey'])) info.sections.add('ApiKeys');
         if (Array.isArray(parsed.Tags)) info.sections.add('Tags');
         if (Array.isArray(parsed.SavedFilters)) info.sections.add('SavedFilters');
@@ -12158,6 +12387,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var settingsTab = view.querySelector('#tabSettings');
             settingsTab.addEventListener('input',  changeHandler, { signal: _signal });
             settingsTab.addEventListener('change', changeHandler, { signal: _signal });
+            // The Missing tab's Export panel is saved with the settings.
+            var mtExport = view.querySelector('#mtExportPanel');
+            mtExport.addEventListener('input',  changeHandler, { signal: _signal });
+            mtExport.addEventListener('change', function () { updateMissingExportUi(view); changeHandler(); }, { signal: _signal });
+            view.querySelector('.btnMtRefresh').addEventListener('click', function () { loadMissingTab(view); }, { signal: _signal });
+            mtExport.addEventListener('click', function (e) {
+                var btn = e.target.closest('.btnMtDownload');
+                if (btn) downloadMissingTitles(view, btn);
+            }, { signal: _signal });
 
             var spTa = view.querySelector('#txtAiSystemPrompt');
             var resetBtn = view.querySelector('#btnResetAiSystemPrompt');
@@ -12498,6 +12736,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                                 if (target === 'HomeCompanion') { loadHscUsers(view); loadHscManageTab(view); }
                                 else if (target === 'TopLists') loadTopListsTab(view);
                                 else if (target === 'Cleanup') loadTagManageTab(view);
+                                else if (target === 'Missing') loadMissingTab(view);
                             });
                         });
                     };
@@ -13142,6 +13381,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 view.querySelector('#chkHideTopListLibraries').checked = config.HideTopListLibraries !== false;
                 view.querySelector('#chkShowCopyPasteButtons').checked = config.ShowCopyPasteButtons || false;
                 view.querySelector('#chkShowImportCollectionButton').checked = config.ShowImportCollectionButton || false;
+                view.querySelector('#chkShowMissingTitles').checked = !!config.ShowMissingTitles;
+                view.querySelector('#chkMissingIncludeGaps').checked = !!config.MissingIncludeGaps;
+                view.querySelector('#chkMissingExportToFile').checked = !!config.MissingExportToFile;
+                view.querySelector('#txtMissingExportFolder').value = config.MissingExportFolder || '';
+                view.querySelector('#chkMissingExportJson').checked = config.MissingExportJson !== false;
+                view.querySelector('#chkMissingExportCsv').checked = config.MissingExportCsv !== false;
+                updateMissingExportUi(view);
                 view.querySelector('#chkRankedCollectionsEnabled').checked = config.RankedCollectionsEnabled || false;
                 if (view.querySelector('#txtSearchTags')) {
                     view.querySelector('#txtSearchTags').value = '';
@@ -13202,6 +13448,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 } else if (target === 'Cleanup') {
                     var container = view.querySelector('#tcManageContainer');
                     if (container && !container.dataset.loaded) loadTagManageTab(view);
+                } else if (target === 'Missing') {
+                    // Compared with the library each time, so a title added since is gone.
+                    loadMissingTab(view);
                 } else if (target === 'TopLists') {
                     var tlContainer = view.querySelector('#tlContainer');
                     if (tlContainer && !tlContainer.dataset.loaded) loadTopListsTab(view);

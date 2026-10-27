@@ -80,6 +80,9 @@ namespace HomeScreenCompanion
             // A library created in Emby later runs the Top-list section sync by itself.
             _libraryWatcher = new NewLibraryWatcher(_libraryManager, _taskManager, _jsonSerializer, _logger, Plugin.Instance.DataFolderPath);
             _libraryWatcher.Start();
+
+            // "Keep the list in a file" (Missing tab): written again when the library changes.
+            MissingTitlesExport.Initialize(_libraryManager, _jsonSerializer);
         }
 
         private void OnCollectionCreated(object sender, CollectionCreatedEventArgs e) =>
@@ -335,6 +338,7 @@ namespace HomeScreenCompanion
             _collectionManager.ItemsAddedToCollection -= OnItemsAddedToCollection;
             _collectionManager.ItemsRemovedFromCollection -= OnItemsRemovedFromCollection;
             _libraryWatcher?.Dispose();
+            MissingTitlesExport.Dispose();
             PluginLog.Flush();
         }
     }

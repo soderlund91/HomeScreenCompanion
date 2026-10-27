@@ -1,4 +1,4 @@
-<div id="HomeScreenCompanionConfigPage" data-role="page" class="page type-interior pluginConfigurationPage hsc-no-copypaste hsc-no-import hsc-no-ranked"
+<div id="HomeScreenCompanionConfigPage" data-role="page" class="page type-interior pluginConfigurationPage hsc-no-copypaste hsc-no-import hsc-no-ranked hsc-no-missing"
      data-require="emby-input,emby-button,emby-checkbox,emby-textarea"
      data-controller="__plugin/HomeScreenCompanionJS">
 
@@ -1401,7 +1401,35 @@
         /* Settings > Features: buttons that are off are hidden (the class is set from the saved settings). */
         .hsc-no-copypaste .btnCopySourceRow, .hsc-no-copypaste #btnPasteSource,
         .hsc-no-copypaste .btnCopyTopList, .hsc-no-copypaste #btnPasteTopList,
-        .hsc-no-import #btnImportCollection { display: none !important; }
+        .hsc-no-import #btnImportCollection,
+        .hsc-no-missing #btnMissingTab { display: none !important; }
+
+        /* Missing tab */
+        .mt-row { border-bottom: 1px solid var(--line-color); }
+        .mt-head { display: flex; align-items: center; gap: 10px; padding: 9px 4px; min-width: 0; }
+        .mt-head.mt-toggle { cursor: pointer; }
+        .mt-head.mt-toggle:hover { background: var(--hsc-tint-1); }
+        .mt-chev { font-size: 1.2em; opacity: 0.6; transition: transform 0.15s; flex-shrink: 0; }
+        .mt-open > .mt-head .mt-chev { transform: rotate(90deg); }
+        .mt-chev-spacer { width: 1.2em; flex-shrink: 0; }
+        .mt-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .mt-year { color: var(--theme-text-secondary); margin-left: 4px; }
+        .mt-lists { font-size: 0.8em; color: var(--theme-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 35%; }
+        .mt-count { font-size: 0.85em; color: var(--theme-text-secondary); white-space: nowrap; }
+        .mt-links { display: flex; gap: 6px; flex-shrink: 0; }
+        .mt-links a { font-size: 0.75em; font-weight: 600; color: var(--theme-text-secondary); text-decoration: none; border: 1px solid var(--hsc-hairline-strong); border-radius: 4px; padding: 1px 5px; }
+        .mt-links a:hover { color: var(--theme-text-primary); background: var(--hsc-tint-2); }
+        .mt-pill { font-size: 0.75em; font-weight: 500; border-radius: 9999px; padding: 2px 8px; white-space: nowrap; }
+        .mt-pill.lib { background: rgba(82,181,75,0.15); color: var(--hsc-primary-text); }
+        .mt-pill.nolib { background: rgba(230,193,90,0.14); color: var(--hsc-warning-text); }
+        .mt-body { display: none; padding: 0 4px 10px 32px; }
+        .mt-open > .mt-body { display: block; }
+        .mt-season > .mt-head { padding: 6px 4px; font-size: 0.92em; }
+        .mt-season > .mt-body { padding: 0 4px 6px 28px; }
+        .mt-ep { display: flex; gap: 10px; padding: 3px 0; font-size: 0.88em; }
+        .mt-ep-num { width: 3.2em; flex-shrink: 0; color: var(--theme-text-secondary); font-variant-numeric: tabular-nums; }
+        .mt-ep-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .mt-ep-date { color: var(--theme-text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
         .hsc-no-ranked .ranked-only { display: none !important; }
 
         /* Settings level: Basic hides the power-user settings (.hsc-adv) that are not in use
@@ -1481,6 +1509,9 @@
                 </button>
                 <button class="page-tab-btn" data-page-tab="Cleanup">
                     <i class="md-icon tab-icon">auto_delete</i>Cleanup
+                </button>
+                <button class="page-tab-btn" data-page-tab="Missing" id="btnMissingTab">
+                    <i class="md-icon tab-icon">playlist_remove</i>Missing
                 </button>
                 <button class="page-tab-btn" data-page-tab="Settings">
                     <i class="md-icon tab-icon">settings</i>Settings
@@ -1759,6 +1790,18 @@
                             </label>
                             <div class="fieldDescription">Hides the extra libraries the plugin makes for top-lists, so users don't see them in the menu or under Latest. The top-list rows still work.</div>
                         </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="chkShowMissingTitles" />
+                                <span>Show missing titles</span>
+                            </label>
+                            <div class="fieldDescription">Adds a Missing tab with the movies and shows on your External and AI lists that are not in your library, and the episodes your shows lack. It fills on the next sync. Episodes need a TMDb key.</div>
+                            <div class="hsc-callout warning" style="margin-top:8px;">
+                                <i class="md-icon">schedule</i>
+                                <span>With this on, a sync can take longer: the episodes of every show on your lists are read from TMDb. The first sync takes the longest; after that only shows that are still running are read again.</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -1882,6 +1925,62 @@
 
             <div id="tabCleanup" class="page-tab-content" style="display:none;">
                 <div id="tcManageContainer" style="max-width:900px;"></div>
+            </div>
+
+            <div id="tabMissing" class="page-tab-content" style="display:none;">
+                <div style="max-width:900px;">
+                <div style="display:flex;align-items:center;gap:12px;margin:2em 0 1em;">
+                    <h2 class="sectionTitle" style="margin:0;margin-right:auto;">Missing titles</h2>
+                    <button type="button" class="btnMtRefresh btnTcRefresh" title="Reload" style="background:transparent;color:var(--theme-text-secondary);border:1px solid var(--hsc-hairline-strong);border-radius:6px;padding:4px 8px;cursor:pointer;"><i class="md-icon" style="font-size:1em;vertical-align:middle;">refresh</i></button>
+                </div>
+                <div id="mtIntro"></div>
+                <div id="mtExportPanel" class="advanced-section settings-panel hsc-adv" data-adv="export" style="margin:0 0 20px;">
+                    <div class="advanced-header settings-panel-toggle">
+                        <i class="md-icon hsc-panel-icon">download</i>
+                        <span class="hsc-title">Export<span class="hsc-adv-badge">Advanced</span></span>
+                        <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s;">expand_more</i>
+                    </div>
+                    <div class="advanced-body settings-panel-body" style="display:none;">
+                        <div class="hsc-eyebrow" style="margin-top: 4px; margin-bottom: 8px;">Download</div>
+                        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                            <button is="emby-button" type="button" class="raised btn-neutral btnMtDownload" data-format="json"><i class="md-icon" style="margin-right:5px;">download</i>JSON</button>
+                            <button is="emby-button" type="button" class="raised btn-neutral btnMtDownload" data-format="movies"><i class="md-icon" style="margin-right:5px;">download</i>Movies (CSV)</button>
+                            <button is="emby-button" type="button" class="raised btn-neutral btnMtDownload" data-format="shows"><i class="md-icon" style="margin-right:5px;">download</i>Shows (CSV)</button>
+                        </div>
+                        <div class="fieldDescription" style="margin-top:6px;">JSON holds movies and shows with their IMDb, TMDb and TVDb ids. CSV opens in a spreadsheet.</div>
+                        <div id="mtDownloadError" class="fieldDescription" style="display:none; color:var(--hsc-danger-text);"></div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="chkMissingIncludeGaps" />
+                                <span>Include shows you have that lack episodes</span>
+                            </label>
+                            <div class="fieldDescription">Without it, only movies and shows that are not in your library are exported. With it, shows in your library that lack episodes come too, with those episodes.</div>
+                        </div>
+
+                        <div class="hsc-eyebrow" style="margin-top: 24px; margin-bottom: 8px;">File</div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="chkMissingExportToFile" />
+                                <span>Keep the list in a file</span>
+                            </label>
+                            <div class="fieldDescription">The file is written again after every sync, and a few minutes after titles are added to or removed from your library, so it always matches this tab.</div>
+                        </div>
+                        <div id="mtExportFileOptions">
+                            <div class="inputContainer" style="margin-top: 12px;">
+                                <input is="emby-input" type="text" id="txtMissingExportFolder" label="Folder" autocomplete="off" spellcheck="false" />
+                                <div class="fieldDescription">A folder on the Emby server. Leave it empty to use the plugin's own folder<span id="mtDefaultFolder"></span>.</div>
+                            </div>
+                            <div style="display:flex; gap:24px; flex-wrap:wrap;">
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input is="emby-checkbox" type="checkbox" id="chkMissingExportJson" /><span>JSON (missing_titles.json)</span></label>
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input is="emby-checkbox" type="checkbox" id="chkMissingExportCsv" /><span>CSV (missing_movies.csv, missing_shows.csv)</span></label>
+                            </div>
+                            <div id="mtExportStatus" class="fieldDescription" style="margin-top:8px;"></div>
+                        </div>
+                    </div>
+                </div>
+                </div>
+                <div id="mtContainer" style="max-width:900px;"></div>
             </div>
 
             <div id="tabTopLists" class="page-tab-content" style="display:none;">

@@ -8,6 +8,10 @@ namespace HomeScreenCompanion
         public string Name { get; set; } = null!;
         public string Imdb { get; set; } = null!;
         public string? Tmdb { get; set; }
+        // "movie" or "show" when the list says (null = unknown), and the release year: for the
+        // Missing titles tab (MissingTitles).
+        public string? Type { get; set; }
+        public int? Year { get; set; }
     }
 
     public class MdbListItem
@@ -16,6 +20,7 @@ namespace HomeScreenCompanion
         public string? imdb_id { get; set; }
         public int? id { get; set; }
         public string? mediatype { get; set; }
+        public int? release_year { get; set; }
     }
 
     public class MdbListResponse
@@ -240,6 +245,8 @@ namespace HomeScreenCompanion
         public string? name { get; set; }
         public int id { get; set; }
         public string? media_type { get; set; }
+        public string? release_date { get; set; }
+        public string? first_air_date { get; set; }
     }
 
     public class TmdbExternalIds

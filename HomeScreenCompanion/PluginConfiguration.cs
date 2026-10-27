@@ -44,6 +44,17 @@ namespace HomeScreenCompanion
         // Settings > Features: show the Copy / Paste buttons and the Import collection button.
         public bool ShowCopyPasteButtons { get; set; } = false;
         public bool ShowImportCollectionButton { get; set; } = false;
+        // Settings > Features: the Missing tab, with the list titles that are not in the library
+        // (MissingTitles). The sync saves the lists only while it is on.
+        public bool ShowMissingTitles { get; set; } = false;
+        // The Missing tab's export: shows in the library that lack episodes go into downloads and the
+        // kept file too; "Keep the list in a file" writes it to MissingExportFolder ("" = the plugin's
+        // own folder) as JSON and / or CSV (MissingTitlesExport).
+        public bool MissingIncludeGaps { get; set; } = false;
+        public bool MissingExportToFile { get; set; } = false;
+        public string MissingExportFolder { get; set; } = "";
+        public bool MissingExportJson { get; set; } = true;
+        public bool MissingExportCsv { get; set; } = true;
         // Settings > Features (experimental): offers "Keep the list order" on each source's Collection tab.
         public bool RankedCollectionsEnabled { get; set; } = false;
         // The page's settings level: "Basic" hides the power-user settings that are not in use,
