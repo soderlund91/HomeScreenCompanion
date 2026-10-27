@@ -702,8 +702,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     function getUrlRowHtml(value, limit) {
         var val = value || '';
         var lim = limit !== undefined ? limit : 0;
+        var note = mdblistFilterNote(val);
         return `
-            <div class="url-row" style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+            <div class="url-row" style="display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-bottom:10px;">
                 <div style="flex-grow:1;">
                     <input is="emby-input" class="txtTagUrl" type="text" label="Trakt/MDBList/TMDb URL" value="${val}" />
                 </div>
@@ -712,7 +713,33 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 </div>
                 <button type="button" is="emby-button" class="raised button-submit btnTestUrl hsc-btn-secondary hsc-btn-sm" style="margin-top:12px;" title="Test Source"><span>Test</span></button>
                 <button type="button" is="emby-button" class="raised btnRemoveUrl btn-row-remove" title="Remove URL"><i class="md-icon">remove_circle_outline</i></button>
+                <div class="url-filter-note fieldDescription" style="display:${note ? 'block' : 'none'}; flex-basis:100%; margin-top:-6px; color:var(--hsc-warning-text);"><i class="md-icon" style="font-size:1em; vertical-align:-2px; margin-right:4px;">warning</i><span>${escapeHtml(note)}</span></div>
             </div>`;
+    }
+
+    // MDBList's JustWatch chart page takes filters (?locale=de_DE&rank=7...), but its JSON feed and
+    // API ignore them and always give the default chart. Returns the warning for such a URL, else ''.
+    var MDBLIST_JW_DEFAULTS = { locale: 'en_US', rank: '1', provider: '', genre: '' };
+    function mdblistFilterNote(url) {
+        var u;
+        try { u = new URL((url || '').trim()); } catch (e) { return ''; }
+        if (!/^(www\.)?mdblist\.com$/i.test(u.hostname)) return '';
+        if (!/^\/lists\/official\/(movies\/|shows\/)?justwatch-streaming-charts\/?$/i.test(u.pathname)) return '';
+        var used = Object.keys(MDBLIST_JW_DEFAULTS).filter(function (k) {
+            var v = u.searchParams.get(k);
+            return v !== null && v !== '' && v !== MDBLIST_JW_DEFAULTS[k];
+        }).map(function (k) { return k + '=' + u.searchParams.get(k); });
+        return used.length
+            ? 'MDBList ignores the filters in this URL (' + used.join(', ') + '). HSC gets the default JustWatch chart: United States, daily, all services and genres.'
+            : '';
+    }
+
+    function updateMdblistFilterNote(uRow) {
+        var el = uRow && uRow.querySelector('.url-filter-note');
+        if (!el) return;
+        var note = mdblistFilterNote(uRow.querySelector('.txtTagUrl').value);
+        el.querySelector('span').textContent = note;
+        el.style.display = note ? 'block' : 'none';
     }
 
     // ---- Settings level (Basic / Advanced) ----
@@ -4072,6 +4099,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
         // A changed Max items hides the "9 of 10" chip until the next run.
         row.addEventListener('input', e => {
+            if (e.target.classList.contains('txtTagUrl')) updateMdblistFilterNote(e.target.closest('.url-row'));
             if (/Limit$/.test(e.target.className.split(' ').filter(function (c) { return c.indexOf('txt') === 0; })[0] || '')) updateBadges(row);
         });
 
