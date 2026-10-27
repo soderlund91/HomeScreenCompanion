@@ -1414,16 +1414,19 @@
             vertical-align: middle; white-space: nowrap;
         }
         .hsc-level-switch {
-            display: flex; flex-shrink: 0; height: 32px; overflow: hidden;
-            border: 1px solid var(--hsc-hairline-strong); border-radius: 8px;
+            display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; cursor: pointer;
         }
-        .hsc-level-switch button {
-            background: var(--hsc-tint-1); color: var(--theme-text-secondary); border: none;
-            padding: 0 12px; font-family: inherit; font-size: 0.88em; font-weight: 500; cursor: pointer;
+        .hsc-level-switch span {
+            color: var(--plugin-popup-muted); font-size: 0.68em; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.75;
         }
-        .hsc-level-switch button + button { border-left: 1px solid var(--hsc-hairline-strong); }
-        .hsc-level-switch button:hover { background: var(--hsc-tint-2); }
-        .hsc-level-switch button.active { background: var(--hsc-primary); color: #fff; }
+        .hsc-level-switch select {
+            height: 26px; padding: 0 6px; border: 1px solid var(--plugin-input-border); border-radius: 6px; cursor: pointer;
+            background: var(--plugin-input-bg); color: var(--plugin-popup-color); font-family: inherit; font-size: 0.85em; font-weight: 500;
+            transition: background-color 0.15s;
+        }
+        .hsc-level-switch select:hover { background: var(--plugin-popup-hover); }
+        .hsc-level-switch select option { background: var(--plugin-popup-bg); color: var(--plugin-popup-color); }
     </style>
 
     <div class="content-primary">
@@ -1456,10 +1459,13 @@
                     <span id="lastRunStatusLabel" style="font-size: 0.85em; opacity: 0.8;">Idle</span>
                 </div>
 
-                <div class="hsc-level-switch" id="hscLevelSwitch" title="Basic hides the settings for power users. A setting you already use stays visible.">
-                    <button type="button" data-level="Basic">Basic</button>
-                    <button type="button" data-level="Advanced">Advanced</button>
-                </div>
+                <label class="hsc-level-switch" title="Basic hides the settings for power users. A setting you already use stays visible.">
+                    <span>Settings level</span>
+                    <select id="selSettingsLevel">
+                        <option value="Basic">Basic</option>
+                        <option value="Advanced">Advanced</option>
+                    </select>
+                </label>
             </div>
 
 

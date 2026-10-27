@@ -787,9 +787,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // view choice, so it does not wait for Save or mark the page as changed).
     function setSettingsLevel(view, level, save) {
         settingsLevel = level === 'Advanced' ? 'Advanced' : 'Basic';
-        view.querySelectorAll('#hscLevelSwitch button').forEach(function (b) {
-            b.classList.toggle('active', b.getAttribute('data-level') === settingsLevel);
-        });
+        view.querySelector('#selSettingsLevel').value = settingsLevel;
         refreshAdvanced(view);
         if (!save) return;
         window.ApiClient.getPluginConfiguration(pluginId)
@@ -12284,11 +12282,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     });
                 });
 
-                view.querySelectorAll('#hscLevelSwitch button').forEach(function (b) {
-                    b.addEventListener('click', function () {
-                        var level = b.getAttribute('data-level');
-                        if (level !== settingsLevel) setSettingsLevel(view, level, true);
-                    });
+                view.querySelector('#selSettingsLevel').addEventListener('change', function () {
+                    if (this.value !== settingsLevel) setSettingsLevel(view, this.value, true);
                 });
 
                 view.querySelector('#btnOpenBugReport').addEventListener('click', () => bugOverlay.classList.add('modal-visible'));
