@@ -44,8 +44,24 @@ namespace HomeScreenCompanion
         // Settings > Features: show the Copy / Paste buttons and the Import collection button.
         public bool ShowCopyPasteButtons { get; set; } = false;
         public bool ShowImportCollectionButton { get; set; } = false;
+        // Settings > Features: the Missing tab, with the list titles that are not in the library
+        // (MissingTitles). The sync saves the lists only while it is on.
+        public bool ShowMissingTitles { get; set; } = false;
+        // The Missing tab's export: shows in the library that lack episodes go into downloads and the
+        // kept file too; "Keep the list in a file" writes it to MissingExportFolder ("" = the plugin's
+        // own folder) as JSON and / or CSV (MissingTitlesExport).
+        public bool MissingIncludeGaps { get; set; } = false;
+        public bool MissingExportToFile { get; set; } = false;
+        public string MissingExportFolder { get; set; } = "";
+        public bool MissingExportJson { get; set; } = true;
+        public bool MissingExportCsv { get; set; } = true;
         // Settings > Features (experimental): offers "Keep the list order" on each source's Collection tab.
         public bool RankedCollectionsEnabled { get; set; } = false;
+        // The page's settings level: "Basic" hides the power-user settings that are not in use,
+        // "Advanced" shows them all. "" = not chosen yet (the page picks one from what is in use).
+        public string SettingsLevel { get; set; } = "";
+        // Settings > Features: the "Advanced" badges in the Advanced level (Basic always shows them).
+        public bool ShowAdvancedBadges { get; set; } = true;
         public List<TagConfig> Tags { get; set; } = new List<TagConfig>();
         public List<TopListHomeSection> TopLists { get; set; } = new List<TopListHomeSection>();
         public List<SavedMediaInfoFilter> SavedFilters { get; set; } = new List<SavedMediaInfoFilter>();
@@ -81,6 +97,15 @@ namespace HomeScreenCompanion
         public string ContinueWatchingBumpMode { get; set; } = "AllEpisodes"; // "AllEpisodes" | "NewSeasonsOnly"
         public bool ContinueWatchingBumpAllUsers { get; set; } = false;
         public List<string> ContinueWatchingBumpUserIds { get; set; } = new List<string>();
+
+        // Original-language posters (Home Screen Tweaks): titles whose original language is one of
+        // OrigPostersLanguages (ISO 639-1) get a poster in that language (OriginalPosters).
+        public bool OrigPostersEnabled { get; set; } = false;
+        public List<string> OrigPostersLanguages { get; set; } = new List<string>();
+        public bool OrigPostersMovies { get; set; } = true;
+        public bool OrigPostersSeries { get; set; } = true;
+        public bool OrigPostersSeasons { get; set; } = true;
+        public bool OrigPostersEpisodes { get; set; } = false;
 
         // Set once LegacyForkCleanup has run (see there).
         public bool LegacyForkCleanupDone { get; set; } = false;

@@ -162,6 +162,13 @@ namespace HomeScreenCompanion
                 return await FetchMdblistApi(listUrl, apiKey, limit, hits, cancellationToken);
         }
 
+        private static ExternalItemDto FromMdblist(MdbListItem x, string? type) => new ExternalItemDto
+        {
+            Name = x.title!, Imdb = x.imdb_id!, Tmdb = null,
+            Type = type ?? (x.mediatype == "show" ? "show" : x.mediatype == "movie" ? "movie" : null),
+            Year = x.release_year > 0 ? x.release_year : null
+        };
+
         // Official lists (mdblist.com/lists/official/...) have no api.mdblist.com endpoint, only the public /json one
         private static bool IsMdblistOfficialList(string url) =>
             url.IndexOf("/lists/official/", StringComparison.OrdinalIgnoreCase) >= 0;
@@ -189,9 +196,8 @@ namespace HomeScreenCompanion
                         int pageCount = movies.Count + shows.Count;
                         if (pageCount == 0) break;
 
-                        var page = movies.Concat(shows)
-                            .Where(x => !string.IsNullOrEmpty(x.imdb_id))
-                            .Select(x => new ExternalItemDto { Name = x.title!, Imdb = x.imdb_id!, Tmdb = null });
+                        var page = movies.Select(x => FromMdblist(x, "movie")).Concat(shows.Select(x => FromMdblist(x, "show")))
+                            .Where(x => !string.IsNullOrEmpty(x.Imdb));
                         all.AddRange(page);
 
                         if (pageCount < pageSize) break;
@@ -231,7 +237,7 @@ namespace HomeScreenCompanion
 
                         var page = result
                             .Where(x => !string.IsNullOrEmpty(x.imdb_id))
-                            .Select(x => new ExternalItemDto { Name = x.title!, Imdb = x.imdb_id!, Tmdb = null });
+                            .Select(x => FromMdblist(x, null));
                         all.AddRange(page);
 
                         if (result.Count < pageSize) break;
@@ -413,11 +419,15 @@ namespace HomeScreenCompanion
                 for (int k = 0; k < items.Count; k++)
                 {
                     var item = items[k];
+                    var mediaType = target.MediaType ?? item.media_type;
+                    var date = item.release_date ?? item.first_air_date;
                     var dto = new ExternalItemDto
                     {
                         Name = (item.title ?? item.name)!,
                         Tmdb = item.id.ToString(),
-                        Imdb = imdbIds[k]!
+                        Imdb = imdbIds[k]!,
+                        Type = mediaType == "tv" ? "show" : mediaType == "movie" ? "movie" : null,
+                        Year = date != null && date.Length >= 4 && int.TryParse(date.Substring(0, 4), out var y) ? y : (int?)null
                     };
 
                     all.Add(dto);
@@ -489,10 +499,11 @@ namespace HomeScreenCompanion
             options.UserAgent = "HomeScreenCompanionPlugin/1.0";
             options.RequestHeaders.Add("Accept", "application/json");
 
-            return await FetchTraktRobust(options);
+            // A flat answer (/movies/popular, /shows/popular) does not say what its entries are.
+            return await FetchTraktRobust(options, path.IndexOf("/shows", StringComparison.OrdinalIgnoreCase) >= 0 ? "show" : "movie");
         }
 
-        private async Task<List<ExternalItemDto>> FetchTraktRobust(MediaBrowser.Common.Net.HttpRequestOptions options)
+        private async Task<List<ExternalItemDto>> FetchTraktRobust(MediaBrowser.Common.Net.HttpRequestOptions options, string flatType)
         {
             try
             {
@@ -512,8 +523,12 @@ namespace HomeScreenCompanion
                                 string? title = item.movie?.title ?? item.show?.title;
                                 string? imdb = item.movie?.ids?.imdb ?? item.show?.ids?.imdb;
 
+                                int? tmdb = item.movie?.ids?.tmdb ?? item.show?.ids?.tmdb;
+                                int year = item.movie?.year ?? item.show?.year ?? 0;
+
                                 if (!string.IsNullOrEmpty(title) && !string.IsNullOrEmpty(imdb))
-                                    list.Add(new ExternalItemDto { Name = title!, Imdb = imdb!, Tmdb = null });
+                                    list.Add(new ExternalItemDto { Name = title!, Imdb = imdb!, Tmdb = tmdb?.ToString(),
+                                        Type = item.movie != null ? "movie" : "show", Year = year > 0 ? year : (int?)null });
                             }
                             if (list.Count > 0) return list;
                         }
@@ -528,7 +543,8 @@ namespace HomeScreenCompanion
                             foreach (var item in flatList)
                             {
                                 if (!string.IsNullOrEmpty(item.title) && !string.IsNullOrEmpty(item.ids?.imdb))
-                                    list.Add(new ExternalItemDto { Name = item.title!, Imdb = item.ids?.imdb!, Tmdb = null });
+                                    list.Add(new ExternalItemDto { Name = item.title!, Imdb = item.ids?.imdb!, Tmdb = item.ids?.tmdb?.ToString(),
+                                        Type = flatType, Year = item.year > 0 ? item.year : (int?)null });
                             }
                             if (list.Count > 0) return list;
                         }

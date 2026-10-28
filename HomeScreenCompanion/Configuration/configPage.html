@@ -1,4 +1,4 @@
-<div id="HomeScreenCompanionConfigPage" data-role="page" class="page type-interior pluginConfigurationPage hsc-no-copypaste hsc-no-import hsc-no-ranked"
+<div id="HomeScreenCompanionConfigPage" data-role="page" class="page type-interior pluginConfigurationPage hsc-no-copypaste hsc-no-import hsc-no-ranked hsc-no-missing"
      data-require="emby-input,emby-button,emby-checkbox,emby-textarea"
      data-controller="__plugin/HomeScreenCompanionJS">
 
@@ -36,6 +36,9 @@
             --hsc-cat-imported: #e09550;
             --hsc-cat-movies: #b8a28c;
             --hsc-cat-shows: #a29dbb;
+            /* The "Advanced" badge: a highlight, not a warning; a hue used nowhere else. */
+            --hsc-advanced: #c07ad6;
+            --hsc-advanced-border: rgba(192,122,214,0.4);
             --hsc-art-tile: #26262b;  /* dark tile behind white font samples, same in both themes */
         }
         html[data-plugin-theme="light"] {
@@ -53,6 +56,8 @@
             --hsc-cat-imported: #b0661c;
             --hsc-cat-movies: #806a55;
             --hsc-cat-shows: #6b668a;
+            --hsc-advanced: #8a3aa3;
+            --hsc-advanced-border: rgba(138,58,163,0.35);
         }
 
         /* Keyboard focus on our own (non-Emby) controls */
@@ -546,6 +551,24 @@
         .stm-footer { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--plugin-popup-border, rgba(255,255,255,0.12)); font-size: 0.82em; color: var(--plugin-popup-muted, #aaa); }
         .stm-footer button { margin-left: auto; cursor: pointer; border: 1px solid var(--plugin-popup-border, var(--hsc-hairline-strong)); background: var(--hsc-tint-1); color: inherit; border-radius: 8px; padding: 8px 16px; font-family: inherit; font-size: 1.05em; font-weight: 500; }
         .stm-footer button:hover { background: var(--plugin-popup-hover, var(--hsc-tint-2)); }
+        /* Home Screen Tweaks › Original-language posters */
+        .op-langs { display: flex; flex-wrap: wrap; gap: 6px; }
+        .op-lang { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 6px; border: 1px solid var(--hsc-hairline-strong, rgba(128,128,128,0.35)); border-radius: 9999px; cursor: pointer; font-size: 0.88em; user-select: none; }
+        .op-lang:hover { background: var(--hsc-tint-1, rgba(128,128,128,0.08)); }
+        .op-lang input { margin: 0; cursor: pointer; accent-color: var(--hsc-primary, #52b54b); }
+        .op-lang:has(input:checked) { border-color: var(--hsc-primary, #52b54b); background: var(--hsc-tint-1, rgba(128,128,128,0.08)); }
+        .op-lang-code { opacity: 0.55; font-size: 0.85em; }
+        .op-lang-own { opacity: 0.45; }
+        .op-note { align-items: flex-start; gap: 8px; margin: 0 0 12px; padding: 8px 12px; border: 1px solid rgba(230,193,90,0.5); border-radius: 6px; background: rgba(230,193,90,0.08); font-size: 0.85em; line-height: 1.45; }
+        .op-list { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; max-height: 420px; overflow-y: auto; }
+        .op-list:empty { display: none; }
+        .op-row { display: flex; align-items: center; gap: 12px; padding: 6px 8px; border-radius: 6px; }
+        .op-row:hover { background: var(--hsc-tint-1, rgba(128,128,128,0.08)); }
+        .op-poster { width: 34px; height: 50px; border-radius: 4px; flex-shrink: 0; background: rgba(128,128,128,0.2) center/cover no-repeat; }
+        .op-info { flex: 1; min-width: 0; }
+        .op-title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .op-meta { font-size: 0.8em; opacity: 0.7; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .op-row button { margin: 0; flex-shrink: 0; padding: 0.35em 1em; font-size: 0.88em; }
         @keyframes stmIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
         /* Customise popup (generated art) */
         .artc-wrap { display:flex; gap:22px; align-items:flex-start; flex-wrap:wrap; }
@@ -1396,8 +1419,61 @@
         /* Settings > Features: buttons that are off are hidden (the class is set from the saved settings). */
         .hsc-no-copypaste .btnCopySourceRow, .hsc-no-copypaste #btnPasteSource,
         .hsc-no-copypaste .btnCopyTopList, .hsc-no-copypaste #btnPasteTopList,
-        .hsc-no-import #btnImportCollection { display: none !important; }
+        .hsc-no-import #btnImportCollection,
+        .hsc-no-missing #btnMissingTab { display: none !important; }
+
+        /* Missing tab */
+        .mt-row { border-bottom: 1px solid var(--line-color); }
+        .mt-head { display: flex; align-items: center; gap: 10px; padding: 9px 4px; min-width: 0; }
+        .mt-head.mt-toggle { cursor: pointer; }
+        .mt-head.mt-toggle:hover { background: var(--hsc-tint-1); }
+        .mt-chev { font-size: 1.2em; opacity: 0.6; transition: transform 0.15s; flex-shrink: 0; }
+        .mt-open > .mt-head .mt-chev { transform: rotate(90deg); }
+        .mt-chev-spacer { width: 1.2em; flex-shrink: 0; }
+        .mt-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .mt-year { color: var(--theme-text-secondary); margin-left: 4px; }
+        .mt-lists { font-size: 0.8em; color: var(--theme-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 35%; }
+        .mt-count { font-size: 0.85em; color: var(--theme-text-secondary); white-space: nowrap; }
+        .mt-links { display: flex; gap: 6px; flex-shrink: 0; }
+        .mt-links a { font-size: 0.75em; font-weight: 600; color: var(--theme-text-secondary); text-decoration: none; border: 1px solid var(--hsc-hairline-strong); border-radius: 4px; padding: 1px 5px; }
+        .mt-links a:hover { color: var(--theme-text-primary); background: var(--hsc-tint-2); }
+        .mt-pill { font-size: 0.75em; font-weight: 500; border-radius: 9999px; padding: 2px 8px; white-space: nowrap; }
+        .mt-pill.lib { background: rgba(82,181,75,0.15); color: var(--hsc-primary-text); }
+        .mt-pill.nolib { background: rgba(230,193,90,0.14); color: var(--hsc-warning-text); }
+        .mt-body { display: none; padding: 0 4px 10px 32px; }
+        .mt-open > .mt-body { display: block; }
+        .mt-season > .mt-head { padding: 6px 4px; font-size: 0.92em; }
+        .mt-season > .mt-body { padding: 0 4px 6px 28px; }
+        .mt-ep { display: flex; gap: 10px; padding: 3px 0; font-size: 0.88em; }
+        .mt-ep-num { width: 3.2em; flex-shrink: 0; color: var(--theme-text-secondary); font-variant-numeric: tabular-nums; }
+        .mt-ep-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .mt-ep-date { color: var(--theme-text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
         .hsc-no-ranked .ranked-only { display: none !important; }
+
+        /* Settings level: Basic hides the power-user settings (.hsc-adv) that are not in use
+           (refreshAdvanced sets hsc-adv-hidden). Each one carries an "Advanced" badge. */
+        .hsc-adv-hidden { display: none !important; }
+        .hsc-no-adv-badges .hsc-adv-badge { display: none !important; }
+        .hsc-adv-badge {
+            display: inline-block; margin-left: 6px; padding: 0 4px; border-radius: 4px;
+            border: 1px solid var(--hsc-advanced-border); color: var(--hsc-advanced);
+            font-size: 0.62rem; font-weight: 500; line-height: 1.4; letter-spacing: 0.02em; text-transform: none;
+            vertical-align: middle; white-space: nowrap;
+        }
+        .hsc-level-switch {
+            display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; cursor: pointer;
+        }
+        .hsc-level-switch span {
+            color: var(--plugin-popup-muted); font-size: 0.68em; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.75;
+        }
+        .hsc-level-switch select {
+            height: 26px; padding: 0 6px; border: 1px solid var(--plugin-input-border); border-radius: 6px; cursor: pointer;
+            background: var(--plugin-input-bg); color: var(--plugin-popup-color); font-family: inherit; font-size: 0.85em; font-weight: 500;
+            transition: background-color 0.15s;
+        }
+        .hsc-level-switch select:hover { background: var(--plugin-popup-hover); }
+        .hsc-level-switch select option { background: var(--plugin-popup-bg); color: var(--plugin-popup-color); }
     </style>
 
     <div class="content-primary">
@@ -1429,6 +1505,14 @@
                     <span class="status-dot" id="dotStatus"></span>
                     <span id="lastRunStatusLabel" style="font-size: 0.85em; opacity: 0.8;">Idle</span>
                 </div>
+
+                <label class="hsc-level-switch" title="Basic hides the settings for power users. A setting you already use stays visible.">
+                    <span>Settings level</span>
+                    <select id="selSettingsLevel">
+                        <option value="Basic">Basic</option>
+                        <option value="Advanced">Advanced</option>
+                    </select>
+                </label>
             </div>
 
 
@@ -1445,12 +1529,15 @@
                 <button class="page-tab-btn" data-page-tab="Cleanup">
                     <i class="md-icon tab-icon">auto_delete</i>Cleanup
                 </button>
+                <button class="page-tab-btn" data-page-tab="Missing" id="btnMissingTab">
+                    <i class="md-icon tab-icon">playlist_remove</i>Missing
+                </button>
                 <button class="page-tab-btn" data-page-tab="Settings">
                     <i class="md-icon tab-icon">settings</i>Settings
                 </button>
             </div>
 
-            <div id="tabSettings" class="page-tab-content" style="display:none;">
+            <div id="tabSettings" class="page-tab-content" style="display:none; max-width:900px;">
 
                 <div class="advanced-section settings-panel" style="margin-bottom: 15px;">
                     <div class="advanced-header settings-panel-toggle">
@@ -1525,7 +1612,7 @@
                     </div>
                 </div>
 
-                <div class="advanced-section settings-panel" style="margin-bottom: 25px;">
+                <div class="advanced-section settings-panel" style="margin-bottom: 15px;">
                     <div class="advanced-header settings-panel-toggle">
                         <i class="md-icon hsc-panel-icon">auto_awesome</i>
                         <span class="hsc-title">AI Settings</span>
@@ -1688,9 +1775,58 @@
                     </div>
                 </div>
 
-                <div class="advanced-section settings-panel" style="margin-bottom: 25px;">
+                <div class="advanced-section settings-panel" style="margin-bottom: 15px;">
                     <div class="advanced-header settings-panel-toggle">
                         <i class="md-icon hsc-panel-icon">settings</i>
+                        <span class="hsc-title">Settings</span>
+                        <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s;">expand_more</i>
+                    </div>
+                    <div class="advanced-body settings-panel-body" style="display:none;">
+                        <div class="hsc-eyebrow" style="margin-top: 4px; margin-bottom: 8px;">Tags &amp; Collections</div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="chkPreserveTagsOnEmptyResult" />
+                                <span>Preserve tags and collections on empty result</span>
+                            </label>
+                            <div class="fieldDescription">If a list comes back empty, for example because the website is down, keep what you already have instead of removing it.</div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="chkIgnoreMarkedAsWatched" />
+                                <span>Ignore titles only marked as watched</span>
+                            </label>
+                            <div class="fieldDescription">Only count titles someone actually watched. Titles you just marked as watched are ignored by the Last Played and Popular rules and by the AI.</div>
+                        </div>
+
+                        <div class="hsc-eyebrow" style="margin-top: 24px; margin-bottom: 8px;">Features</div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="chkHideTopListLibraries" />
+                                <span>Hide HSC libraries</span>
+                            </label>
+                            <div class="fieldDescription">Hides the extra libraries the plugin makes for top-lists, so users don't see them in the menu or under Latest. The top-list rows still work.</div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="chkShowMissingTitles" />
+                                <span>Show missing titles</span>
+                            </label>
+                            <div class="fieldDescription">Adds a Missing tab with the movies and shows on your External and AI lists that are not in your library, and the episodes your shows lack. It fills on the next sync. Episodes need a TMDb key.</div>
+                            <div class="hsc-callout warning" style="margin-top:8px;">
+                                <i class="md-icon">schedule</i>
+                                <span>With this on, a sync can take longer: the episodes of every show on your lists are read from TMDb. The first sync takes the longest; after that only shows that are still running are read again.</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="advanced-section settings-panel" style="margin-bottom: 25px;">
+                    <div class="advanced-header settings-panel-toggle">
+                        <i class="md-icon hsc-panel-icon">tune</i>
                         <span class="hsc-title">Advanced Settings</span>
                         <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s;">expand_more</i>
                     </div>
@@ -1702,7 +1838,7 @@
                                 <input is="emby-checkbox" type="checkbox" id="chkExtendedConsoleOutput" />
                                 <span>Extended log</span>
                             </label>
-                            <div class="fieldDescription">Shows source details, per-item changes, timings and error details in the log window. The plugin's own log file (<em>Download logs</em> in the log window) always has them, also with this off.</div>
+                            <div class="fieldDescription">Shows more details in the log window. Turn it on when something doesn't work.</div>
                         </div>
 
                         <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
@@ -1710,33 +1846,17 @@
                                 <input is="emby-checkbox" type="checkbox" id="chkDryRunMode" />
                                 <span>Dry Run Mode</span>
                             </label>
-                            <div class="fieldDescription">Simulate process without modifying database.</div>
+                            <div class="fieldDescription">A test run: the log shows what would happen, but nothing is changed. Remember to turn it off again.</div>
                         </div>
 
                         <div class="hsc-eyebrow" style="margin-top: 24px; margin-bottom: 8px;">Tags &amp; Collections</div>
 
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label>
-                                <input is="emby-checkbox" type="checkbox" id="chkPreserveTagsOnEmptyResult" />
-                                <span>Preserve tags and collections on empty result</span>
-                            </label>
-                            <div class="fieldDescription">If an External or AI source returns zero items, keep existing tags and collection members instead of removing them.</div>
-                        </div>
-
-                        <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
-                            <label>
-                                <input is="emby-checkbox" type="checkbox" id="chkIgnoreMarkedAsWatched" />
-                                <span>Ignore titles only marked as watched</span>
-                            </label>
-                            <div class="fieldDescription">Last Played and Popular rules, and the AI's recently watched titles, count only titles that were actually played — not ones marked as watched by hand. Uses Emby's activity log; plays older than the log are counted as before.</div>
-                        </div>
-
-                        <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
-                            <label>
                                 <input is="emby-checkbox" type="checkbox" id="chkLogMissingItems" />
                                 <span>Log missing movies and shows</span>
                             </label>
-                            <div class="fieldDescription">Lists, per group, the titles from your External and AI lists that are not in your library — handy for finding what to add next.</div>
+                            <div class="fieldDescription">Lists the titles from your lists that are not in your library, so you know what to add.</div>
                         </div>
 
                         <div class="hsc-eyebrow" style="margin-top: 24px; margin-bottom: 8px;">Top-lists</div>
@@ -1746,9 +1866,8 @@
                                 <input is="emby-checkbox" type="checkbox" id="chkTopListMirrorCollections" />
                                 <span>Show collections on top-list items</span>
                             </label>
-                            <div class="fieldDescription">Adds each top-list movie to the same collections as the original, so "Included in &lt;collection&gt;" also shows when a movie is opened from a top-list. Note: depending on the sort order, a collection may then show the top-list version with its rank-badge poster.</div>
+                            <div class="fieldDescription">Puts top-list movies in the same collections as the original movie.</div>
                         </div>
-
 
                         <div class="hsc-eyebrow" style="margin-top: 24px; margin-bottom: 8px;">Features</div>
 
@@ -1757,7 +1876,7 @@
                                 <input is="emby-checkbox" type="checkbox" id="chkShowCopyPasteButtons" />
                                 <span>Copy &amp; paste sources</span>
                             </label>
-                            <div class="fieldDescription">Shows Copy on source and top-list cards and the Paste source and Paste top-list buttons, to move them to another server.</div>
+                            <div class="fieldDescription">Adds Copy and Paste buttons, to move sources and top-lists to another server.</div>
                         </div>
 
                         <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
@@ -1765,7 +1884,7 @@
                                 <input is="emby-checkbox" type="checkbox" id="chkShowImportCollectionButton" />
                                 <span>Import collection</span>
                             </label>
-                            <div class="fieldDescription">Shows the Import collection button, to let HSC take over collections that already exist in Emby.</div>
+                            <div class="fieldDescription">Adds a button that lets the plugin take over a collection you already have in Emby.</div>
                         </div>
 
                         <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
@@ -1773,19 +1892,19 @@
                                 <input is="emby-checkbox" type="checkbox" id="chkRankedCollectionsEnabled" />
                                 <span>Ranked collections — movies only (experimental)</span>
                             </label>
-                            <div class="fieldDescription">Shows "Keep the list order" on the Collection tab of every source.</div>
+                            <div class="fieldDescription">Adds "Keep the list order" to collections, so a collection shows its movies in list order.</div>
                             <div class="ranked-collections-warning hsc-callout warning" style="margin-top:8px;">
                                 <i class="md-icon">warning</i>
-                                <span><strong>Experimental — adds a hidden library per ranked collection.</strong> For every collection with <em>Keep the list order</em> ticked, HSC creates a hidden library ("&lt;collection&gt; (ranked)") of small .strm copies of the movies, merges each copy with the real film as an extra version, and fills the collection with the copies so it opens in list order. Unticking removes the copies and the library.</span>
+                                <span><strong>Experimental.</strong> Makes a hidden extra library for each collection that keeps the list order. Turning it off removes it again.</span>
                             </div>
                         </div>
 
                         <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
                             <label>
-                                <input is="emby-checkbox" type="checkbox" id="chkHideTopListLibraries" />
-                                <span>Hide HSC libraries</span>
+                                <input is="emby-checkbox" type="checkbox" id="chkShowAdvancedBadges" />
+                                <span>Show Advanced badges</span>
                             </label>
-                            <div class="fieldDescription">Keeps the libraries HSC creates — those of movie top-lists and of ranked collections ("Keep the list order") — out of every user's sidebar, "My Media" tiles and "Latest" rows; only their top-list rows and collections show them. TV show top-list libraries are always kept out of Latest, Continue Watching and Next Up, whatever this setting is.</div>
+                            <div class="fieldDescription">Marks the settings that Basic hides with an "Advanced" badge. Only for the Advanced level; Basic always shows them.</div>
                         </div>
                     </div>
                 </div>
@@ -1835,11 +1954,67 @@
                 <div id="tcManageContainer" style="max-width:900px;"></div>
             </div>
 
+            <div id="tabMissing" class="page-tab-content" style="display:none;">
+                <div style="max-width:900px;">
+                <div style="display:flex;align-items:center;gap:12px;margin:2em 0 1em;">
+                    <h2 class="sectionTitle" style="margin:0;margin-right:auto;">Missing titles</h2>
+                    <button type="button" class="btnMtRefresh btnTcRefresh" title="Reload" style="background:transparent;color:var(--theme-text-secondary);border:1px solid var(--hsc-hairline-strong);border-radius:6px;padding:4px 8px;cursor:pointer;"><i class="md-icon" style="font-size:1em;vertical-align:middle;">refresh</i></button>
+                </div>
+                <div id="mtIntro"></div>
+                <div id="mtExportPanel" class="advanced-section settings-panel hsc-adv" data-adv="export" style="margin:0 0 20px;">
+                    <div class="advanced-header settings-panel-toggle">
+                        <i class="md-icon hsc-panel-icon">download</i>
+                        <span class="hsc-title">Export<span class="hsc-adv-badge">Advanced</span></span>
+                        <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s;">expand_more</i>
+                    </div>
+                    <div class="advanced-body settings-panel-body" style="display:none;">
+                        <div class="hsc-eyebrow" style="margin-top: 4px; margin-bottom: 8px;">Download</div>
+                        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                            <button is="emby-button" type="button" class="raised btn-neutral btnMtDownload" data-format="json"><i class="md-icon" style="margin-right:5px;">download</i>JSON</button>
+                            <button is="emby-button" type="button" class="raised btn-neutral btnMtDownload" data-format="movies"><i class="md-icon" style="margin-right:5px;">download</i>Movies (CSV)</button>
+                            <button is="emby-button" type="button" class="raised btn-neutral btnMtDownload" data-format="shows"><i class="md-icon" style="margin-right:5px;">download</i>Shows (CSV)</button>
+                        </div>
+                        <div class="fieldDescription" style="margin-top:6px;">JSON holds movies and shows with their IMDb, TMDb and TVDb ids. CSV opens in a spreadsheet.</div>
+                        <div id="mtDownloadError" class="fieldDescription" style="display:none; color:var(--hsc-danger-text);"></div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="chkMissingIncludeGaps" />
+                                <span>Include shows you have that lack episodes</span>
+                            </label>
+                            <div class="fieldDescription">Without it, only movies and shows that are not in your library are exported. With it, shows in your library that lack episodes come too, with those episodes.</div>
+                        </div>
+
+                        <div class="hsc-eyebrow" style="margin-top: 24px; margin-bottom: 8px;">File</div>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="chkMissingExportToFile" />
+                                <span>Keep the list in a file</span>
+                            </label>
+                            <div class="fieldDescription">The file is written again after every sync, and a few minutes after titles are added to or removed from your library, so it always matches this tab.</div>
+                        </div>
+                        <div id="mtExportFileOptions">
+                            <div class="inputContainer" style="margin-top: 12px;">
+                                <input is="emby-input" type="text" id="txtMissingExportFolder" label="Folder" autocomplete="off" spellcheck="false" />
+                                <div class="fieldDescription">A folder on the Emby server. Leave it empty to use the plugin's own folder<span id="mtDefaultFolder"></span>.</div>
+                            </div>
+                            <div style="display:flex; gap:24px; flex-wrap:wrap;">
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input is="emby-checkbox" type="checkbox" id="chkMissingExportJson" /><span>JSON (missing_titles.json)</span></label>
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer;"><input is="emby-checkbox" type="checkbox" id="chkMissingExportCsv" /><span>CSV (missing_movies.csv, missing_shows.csv)</span></label>
+                            </div>
+                            <div id="mtExportStatus" class="fieldDescription" style="margin-top:8px;"></div>
+                        </div>
+                    </div>
+                </div>
+                </div>
+                <div id="mtContainer" style="max-width:900px;"></div>
+            </div>
+
             <div id="tabTopLists" class="page-tab-content" style="display:none;">
                 <div id="tlContainer"></div>
             </div>
 
-            <div id="tabHomeCompanion" class="page-tab-content" style="display:none;">
+            <div id="tabHomeCompanion" class="page-tab-content" style="display:none; max-width:900px;">
                 <div class="hsc-sub-tab-nav">
                     <button class="hsc-sub-tab-btn active" data-hsc-tab="manage">Manage</button>
                     <button class="hsc-sub-tab-btn" data-hsc-tab="copy">Copy &amp; Sync</button>
@@ -1873,8 +2048,11 @@
                             <button type="button" class="run-dial-item" id="btnDialContinueWatching" data-tip="Moves shows you had finished to the front of Continue Watching when new episodes have arrived (if Continue Watching bump is on). Also runs by itself every 6 hours.">
                                 <i class="md-icon">fast_forward</i><span>Bump Continue Watching</span>
                             </button>
+                            <button type="button" class="run-dial-item" id="btnDialOriginalPosters" data-tip="Gives titles made in one of your chosen languages their poster in that language (Original-language posters, Home Screen Tweaks). When that is off, it puts the original posters back. Also runs by itself once a day and after new titles are added.">
+                                <i class="md-icon">translate</i><span>Original-language posters</span>
+                            </button>
                         </div>
-                        <button type="button" class="run-dial-item" id="btnDialOther" aria-expanded="false" aria-controls="runDialOther" data-tip="More runs: Merge top-list versions, Sync top-list rows and Bump Continue Watching. These also run by themselves when needed.">
+                        <button type="button" class="run-dial-item" id="btnDialOther" aria-expanded="false" aria-controls="runDialOther" data-tip="More runs: Merge top-list versions, Sync top-list rows, Bump Continue Watching and Original-language posters. These also run by themselves when needed.">
                             <i class="md-icon">more_horiz</i><span>Other</span><i class="md-icon run-dial-other-chevron">expand_less</i>
                         </button>
                         <button type="button" class="run-dial-item" id="btnDialHomeScreen" data-tip="Copies the home screen layout from the source user to the selected users (Home Screen tab).">
@@ -1988,6 +2166,7 @@
                 <button type="button" class="log-tab" data-log="sync"><span class="status-dot"></span>Sync<span class="log-tab-time"></span></button>
                 <button type="button" class="log-tab" data-log="hsc"><span class="status-dot"></span>Home Screen<span class="log-tab-time"></span></button>
                 <button type="button" class="log-tab" data-log="tl"><span class="status-dot"></span>Top-list<span class="log-tab-time"></span></button>
+                <button type="button" class="log-tab" data-log="op"><span class="status-dot"></span>Posters<span class="log-tab-time"></span></button>
                 <button type="button" class="log-tab log-issues-toggle" id="btnLogIssuesOnly" title="Show only warnings and errors, each under its group"><i class="md-icon" style="font-size:1.1em;">warning</i>Warnings &amp; errors only</button>
             </div>
             <div class="modal-body-scroll" style="background: #1a1a1a; color: #d0d0d0; font-family: ui-monospace, Consolas, Menlo, monospace; font-size: 0.85em; padding: 16px 20px;" id="logContent">
@@ -2557,7 +2736,7 @@
                     <i class="md-icon help-section-icon">home</i>
                     <span>Home Screen</span>
                 </div>
-                <div class="step-text" style="margin-bottom:10px; font-size:0.92em;">The <strong>Home Screen</strong> tab has three independent sub-sections: <strong>Manage</strong> (source-based rows), <strong>Copy &amp; Sync</strong> (copy one user's layout to others) and <strong>Home Screen Tweaks</strong> (adjustments to Emby's built-in rows).</div>
+                <div class="step-text" style="margin-bottom:10px; font-size:0.92em;">The <strong>Home Screen</strong> tab has three independent sub-sections: <strong>Manage</strong> (source-based rows), <strong>Copy &amp; Sync</strong> (copy one user's layout to others) and <strong>Home Screen Tweaks</strong> (adjustments to Emby's built-in rows and posters).</div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">view_list</i>
                     <div><strong>Manage</strong> — Creates and keeps custom home screen rows up to date. Each row is tied to one of your sources and is automatically refreshed for the selected users every time sync runs. To set up a row for a source, open that source card and go to its <em>Home Screen</em> tab.</div>
@@ -2578,7 +2757,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">tune</i>
-                    <div><strong>Home Screen Tweaks</strong> — <em>Continue Watching</em>: when a new episode arrives for a series you had watched to the end, the series moves to the front of Continue Watching / Next Up. Watched status is never changed. Runs automatically when new episodes are added, plus the scheduled task <em>Continue Watching Bump</em>.</div>
+                    <div><strong>Home Screen Tweaks</strong> — <em>Continue Watching</em>: when a new episode arrives for a series you had watched to the end, the series moves to the front of Continue Watching / Next Up. Watched status is never changed. Runs automatically when new episodes are added, plus the scheduled task <em>Continue Watching Bump</em>. <em>Original-language posters</em>: a movie or series made in a language you choose (for example Danish) gets its poster in that language instead of the library's. The poster it replaced is kept and can be restored.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">family_restroom</i>
@@ -2676,7 +2855,11 @@
                     <i class="md-icon help-section-icon">settings</i>
                     <span>Settings &amp; Utilities</span>
                 </div>
-                <div class="step-text" style="margin-bottom:10px;font-size:0.92em;">The <strong>Settings</strong> tab has four panels: <em>External list settings</em>, <em>AI Settings</em>, <em>Advanced Settings</em> and <em>Backup &amp; Restore</em>. Click <strong>Save Settings</strong> after a change.</div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">tune</i>
+                    <div><strong>Basic / Advanced</strong> — The switch at the top right of the page. <em>Basic</em> hides the settings for power users, such as the TV show level, tag images, priority override, the Blacklist tab and the look of home rows (card size, scroll direction …). Each of them is marked <em>Advanced</em>. One you already use stays visible in Basic; set it back to its default and save, and it is hidden. <em>Advanced</em> shows them all. Nothing is switched off by choosing Basic.</div>
+                </div>
+                <div class="step-text" style="margin-bottom:10px;font-size:0.92em;">The <strong>Settings</strong> tab has five panels: <em>External list settings</em>, <em>AI Settings</em>, <em>Settings</em>, <em>Advanced Settings</em> and <em>Backup &amp; Restore</em>. Click <strong>Save Settings</strong> after a change.</div>
                 <div class="hsc-eyebrow" style="margin:14px 0 8px;">External list settings</div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">key</i>
@@ -2725,16 +2908,8 @@
                     <div><strong>API key visibility</strong> — All API key fields are hidden by default for security. Tick the <em>Show</em> checkbox next to a field to reveal the value. The checkbox resets to hidden every time you open the settings page.</div>
                 </div>
 
-                <div id="help-sec-8b" class="hsc-eyebrow" style="margin:18px 0 8px;">Advanced Settings</div>
-                <div class="step-text" style="margin-bottom:10px;font-size:0.92em;">Optional settings in four groups under <em>Advanced Settings</em> in the <strong>Settings</strong> tab. Tick one and click <strong>Save Settings</strong>.</div>
-                <div class="help-feature-row">
-                    <i class="md-icon help-feat-icon">bug_report</i>
-                    <div><strong>Extended log</strong> <span style="opacity:0.6;">(Logging &amp; Troubleshooting)</span> — Shows source details, per-item changes, timings and error details in the log window. Turn it on when something isn't working as expected. The plugin's own log file (<em>Download logs</em>) always has these lines, also with it off.</div>
-                </div>
-                <div class="help-feature-row">
-                    <i class="md-icon help-feat-icon">science</i>
-                    <div><strong>Dry Run Mode</strong> <span style="opacity:0.6;">(Logging &amp; Troubleshooting)</span> — Runs a full sync simulation without making any real changes. The log shows exactly what would be tagged, removed or collected — useful for checking your settings before committing. Remember to switch it off again.</div>
-                </div>
+                <div class="hsc-eyebrow" style="margin:18px 0 8px;">Settings</div>
+                <div class="step-text" style="margin-bottom:10px;font-size:0.92em;">General settings under <em>Settings</em> in the <strong>Settings</strong> tab. Tick one and click <strong>Save Settings</strong>.</div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">shield</i>
                     <div><strong>Preserve tags and collections on empty result</strong> <span style="opacity:0.6;">(Tags &amp; Collections)</span> — If an External or AI source returns zero items — for example because the website was temporarily unreachable — the plugin keeps the existing tags and collection members as they are instead of removing everything. This prevents an accidental wipe-out caused by a network hiccup. In a source with several URLs only the empty URL is held: it uses the titles it gave on its last good read, and the source's other URLs are synced as usual (titles that left them are removed). A URL that no longer exists (HTTP 404) is left out of such a source, with an error in the log — remove or fix it.</div>
@@ -2742,6 +2917,21 @@
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">done_all</i>
                     <div><strong>Ignore titles only marked as watched</strong> <span style="opacity:0.6;">(Tags &amp; Collections)</span> — Off by default. Marking a title watched by hand gives it the same last-played date and play count as watching it, so a "recently played" rule picks it up although nobody watched it. With this on, <em>Last Played</em> and <em>Popular on this server</em> rules, and the titles an AI source gets as <em>recently watched</em>, count only titles that were actually played. It uses Emby's activity log; plays older than the log are counted as before.</div>
+                </div>
+                <div id="help-hide-libs" class="help-feature-row">
+                    <i class="md-icon help-feat-icon">visibility_off</i>
+                    <div><strong>Hide HSC libraries</strong> <span style="opacity:0.6;">(Features)</span> — On by default. Keeps the libraries HSC creates — those of top-lists and of ranked collections — out of every user's sidebar, "My Media" tiles and "Latest" rows; only their top-list rows and collections show them. TV show top-list libraries are always kept out of Latest, Continue Watching and Next Up, whatever this setting is.</div>
+                </div>
+
+                <div id="help-sec-8b" class="hsc-eyebrow" style="margin:18px 0 8px;">Advanced Settings</div>
+                <div class="step-text" style="margin-bottom:10px;font-size:0.92em;">Optional settings for troubleshooting and extra features, in four groups under <em>Advanced Settings</em> in the <strong>Settings</strong> tab. They are shown in both <em>Basic</em> and <em>Advanced</em>. Tick one and click <strong>Save Settings</strong>.</div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">bug_report</i>
+                    <div><strong>Extended log</strong> <span style="opacity:0.6;">(Logging &amp; Troubleshooting)</span> — Shows source details, per-item changes, timings and error details in the log window. Turn it on when something isn't working as expected. The plugin's own log file (<em>Download logs</em>) always has these lines, also with it off.</div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">science</i>
+                    <div><strong>Dry Run Mode</strong> <span style="opacity:0.6;">(Logging &amp; Troubleshooting)</span> — Runs a full sync simulation without making any real changes. The log shows exactly what would be tagged, removed or collected — useful for checking your settings before committing. Remember to switch it off again.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">playlist_remove</i>
@@ -2763,9 +2953,9 @@
                     <i class="md-icon help-feat-icon">format_list_numbered</i>
                     <div><strong>Ranked collections — movies only (experimental)</strong> <span style="opacity:0.6;">(Features)</span> — Off by default. Shows <em>Keep the list order</em> on the Collection tab of every source, so a collection can open in list order; HSC adds a hidden library per ranked collection for it. See <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-more-ranked').scrollIntoView({behavior:'smooth'});return false;">Keep the list order</a>.</div>
                 </div>
-                <div id="help-hide-libs" class="help-feature-row">
-                    <i class="md-icon help-feat-icon">visibility_off</i>
-                    <div><strong>Hide HSC libraries</strong> <span style="opacity:0.6;">(Features)</span> — On by default. Keeps the libraries HSC creates — those of top-lists and of ranked collections — out of every user's sidebar, "My Media" tiles and "Latest" rows; only their top-list rows and collections show them. TV show top-list libraries are always kept out of Latest, Continue Watching and Next Up, whatever this setting is.</div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">label</i>
+                    <div><strong>Show Advanced badges</strong> <span style="opacity:0.6;">(Features)</span> — On by default. Untick it to hide the <em>Advanced</em> badges when the settings level is <em>Advanced</em>, if you always use that level. In <em>Basic</em> the badges are always shown, since they tell why a setting in use is still visible.</div>
                 </div>
 
                 <div class="hsc-eyebrow" style="margin:18px 0 8px;">Running, logs and tools</div>

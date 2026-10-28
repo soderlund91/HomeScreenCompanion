@@ -57,6 +57,9 @@ namespace HomeScreenCompanion
             // Toggling the collection mirror adds (or removes) memberships for all existing copies.
             if (Configuration!.TopListMirrorCollections != wasMirroring)
                 TopListCollectionMirror.QueueFullSync();
+            // The Missing tab's kept file follows its settings (turned on, another folder or format).
+            if (Configuration.ShowMissingTitles && Configuration.MissingExportToFile)
+                MissingTitlesExport.Queue(TimeSpan.FromSeconds(5));
         }
 
         // Every config save (the settings page and the server's own saves) can change which

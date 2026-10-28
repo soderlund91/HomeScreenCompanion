@@ -26,7 +26,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         if (statusInterval && ms !== statusPollMs && document.body.contains(view)) startStatusPolling(view, ms);
     }
     // Live log modal: latest status per task and the tab the user picked (null = automatic)
-    var _lastStatus = { sync: null, hsc: null, tl: null };
+    var _lastStatus = { sync: null, hsc: null, tl: null, op: null };
     var _logTab = null;
     var _logIssuesOnly = false;   // log modal: only warning / error lines (with their group's header)
     var originalConfigState = null;
@@ -702,8 +702,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     function getUrlRowHtml(value, limit) {
         var val = value || '';
         var lim = limit !== undefined ? limit : 0;
+        var note = mdblistFilterNote(val);
         return `
-            <div class="url-row" style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+            <div class="url-row" style="display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-bottom:10px;">
                 <div style="flex-grow:1;">
                     <input is="emby-input" class="txtTagUrl" type="text" label="Trakt/MDBList/TMDb URL" value="${val}" />
                 </div>
@@ -712,7 +713,139 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 </div>
                 <button type="button" is="emby-button" class="raised button-submit btnTestUrl hsc-btn-secondary hsc-btn-sm" style="margin-top:12px;" title="Test Source"><span>Test</span></button>
                 <button type="button" is="emby-button" class="raised btnRemoveUrl btn-row-remove" title="Remove URL"><i class="md-icon">remove_circle_outline</i></button>
+                <div class="url-filter-note fieldDescription" style="display:${note ? 'block' : 'none'}; flex-basis:100%; margin-top:-6px; color:var(--hsc-warning-text);"><i class="md-icon" style="font-size:1em; vertical-align:-2px; margin-right:4px;">warning</i><span>${escapeHtml(note)}</span></div>
             </div>`;
+    }
+
+    // MDBList's JustWatch chart page takes filters (?locale=de_DE&rank=7...), but its JSON feed and
+    // API ignore them and always give the default chart. Returns the warning for such a URL, else ''.
+    var MDBLIST_JW_DEFAULTS = { locale: 'en_US', rank: '1', provider: '', genre: '' };
+    function mdblistFilterNote(url) {
+        var u;
+        try { u = new URL((url || '').trim()); } catch (e) { return ''; }
+        if (!/^(www\.)?mdblist\.com$/i.test(u.hostname)) return '';
+        if (!/^\/lists\/official\/(movies\/|shows\/)?justwatch-streaming-charts\/?$/i.test(u.pathname)) return '';
+        var used = Object.keys(MDBLIST_JW_DEFAULTS).filter(function (k) {
+            var v = u.searchParams.get(k);
+            return v !== null && v !== '' && v !== MDBLIST_JW_DEFAULTS[k];
+        }).map(function (k) { return k + '=' + u.searchParams.get(k); });
+        return used.length
+            ? 'MDBList ignores the filters in this URL (' + used.join(', ') + '). HSC gets the default JustWatch chart: United States, daily, all services and genres.'
+            : '';
+    }
+
+    function updateMdblistFilterNote(uRow) {
+        var el = uRow && uRow.querySelector('.url-filter-note');
+        if (!el) return;
+        var note = mdblistFilterNote(uRow.querySelector('.txtTagUrl').value);
+        el.querySelector('span').textContent = note;
+        el.style.display = note ? 'block' : 'none';
+    }
+
+    // ---- Settings level (Basic / Advanced) ----
+    // A power-user setting is an .hsc-adv element with an "Advanced" badge. Basic hides the ones
+    // at their default; one in use stays visible, so nothing that is in force is ever hidden.
+    var settingsLevel = 'Basic';
+    var ADV_BADGE = '<span class="hsc-adv-badge">Advanced</span>';
+
+    // Whether an .hsc-adv element is set to something other than its default. data-adv says how to
+    // tell: check (its checkbox ticked), target (other than Series only), tag-art (a generated or
+    // uploaded tag image), blacklist (the card's blacklist has ids); otherwise its select's value
+    // is not one of data-adv-def ("|"-separated).
+    function advInUse(el) {
+        var kind = el.getAttribute('data-adv') || '';
+        if (kind === 'check') return !!el.querySelector('input[type="checkbox"]:checked');
+        // The Missing tab's Export panel: in use when it writes a file or adds shows with gaps.
+        if (kind === 'export') return !!el.querySelector('#chkMissingExportToFile:checked, #chkMissingIncludeGaps:checked');
+        if (kind === 'tag-art') {
+            var poster = el.querySelector('.coll-style-picker[data-kind="poster"] input:checked');
+            var bg = el.querySelector('.coll-style-picker[data-kind="background"] input:checked');
+            return !!((poster && poster.value) || (bg && bg.value) || (el.querySelector('.hiddenBgPath') || {}).value);
+        }
+        if (kind === 'blacklist') {
+            var row = el.closest('.tag-row');
+            return !!(row && ((row.querySelector('.txtTagBlacklist') || {}).value || '').trim());
+        }
+        if (kind === 'target') {
+            var c = el.querySelectorAll('input[type="checkbox"]');   // Series, Season, Episode
+            return c.length === 3 && !(c[0].checked && !c[1].checked && !c[2].checked);
+        }
+        var sel = el.querySelector('select');
+        return !!sel && (el.getAttribute('data-adv-def') || '').split('|').indexOf(sel.value) < 0;
+    }
+
+    // Shows or hides the power-user settings under root for the current level. Run when they are
+    // drawn, on a level switch and after Save — not while editing, so one put back to its default
+    // stays until Save.
+    function refreshAdvanced(root) {
+        if (!root) return;
+        root.querySelectorAll('.hsc-adv').forEach(function (el) {
+            var hide = settingsLevel !== 'Advanced' && !advInUse(el);
+            el.classList.toggle('hsc-adv-hidden', hide);
+            // A card tab that is hidden while open (Blacklist): show the Source tab instead.
+            if (hide && el.classList.contains('tag-tab') && el.classList.contains('active')) {
+                var first = el.parentElement.querySelector('.tag-tab[data-tab="general"]');
+                if (first) first.click();
+            }
+        });
+    }
+
+    // Whether a saved home row's settings (HomeSectionSettings JSON) use a power-user look setting.
+    function hseSettingsUseAdvanced(json) {
+        var s = {};
+        try { s = JSON.parse(json || '{}') || {}; } catch (e) { }
+        return !!(s.DisplayMode || s.ScrollDirection || normCardSize(s.CardSizeOffset) !== '0');
+    }
+
+    // The level for a configuration saved before there was one: Advanced when it already uses a
+    // power-user setting, else Basic.
+    function initialSettingsLevel(config) {
+        var used = (config.Tags || []).some(function (t) {
+            return t.TagTargetSeason || t.TagTargetEpisode || t.CollectionTargetSeason || t.CollectionTargetEpisode
+                || t.MediaInfoTargetSeason || t.MediaInfoTargetEpisode
+                || t.EnableCollectionTag || t.EnablePlaylistTag || t.CollectionKeepOrder
+                || t.TagPosterStyle || t.TagBackgroundStyle || t.TagBackgroundPath
+                || t.OverrideWhenActive || (t.Blacklist || []).length > 0
+                || hseSettingsUseAdvanced(t.HomeSectionSettings);
+        }) || (config.TopLists || []).some(function (tl) { return hseSettingsUseAdvanced(tl.HomeSectionSettings); })
+          || (config.HomeSyncProfiles || []).some(function (p) { return p && p.AddToSources; })
+          || !!config.MissingExportToFile || !!config.MissingIncludeGaps;
+        return used ? 'Advanced' : 'Basic';
+    }
+
+    // Hides the "Advanced" badges in the Advanced level when Settings > Features says so (the saved
+    // setting, like the other Features). Basic always shows them: they tell why a setting in use is there.
+    function refreshAdvBadges(view) {
+        var show = true;
+        try { show = !originalConfigState || JSON.parse(originalConfigState).ShowAdvancedBadges !== false; } catch (e) { }
+        view.classList.toggle('hsc-no-adv-badges', settingsLevel === 'Advanced' && !show);
+    }
+
+    // Sets the level on the page; save = also store it in the configuration right away (it is a
+    // view choice, so it does not wait for Save or mark the page as changed).
+    function setSettingsLevel(view, level, save) {
+        settingsLevel = level === 'Advanced' ? 'Advanced' : 'Basic';
+        view.querySelector('#selSettingsLevel').value = settingsLevel;
+        refreshAdvanced(view);
+        refreshAdvBadges(view);
+        if (!save) return;
+        window.ApiClient.getPluginConfiguration(pluginId)
+            .then(function (currentConfig) {
+                var before = hscServerStamp(currentConfig);
+                currentConfig.SettingsLevel = settingsLevel;
+                return window.ApiClient.updatePluginConfiguration(pluginId, currentConfig)
+                    .then(function (r) { return advanceServerStamp(before).then(function () { return r; }); });
+            })
+            .then(function () {
+                if (originalConfigState) {
+                    try {
+                        var state = JSON.parse(originalConfigState);
+                        state.SettingsLevel = settingsLevel;
+                        originalConfigState = JSON.stringify(state);
+                    } catch (e) {}
+                }
+                checkFormState();
+            });
     }
 
     // One extra tag of a source (TagConfig.ExtraTags), put on the same titles as its Tag Name.
@@ -746,10 +879,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var what = kind === 'coll' ? 'collection' : 'playlist';
         var extraRows = (extras || []).map(function (v) { return getOutExtraTagRowHtml(v); }).join('');
         return `
-            <div class="checkboxContainer checkboxContainer-withDescription out-tag-box" style="margin-top:12px;">
+            <div class="checkboxContainer checkboxContainer-withDescription out-tag-box hsc-adv" data-adv="check" style="margin-top:12px;">
                 <label>
                     <input is="emby-checkbox" type="checkbox" class="chkOutTag" data-kind="${kind}" ${enabled ? 'checked' : ''} />
-                    <span>Custom tag on ${what}</span>
+                    <span>Custom tag on ${what}${ADV_BADGE}</span>
                 </label>
                 <div class="fieldDescription">Puts a tag on the ${what}${kind === 'pl' ? 's' : ''} itself, not on the titles in ${kind === 'pl' ? 'them' : 'it'}.<br>Not sure you need it? Leave it off.</div>
                 <div class="inputContainer out-tag-field" style="margin-top:10px; display:${enabled ? 'block' : 'none'};">
@@ -3121,7 +3254,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     <div class="tag-tab" data-tab="collection">Collection</div>
                     <div class="tag-tab" data-tab="playlist">Playlist</div>
                     <div class="tag-tab" data-tab="schedule">Schedule</div>
-                    <div class="tag-tab" data-tab="advanced">Blacklist</div>
+                    <div class="tag-tab hsc-adv" data-adv="blacklist" data-tab="advanced">Blacklist${ADV_BADGE}</div>
                     <div class="tag-tab" data-tab="homescreen">Home Screen</div>
                 </div>
                 
@@ -3330,9 +3463,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <div class="extra-tag-list">${(tagConfig.ExtraTags || []).map(getExtraTagRowHtml).join('')}</div>
                             <button is="emby-button" type="button" class="raised btnAddExtraTag hsc-btn-dashed" style="width:100%;"><i class="md-icon" style="margin-right:5px;">add</i>Add another tag</button>
                             <div class="fieldDescription" style="margin-bottom:12px;">Extra tags go on the same titles. The home row, top-list and tag images use the Tag Name.</div>
-                            <div class="mi-tag-target-section" style="margin-top:4px;">
+                            <div class="mi-tag-target-section hsc-adv" data-adv="target" style="margin-top:4px;">
                                 <div style="font-size:0.85em; opacity:0.6; margin-bottom:6px; display:flex; align-items:center; gap:8px;">
-                                    <span>For TV shows, choose what level to tag:</span>
+                                    <span>For TV shows, choose what level to tag:${ADV_BADGE}</span>
                                     <button type="button" is="emby-button" class="btnTagTargetHelp raised" style="background:transparent; border:1px solid rgba(128,128,128,0.35); color:var(--theme-text-secondary); font-size:0.82em; padding:0 10px; min-width:0;"><i class="md-icon" style="font-size:1em; margin-right:4px;">help_outline</i><span>How to use</span></button>
                                 </div>
                                 <div style="display:flex; flex-direction:row; align-items:center; gap:20px;">
@@ -3351,8 +3484,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                                 </div>
                             </div>
 
-                            <details class="tag-art-more"${tagConfig.TagPosterStyle || tagConfig.TagBackgroundStyle || tagConfig.TagBackgroundPath ? ' data-custom="1"' : ''}>
-                            <summary><span><i class="md-icon" style="margin-right:5px;">image</i>Customize tag images<span class="tag-art-custom-chip">customized</span></span><i class="md-icon tag-art-chevron">expand_more</i></summary>
+                            <details class="tag-art-more hsc-adv" data-adv="tag-art"${tagConfig.TagPosterStyle || tagConfig.TagBackgroundStyle || tagConfig.TagBackgroundPath ? ' data-custom="1"' : ''}>
+                            <summary><span><i class="md-icon" style="margin-right:5px;">image</i>Customize tag images${ADV_BADGE}<span class="tag-art-custom-chip">customized</span></span><i class="md-icon tag-art-chevron">expand_more</i></summary>
                             <div class="fieldDescription" style="margin-top:8px;">Images for the <strong>tag itself</strong>: the poster and background of the tag's own page in Emby, the page that opens when you click the tag on a movie or show. Not the posters of the movies or shows: those are never changed here.</div>
                             <div style="margin-top:15px;">
                                 <p style="margin:0 0 8px 0; font-size:0.9em; font-weight:bold; opacity:0.7;">Tag Poster</p>
@@ -3414,10 +3547,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             }).join('')}
                         </div>
                     </div>
-                    <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:16px; ${intervals.length === 0 ? 'opacity:0.4;' : ''}">
+                    <div class="checkboxContainer checkboxContainer-withDescription hsc-adv" data-adv="check" style="margin-top:16px; ${intervals.length === 0 ? 'opacity:0.4;' : ''}">
                         <label>
                             <input is="emby-checkbox" type="checkbox" class="chkOverrideWhenActive" ${overrideChecked} ${intervals.length === 0 ? 'disabled' : ''} />
-                            <span>Priority override when active</span>
+                            <span>Priority override when active${ADV_BADGE}</span>
                         </label>
                         <div class="fieldDescription">When this entry is in schedule, all other entries sharing the same tag or collection are suppressed — only this entry's items keep the tag and collection. If several priority entries are in schedule at once, the one highest in the list wins.</div>
                     </div>
@@ -3446,9 +3579,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         </div>
                         ${getOutputTagHtml('coll', tagConfig.EnableCollectionTag, tagConfig.CollectionTag, tagConfig.CollectionExtraTags)}
 
-                        <div class="mi-coll-target-section" style="margin-top:10px;">
+                        <div class="mi-coll-target-section hsc-adv" data-adv="target" style="margin-top:10px;">
                             <div style="font-size:0.85em; opacity:0.6; margin-bottom:6px; display:flex; align-items:center; gap:8px;">
-                                <span>For TV shows, choose what level to add to collection:</span>
+                                <span>For TV shows, choose what level to add to collection:${ADV_BADGE}</span>
                                 <button type="button" is="emby-button" class="btnCollTargetHelp raised" style="background:transparent; border:1px solid rgba(128,128,128,0.35); color:var(--theme-text-secondary); font-size:0.82em; padding:0 10px; min-width:0;"><i class="md-icon" style="font-size:1em; margin-right:4px;">help_outline</i><span>How to use</span></button>
                             </div>
                             <div style="display:flex; flex-direction:row; align-items:center; gap:20px;">
@@ -3549,15 +3682,17 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <button type="button" is="emby-button" class="btnCollArtPreview raised" style="background:transparent; border:1px solid rgba(128,128,128,0.35); color:var(--theme-text-secondary); font-size:0.82em; padding:0 10px; min-width:0;"><i class="md-icon" style="font-size:1em; margin-right:4px;">visibility</i><span>Preview art</span></button>
                         </div>
 
-                        <div class="checkboxContainer ranked-only" style="margin-top:15px;">
+                        <div class="ranked-only hsc-adv" data-adv="check">
+                        <div class="checkboxContainer" style="margin-top:15px;">
                             <label>
                                 <input is="emby-checkbox" type="checkbox" class="chkCollKeepOrder" ${tagConfig.CollectionKeepOrder ? 'checked' : ''} />
-                                <span>Keep the list order — movies only (experimental)</span>
+                                <span>Keep the list order — movies only (experimental)${ADV_BADGE}</span>
                             </label>
                         </div>
-                        <div class="ranked-only" style="display:flex; align-items:flex-start; gap:8px; background:rgba(230,193,90,0.1); border:1px solid rgba(230,193,90,0.35); border-radius:6px; padding:12px; font-size:0.85em; line-height:1.5; margin-top:6px; margin-bottom:6px;">
+                        <div style="display:flex; align-items:flex-start; gap:8px; background:rgba(230,193,90,0.1); border:1px solid rgba(230,193,90,0.35); border-radius:6px; padding:12px; font-size:0.85em; line-height:1.5; margin-top:6px; margin-bottom:6px;">
                             <i class="md-icon" style="font-size:1.1em; color:var(--hsc-warning-text); flex-shrink:0; margin-top:1px;">warning</i>
                             <span><strong>Experimental:</strong> adds a hidden library "&lt;collection&gt; (ranked)" with .strm copies of the movies, merged with the real films as extra versions. Unticking removes them.</span>
+                        </div>
                         </div>
                     </div>
                     </div>
@@ -3641,6 +3776,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         initManualEditor(newRow);
         updateNextWatchWarning(newRow);
         updatePlaylistDescPlaceholder(newRow);
+        refreshAdvanced(newRow);
         // Auto-size any pre-filled growing textareas
         newRow.querySelectorAll('textarea.txtMiValue, textarea.txtTagBlacklist').forEach(function (ta) {
             ta.style.height = 'auto';
@@ -3975,6 +4111,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
         // A changed Max items hides the "9 of 10" chip until the next run.
         row.addEventListener('input', e => {
+            if (e.target.classList.contains('txtTagUrl')) updateMdblistFilterNote(e.target.closest('.url-row'));
             if (/Limit$/.test(e.target.className.split(' ').filter(function (c) { return c.indexOf('txt') === 0; })[0] || '')) updateBadges(row);
         });
 
@@ -4973,12 +5110,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var tabs = view.querySelectorAll('#logTabs .log-tab[data-log]');
         if (!content) return;
 
-        var keys = ['sync', 'hsc', 'tl'];
         function startedMs(k) { var s = _lastStatus[k]; var t = s && s.StartedUtc ? Date.parse(s.StartedUtc) : NaN; return isNaN(t) ? 0 : t; }
         function running(k) { return !!(_lastStatus[k] && _lastStatus[k].IsRunning); }
         function logs(k) { return (_lastStatus[k] && _lastStatus[k].Logs) || []; }
+        // Posters only while Original-language posters is on (as saved), or while its run is busy
+        // (the run after turning it off puts the originals back).
+        var showPosters = lastSavedOrigPostersEnabled() || running('op');
+        var keys = showPosters ? ['sync', 'hsc', 'tl', 'op'] : ['sync', 'hsc', 'tl'];
 
         var selected = _logTab;
+        if (selected && keys.indexOf(selected) < 0) selected = null;
         if (!selected) {
             selected = keys.filter(running)[0];
             if (!selected) {
@@ -4990,6 +5131,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
         tabs.forEach(function (tab) {
             var k = tab.getAttribute('data-log');
+            tab.style.display = keys.indexOf(k) < 0 ? 'none' : '';
             tab.classList.toggle('active', k === selected);
             tab.classList.toggle('empty', logs(k).length === 0 && !running(k));
             var dot = tab.querySelector('.status-dot');
@@ -5015,7 +5157,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
     // A group, phase or run header line of the log (timestamp already removed).
     function isLogHeader(raw) {
-        return /^(»|Results$|Summary$|\[Cleanup\]$|\[\d+\/\d+\] |Home Screen (Companion|Sync) )/.test(raw);
+        return /^(»|Results$|Summary$|\[Cleanup\]$|\[\d+\/\d+\] |Home Screen (Companion|Sync) |Original-language posters )/.test(raw);
     }
 
     // The log's ⚠ / ✖ lines, each run of them under the group (or phase) header it belongs to.
@@ -5074,9 +5216,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
 
     // "Running · <step> · <elapsed>" for the Last run chip; the step comes from the Status endpoints.
-    function runningStepText(st, isHomeScreen) {
+    function runningStepText(st, isHomeScreen, isPosters) {
         var step = st.Step || '';
         if (isHomeScreen && step.indexOf('Home Screen Sync') !== 0) step = 'Home Screen Sync · ' + step;
+        if (isPosters) step = 'Original-language posters · ' + step;
         if (step.length > 70) step = step.substring(0, 69) + '…';
         var text = 'Running · ' + step;
         var started = st.StartedUtc ? Date.parse(st.StartedUtc) : NaN;
@@ -5096,10 +5239,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         Promise.all([
             window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/Status")),
             window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/Hsc/Status")).catch(function () { return null; }),
-            window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/TopList/Status")).catch(function () { return null; })
+            window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/TopList/Status")).catch(function () { return null; }),
+            window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/OriginalPosters/RunStatus")).catch(function () { return null; })
         ]).then(function (results) {
             if (myId !== statusRequestId) return;
-            var result = results[0], hscResult = results[1], tlResult = results[2];
+            var result = results[0], hscResult = results[1], tlResult = results[2], opResult = results[3];
             var label = view.querySelector('#lastRunStatusLabel'), dot = view.querySelector('#dotStatus'), content = view.querySelector('#logContent');
             var btnSave = view.querySelector('.btn-save'), btnRun = view.querySelector('#btnRunSync');
 
@@ -5111,7 +5255,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
 
             var eitherRunning = result.IsRunning || (hscResult && hscResult.IsRunning);
-            setStatusPollRate(view, eitherRunning || !!(tlResult && tlResult.IsRunning));
+            // The poster run does not lock Save: it does not touch the settings.
+            setStatusPollRate(view, eitherRunning || !!(tlResult && tlResult.IsRunning) || !!(opResult && opResult.IsRunning));
             if (eitherRunning) {
                 if (btnSave) { btnSave.disabled = true; btnSave.style.opacity = "0.5"; btnSave.querySelector('span').textContent = "Sync in progress..."; }
                 if (btnRun) btnRun.disabled = true;
@@ -5129,7 +5274,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             if (result.IsRunning && result.Step) live = result;
             else if (hscResult && hscResult.IsRunning && hscResult.Step) live = hscResult;
             else if (tlResult && tlResult.Step) live = tlResult;
-            var liveText = live ? runningStepText(live, live === hscResult) : '';
+            else if (opResult && opResult.IsRunning && opResult.Step) live = opResult;
+            var liveText = live ? runningStepText(live, live === hscResult, live === opResult) : '';
             if (label) { label.textContent = liveText || result.LastRunStatus || "Never"; label.title = liveText || result.LastRunStatus || ""; }
             if (dot) {
                 dot.className = "status-dot";
@@ -5139,7 +5285,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 else if (/warning/i.test(st)) dot.classList.add("warn");
             }
 
-            _lastStatus = { sync: result, hsc: hscResult, tl: tlResult };
+            _lastStatus = { sync: result, hsc: hscResult, tl: tlResult, op: opResult };
             if (content) renderLogModal(view);
         }).catch(function () {
             if (myId !== statusRequestId) return;
@@ -5599,7 +5745,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         html += '</select></div>';
 
         var displayModeVal = s.DisplayMode || '';
-        html += '<div style="margin-bottom:12px;"><label class="selectLabel">Show this section</label>';
+        html += '<div class="hsc-adv" data-adv-def="" style="margin-bottom:12px;"><label class="selectLabel">Show this section' + ADV_BADGE + '</label>';
         html += '<select is="emby-select" class="hse-field-str" data-field="DisplayMode" style="width:100%;">';
         html += '<option value=""'              + (displayModeVal === ''               ? ' selected' : '') + '>Always</option>';
         html += '<option value="tv"'            + (displayModeVal === 'tv'             ? ' selected' : '') + '>When TV Display Mode is on</option>';
@@ -5664,7 +5810,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         html += '<div class="fieldDescription hse-playlist-only hse-tl-hide">Playlist rows: <em>Auto</em> and <em>Primary</em> show a show\'s poster on its card (the playlist holds its first episode); <em>Thumb</em> shows the show\'s landscape image.</div>';
         html += '</div>';
 
-        html += '<div style="margin-bottom:12px;"><label class="selectLabel">Card Size</label>';
+        html += '<div class="hsc-adv" data-adv-def="0" style="margin-bottom:12px;"><label class="selectLabel">Card Size' + ADV_BADGE + '</label>';
         html += '<select is="emby-select" class="selHseCardSize hse-field-str" data-field="CardSizeOffset" style="width:100%;">' + cardSizeOptionsHtml(s.CardSizeOffset) + '</select></div>';
 
         var sortByVal = s.SortBy || '';
@@ -5694,7 +5840,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         html += '</select></div>';
 
         var dispModeVal = s.ScrollDirection || '';
-        html += '<div style="margin-bottom:12px;"><label class="selectLabel">Scroll Direction</label>';
+        html += '<div class="hsc-adv" data-adv-def="" style="margin-bottom:12px;"><label class="selectLabel">Scroll Direction' + ADV_BADGE + '</label>';
         html += '<select is="emby-select" class="hse-field-str" data-field="ScrollDirection" style="width:100%;"><option value="">(Auto)</option>';
         [['Horizontal','Horizontal'],['Vertical','Vertical']].forEach(function(o) { html += '<option value="' + o[0] + '"' + (dispModeVal === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; });
         html += '</select></div>';
@@ -5964,6 +6110,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 tab.querySelector('.hse-fields-inner').innerHTML = buildHomeSectionFormHtml(savedSettings, defaultSectionType, defaultTagName, tagEnabled, collEnabled, libraryOptions, savedLibraryId, allLibraries, plEnabled);
                 wireHomeSectionTypeChange(tab);
                 wirePositionField(tab);
+                refreshAdvanced(tab);
                 fillPositionRows(tab, savedUserIds[0] || ((users || [])[0] || {}).Id, function () {
                     var nameEl = tab.querySelector('[data-field="CustomName"]');
                     return (nameEl && (nameEl.value || nameEl.placeholder)) || '';
@@ -5975,6 +6122,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 // Sync live values from Emby, then re-anchor baseline and check form state.
                 // Re-anchoring happens AFTER sync so changes made by sync don't trigger a false dirty state.
                 syncHomeSectionFromEmby(tab).then(function() {
+                    refreshAdvanced(tab);
                     if (!_wasAlreadyDirty && _hseView && originalConfigState) {
                         try { originalConfigState = JSON.stringify(getUiConfig(_hseView, true)); } catch {}
                     }
@@ -6238,6 +6386,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var cwbEnabled      = view.querySelector('#chkCwbEnabled');
         var cwbMode         = view.querySelector('#selCwbMode');
         var cwbAllUsers     = view.querySelector('#chkCwbAllUsers');
+        var opEnabled       = view.querySelector('#chkOpEnabled');
         // Compare what is in the field, so clearing one counts as a change; an empty field is
         // saved as the default the AI call needs.
         function fieldOr(id, def) {
@@ -6268,7 +6417,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             HideTopListLibraries: view.querySelector('#chkHideTopListLibraries').checked,
             ShowCopyPasteButtons: view.querySelector('#chkShowCopyPasteButtons').checked,
             ShowImportCollectionButton: view.querySelector('#chkShowImportCollectionButton').checked,
+            ShowMissingTitles: view.querySelector('#chkShowMissingTitles').checked,
+            MissingIncludeGaps: view.querySelector('#chkMissingIncludeGaps').checked,
+            MissingExportToFile: view.querySelector('#chkMissingExportToFile').checked,
+            MissingExportFolder: view.querySelector('#txtMissingExportFolder').value.trim(),
+            MissingExportJson: view.querySelector('#chkMissingExportJson').checked,
+            MissingExportCsv: view.querySelector('#chkMissingExportCsv').checked,
             RankedCollectionsEnabled: view.querySelector('#chkRankedCollectionsEnabled').checked,
+            SettingsLevel: settingsLevel,
+            ShowAdvancedBadges: view.querySelector('#chkShowAdvancedBadges').checked,
             Tags: flatTags,
             SavedFilters: savedFilters,
             HomeSyncEnabled: hscEnabled ? hscEnabled.checked : (lastHscConfig.HomeSyncEnabled || false),
@@ -6280,8 +6437,22 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             ContinueWatchingBumpAllUsers: cwbAllUsers ? cwbAllUsers.checked : (lastHscConfig.ContinueWatchingBumpAllUsers || false),
             ContinueWatchingBumpUserIds: cwbEnabled
                 ? Array.from(view.querySelectorAll('.cwb-user-chk:checked')).map(function(c) { return c.value; })
-                : (lastHscConfig.ContinueWatchingBumpUserIds || [])
+                : (lastHscConfig.ContinueWatchingBumpUserIds || []),
+            // Home Screen Tweaks is drawn when first opened: until then the loaded values are kept.
+            OrigPostersEnabled: opEnabled ? opEnabled.checked : (lastHscConfig.OrigPostersEnabled || false),
+            OrigPostersLanguages: opEnabled ? readOrigPostersLanguages(view) : (lastHscConfig.OrigPostersLanguages || []),
+            OrigPostersMovies: opEnabled ? view.querySelector('#chkOpMovies').checked : lastHscConfig.OrigPostersMovies !== false,
+            OrigPostersSeries: opEnabled ? view.querySelector('#chkOpSeries').checked : lastHscConfig.OrigPostersSeries !== false,
+            OrigPostersSeasons: opEnabled ? view.querySelector('#chkOpSeasons').checked : lastHscConfig.OrigPostersSeasons !== false,
+            OrigPostersEpisodes: opEnabled ? view.querySelector('#chkOpEpisodes').checked : (lastHscConfig.OrigPostersEpisodes || false)
         };
+    }
+
+    function readOrigPostersLanguages(view) {
+        var codes = Array.from(view.querySelectorAll('.op-lang-chk:checked')).map(function (c) { return c.value; });
+        var extra = view.querySelector('#opExtraLangs');
+        if (extra && extra.value) extra.value.split(',').forEach(function (c) { if (c && codes.indexOf(c) < 0) codes.push(c); });
+        return codes;
     }
 
     // ---- AI: OpenAI-compatible connections and model lists ----
@@ -6443,11 +6614,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         DryRunMode: 'Dry Run Mode', PreserveTagsOnEmptyResult: 'Preserve tags and collections on empty result',
         IgnoreMarkedAsWatched: 'Ignore titles only marked as watched',
         TopListMirrorCollections: 'Show collections on top-list items', HideTopListLibraries: 'Hide HSC libraries',
-        ShowCopyPasteButtons: 'Copy & paste sources', ShowImportCollectionButton: 'Import collection',
-        RankedCollectionsEnabled: 'Ranked collections', SavedFilters: 'Saved filters',
+        ShowCopyPasteButtons: 'Copy & paste sources', ShowImportCollectionButton: 'Import collection', ShowMissingTitles: 'Show missing titles',
+        MissingIncludeGaps: 'Missing: include shows that lack episodes', MissingExportToFile: 'Missing: keep the list in a file',
+        MissingExportFolder: 'Missing: file folder', MissingExportJson: 'Missing: JSON file', MissingExportCsv: 'Missing: CSV files',
+        RankedCollectionsEnabled: 'Ranked collections', ShowAdvancedBadges: 'Show Advanced badges', SavedFilters: 'Saved filters',
         HomeSyncEnabled: 'Home Screen sync: on/off', HomeSyncProfiles: 'Home Screen sync: profiles',
         ContinueWatchingBumpEnabled: 'Continue Watching bump: on/off', ContinueWatchingBumpMode: 'Continue Watching bump: mode',
-        ContinueWatchingBumpAllUsers: 'Continue Watching bump: all users', ContinueWatchingBumpUserIds: 'Continue Watching bump: users'
+        ContinueWatchingBumpAllUsers: 'Continue Watching bump: all users', ContinueWatchingBumpUserIds: 'Continue Watching bump: users',
+        OrigPostersEnabled: 'Original-language posters: on/off', OrigPostersLanguages: 'Original-language posters: languages',
+        OrigPostersMovies: 'Original-language posters: movies', OrigPostersSeries: 'Original-language posters: series',
+        OrigPostersSeasons: 'Original-language posters: seasons', OrigPostersEpisodes: 'Original-language posters: episodes'
     };
     // A source card's field → the card tab it lives on.
     function sourceFieldArea(k) {
@@ -6563,7 +6739,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             view.classList.toggle('hsc-no-copypaste', !saved.ShowCopyPasteButtons);
             view.classList.toggle('hsc-no-import', !saved.ShowImportCollectionButton);
             view.classList.toggle('hsc-no-ranked', !saved.RankedCollectionsEnabled);
+            refreshAdvBadges(view);
+            view.classList.toggle('hsc-no-missing', !saved.ShowMissingTitles);
+            // Turned off while its tab is open: back to Settings, where it was turned off.
+            var mtTab = view.querySelector('#tabMissing');
+            if (!saved.ShowMissingTitles && mtTab && mtTab.style.display !== 'none' && view._hscShowPageTab) view._hscShowPageTab('Settings');
         } catch (e) { }
+        // A power-user setting put back to its default in Basic goes once it is saved.
+        refreshAdvanced(view);
         var warn = view.querySelector('.dry-run-warning');
         if (warn) {
             try {
@@ -7033,8 +7216,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '</span></div>',
             '<div class="hsc-user-list hsc-profile-row-list"></div>',
             '</div>',
-            '<div class="checkboxContainer checkboxContainer-withDescription" style="margin-top:16px;">',
-            '<label><input is="emby-checkbox" type="checkbox" class="chkHscProfileAddToSources"' + (p.AddToSources ? ' checked' : '') + ' /><span>Also add users to the sources and top-lists of copied rows</span></label>',
+            '<div class="checkboxContainer checkboxContainer-withDescription hsc-adv" data-adv="check" style="margin-top:16px;">',
+            '<label><input is="emby-checkbox" type="checkbox" class="chkHscProfileAddToSources"' + (p.AddToSources ? ' checked' : '') + ' /><span>Also add users to the sources and top-lists of copied rows' + ADV_BADGE + '</span></label>',
             '<div class="fieldDescription">Each user is added to the source or top-list of every row they get, so the full sync keeps that row updated for them and makes their own playlist rows (such as Your Next Watch). They show up in its user list. Copy & Sync takes them off again when the row is no longer copied or the user leaves the profile, and the row stays as a plain copy (a personal playlist row goes). Users you added yourself stay. Off: the rows are only copied, and a top-list row only goes to the list\'s own users, as before 4.4.3.</div>',
             '</div>',
             '<div class="hsc-eyebrow" style="margin:16px 0 8px;">Copy to</div>',
@@ -7070,6 +7253,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '</div>'
         ].join('');
         container.dataset.loaded = '1';
+        refreshAdvanced(container);
     }
 
     // Select-all and the Unrestricted / Restricted links of one profile's target list.
@@ -7171,6 +7355,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var list = container.querySelector('.hsc-profile-list');
                     list.insertAdjacentHTML('beforeend', hscProfileHtml({ Active: true, SourceUserId: '', TargetUserIds: [], LibraryOrder: false, Mode: 'all', KeepOwnRows: true, AddToSources: false, SelectedRows: [] }, container._hscUsers || [], true));
                     wireHscProfile(list.lastElementChild);
+                    refreshAdvanced(list.lastElementChild);
                     refreshHscProfiles(container);
                     setTimeout(checkFormState, 0);
                 });
@@ -7293,10 +7478,240 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '</div>',
 
             '</div>',
-            '</div>'
+            '</div>',
+
+            origPostersPanelHtml(config)
         ].join('');
 
         container.dataset.loaded = '1';
+    }
+
+    // ---- Original-language posters (OriginalPosters.cs) ----
+    // The languages offered (ISO 639-1, as TMDb gives a title's original language).
+    var OP_LANGUAGES = [
+        ['en', 'English'], ['sv', 'Swedish'], ['da', 'Danish'], ['no', 'Norwegian'], ['fi', 'Finnish'], ['is', 'Icelandic'],
+        ['de', 'German'], ['nl', 'Dutch'], ['fr', 'French'], ['es', 'Spanish'], ['pt', 'Portuguese'], ['it', 'Italian'],
+        ['pl', 'Polish'], ['cs', 'Czech'], ['hu', 'Hungarian'], ['ro', 'Romanian'], ['el', 'Greek'], ['tr', 'Turkish'],
+        ['ru', 'Russian'], ['uk', 'Ukrainian'], ['he', 'Hebrew'], ['ar', 'Arabic'], ['fa', 'Persian'], ['hi', 'Hindi'],
+        ['ta', 'Tamil'], ['te', 'Telugu'], ['th', 'Thai'], ['id', 'Indonesian'], ['ja', 'Japanese'], ['ko', 'Korean'], ['zh', 'Chinese']
+    ];
+    function opLanguageName(code) {
+        for (var i = 0; i < OP_LANGUAGES.length; i++) if (OP_LANGUAGES[i][0] === code) return OP_LANGUAGES[i][1];
+        return code;
+    }
+
+    function origPostersPanelHtml(config) {
+        var on = !!config.OrigPostersEnabled;
+        var chosen = config.OrigPostersLanguages || [];
+        function chk(id, value, label, desc) {
+            return '<div class="checkboxContainer checkboxContainer-withDescription" style="margin-bottom:6px;">' +
+                '<label><input is="emby-checkbox" type="checkbox" id="' + id + '"' + (value ? ' checked' : '') + ' /><span>' + label + '</span></label>' +
+                (desc ? '<div class="fieldDescription">' + desc + '</div>' : '') +
+                '</div>';
+        }
+        var langs = OP_LANGUAGES.map(function (l) {
+            return '<label class="op-lang" data-lang="' + l[0] + '"><input type="checkbox" class="op-lang-chk" value="' + l[0] + '"' + (chosen.indexOf(l[0]) >= 0 ? ' checked' : '') + ' />' +
+                '<span>' + escapeHtml(l[1]) + '</span><span class="op-lang-code">' + l[0] + '</span></label>';
+        }).join('');
+        // Codes chosen before that the list does not have (from a backup, or a later list) stay chosen.
+        var extra = chosen.filter(function (c) { return !OP_LANGUAGES.some(function (l) { return l[0] === c; }); });
+        return [
+            '<div class="advanced-section settings-panel" style="margin-bottom: 15px;">',
+            '<div class="advanced-header settings-panel-toggle">',
+            '<span class="hsc-title">Original-language posters</span>',
+            '<i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s;">expand_more</i>',
+            '</div>',
+            '<div class="advanced-body settings-panel-body" style="display:none; padding-top: 4px;">',
+
+            '<p style="font-size:0.9em; line-height:1.5; margin:0 0 16px;">',
+            'Emby gives every title a poster in your library\'s language. With this on, a movie or series made in one of the languages you choose gets its poster in that language instead, ',
+            'for example a Danish series its Danish poster. A title is only changed when a poster in exactly that language exists.',
+            '</p>',
+
+            '<div id="opNoKey" class="op-note" style="display:none;"><i class="md-icon" style="color:var(--hsc-warning-text);">warning</i>',
+            '<div>Needs a <strong>TMDb key</strong> in Settings › API keys. TMDb tells each title\'s original language.</div></div>',
+
+            chk('chkOpEnabled', on, 'Use original-language posters',
+                'Runs once a day and about 10 minutes after new titles are added. The first run reads the original language of every movie and series from TMDb, so it can take a while. Turned off, the next run puts the original posters back.'),
+
+            '<div id="opConfig" style="display:' + (on ? '' : 'none') + '">',
+            '<div class="hsc-eyebrow" style="margin:18px 0 8px;">Languages</div>',
+            '<div class="op-langs">', langs, '</div>',
+            (extra.length ? '<input type="hidden" id="opExtraLangs" value="' + escapeHtml(extra.join(',')) + '" />' : ''),
+            '<div class="fieldDescription" id="opLibLangs" style="margin-top:6px;">A title in your library\'s own image language is never changed.</div>',
+
+            '<div class="hsc-eyebrow" style="margin:18px 0 8px;">Change</div>',
+            chk('chkOpMovies', config.OrigPostersMovies !== false, 'Movie posters', ''),
+            chk('chkOpSeries', config.OrigPostersSeries !== false, 'Series posters', ''),
+            chk('chkOpSeasons', config.OrigPostersSeasons !== false, 'Season posters', 'A season follows the language of its series.'),
+            chk('chkOpEpisodes', !!config.OrigPostersEpisodes, 'Episode images',
+                'Episode images are mostly stills from the episode with no language, so most episodes keep theirs. Checks every episode of the series, so it adds time.'),
+            '</div>',
+
+            '<div class="hsc-eyebrow" style="margin:18px 0 8px;">Changed titles</div>',
+            '<div id="opStatus" class="fieldDescription">Loading…</div>',
+            '<div id="opList" class="op-list"></div>',
+            '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px;">',
+            '<button is="emby-button" type="button" class="raised btn-neutral" id="btnOpRun"><i class="md-icon" style="margin-right:5px;">play_arrow</i>Run now</button>',
+            '<button is="emby-button" type="button" class="raised btn-neutral" id="btnOpRestoreAll"><i class="md-icon" style="margin-right:5px;">undo</i>Restore all</button>',
+            '</div>',
+            '<div class="fieldDescription" style="margin-top:6px;">Run now uses the saved settings. Restore all puts every original poster back right away and turns this off.</div>',
+            '<div id="opExcludedWrap" style="display:none;">',
+            '<div class="hsc-eyebrow" style="margin:18px 0 8px;">Kept as they were</div>',
+            '<div id="opExcluded" class="op-list"></div>',
+            '</div>',
+
+            '<div style="margin-top:16px; padding:10px 14px; border:1px solid rgba(128,128,128,0.2); border-radius:6px;">',
+            '<div class="hsc-eyebrow" style="margin-bottom:6px;">Good to know</div>',
+            '<ul style="font-size:0.85em; line-height:1.5; margin:0; padding-left:18px; opacity:0.85;">',
+            '<li>The language is the one the title was <strong>made in</strong> (TMDb\'s original language), not the country. An English series never gets a poster in another language.</li>',
+            '<li>The poster is taken from Emby\'s own image sources (TheMovieDb, TheTVDB, FanArt), in the order your library uses.</li>',
+            '<li>The poster it replaced is <strong>kept</strong>. <em>Restore</em> on a title puts it back and leaves that title alone from then on. Unticking a language or a kind puts its originals back on the next run.</li>',
+            '<li>If Emby replaces a poster later (for example a refresh with <em>Replace existing images</em>), the next run puts the original-language one back. To keep a poster you picked yourself, use <em>Restore</em> first.</li>',
+            '<li>Turning this off (and saving) puts every original poster back on the next run, the same as <em>Restore all</em>. Titles you restored one by one stay as they are.</li>',
+            '</ul>',
+            '</div>',
+
+            '</div>',
+            '</div>'
+        ].join('');
+    }
+
+    // Run now runs what is saved, not what is on the page.
+    function lastSavedOrigPostersEnabled() {
+        try { return !!JSON.parse(originalConfigState).OrigPostersEnabled; } catch (e) { return !!lastHscConfig.OrigPostersEnabled; }
+    }
+
+    function opFetch(path, body) {
+        var opts = { headers: { 'X-MediaBrowser-Token': window.ApiClient.accessToken() } };
+        if (body) {
+            opts.method = 'POST';
+            opts.headers['Content-Type'] = 'application/json';
+            opts.body = JSON.stringify(body);
+        }
+        return fetch(window.ApiClient.getUrl('HomeScreenCompanion/' + path), opts).then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        });
+    }
+
+    function loadOrigPostersStatus(container) {
+        var status = container.querySelector('#opStatus');
+        var list = container.querySelector('#opList');
+        if (!status || !list) return;
+        opFetch('OriginalPosters').then(function (res) {
+            var noKey = container.querySelector('#opNoKey');
+            if (noKey) noKey.style.display = res.HasTmdbKey ? 'none' : 'flex';
+
+            var libLangs = res.LibraryLanguages || [];
+            container.querySelectorAll('.op-lang').forEach(function (el) {
+                var own = libLangs.indexOf(el.dataset.lang) >= 0;
+                el.classList.toggle('op-lang-own', own);
+                el.title = own ? 'Your library\'s own language: these titles already get posters in it' : '';
+            });
+            var libNote = container.querySelector('#opLibLangs');
+            if (libNote && libLangs.length)
+                libNote.innerHTML = 'Your libraries use <strong>' + libLangs.map(function (l) { return escapeHtml(opLanguageName(l)); }).join(', ') + '</strong> posters. A title in the library\'s own image language is never changed.';
+
+            var titles = res.Titles || [];
+            var when = res.LastRunUtc ? new Date(res.LastRunUtc).toLocaleString() : '';
+            status.textContent = (res.Running ? 'Running now. ' : '') +
+                (titles.length ? titles.length + (titles.length === 1 ? ' title has' : ' titles have') + ' an original-language poster.' : 'No titles changed yet.') +
+                (when ? ' Last run: ' + when + '.' : (res.Running ? '' : ' Not run yet.'));
+
+            function row(t, excluded) {
+                var parts = [];
+                if (t.Year) parts.push(t.Year);
+                parts.push(t.Type === 'Series' ? 'Series' : t.Type === 'Season' ? 'Season' : 'Movie');
+                if (t.Language) parts.push(escapeHtml(opLanguageName(t.Language)));
+                if (!excluded) {
+                    var what = [];
+                    if (t.Poster) what.push('poster');
+                    if (t.Seasons) what.push(t.Seasons + (t.Seasons === 1 ? ' season' : ' seasons'));
+                    if (t.Episodes) what.push(t.Episodes + (t.Episodes === 1 ? ' episode' : ' episodes'));
+                    if (what.length) parts.push(what.join(', '));
+                }
+                var img = window.ApiClient.getImageUrl(t.InternalId, { type: 'Primary', maxHeight: 100 });
+                return '<div class="op-row">' +
+                    '<div class="op-poster" style="background-image:url(&quot;' + escapeHtml(img) + '&quot;)"></div>' +
+                    '<div class="op-info"><div class="op-title" title="' + escapeHtml(t.Name) + '">' + escapeHtml(t.Name) + '</div>' +
+                    '<div class="op-meta">' + parts.join(' · ') + '</div></div>' +
+                    (excluded
+                        ? '<button is="emby-button" type="button" class="raised btn-neutral op-include" data-id="' + t.Id + '" title="The next run may change this title again">Allow again</button>'
+                        : '<button is="emby-button" type="button" class="raised btn-neutral op-restore" data-id="' + t.Id + '" title="Put the original poster back and leave this title alone">Restore</button>') +
+                    '</div>';
+            }
+            list.innerHTML = titles.map(function (t) { return row(t, false); }).join('');
+            var ex = res.Excluded || [];
+            var exWrap = container.querySelector('#opExcludedWrap');
+            if (exWrap) exWrap.style.display = ex.length ? '' : 'none';
+            var exList = container.querySelector('#opExcluded');
+            if (exList) exList.innerHTML = ex.map(function (t) { return row(t, true); }).join('');
+        }).catch(function (e) {
+            status.textContent = 'Could not load the changed titles: ' + e.message;
+        });
+    }
+
+    function wireOrigPosters(container, view) {
+        var enable = container.querySelector('#chkOpEnabled');
+        if (enable) enable.addEventListener('change', function () {
+            var cfg = container.querySelector('#opConfig');
+            if (cfg) cfg.style.display = this.checked ? '' : 'none';
+        });
+
+        container.addEventListener('click', function (e) {
+            var btn = e.target.closest('#btnOpRun, #btnOpRestoreAll, .op-restore, .op-include');
+            if (!btn || !container.contains(btn)) return;
+            if (btn.id === 'btnOpRun') {
+                if (!lastSavedOrigPostersEnabled() && !window.confirm('Original-language posters is off (as saved), so this run puts every original poster back. Go on?')) return;
+                opFetch('RunTask', { Key: 'OriginalPostersTask' }).then(function (res) {
+                    window.Dashboard.alert(res && res.Success ? (res.Message || 'Started.') : 'Could not start it' + (res && res.Message ? ': ' + res.Message : ''));
+                    setTimeout(function () { loadOrigPostersStatus(container); }, 1500);
+                }).catch(function (err) { window.Dashboard.alert('Could not start it: ' + err.message); });
+                return;
+            }
+            if (btn.id === 'btnOpRestoreAll') {
+                if (!window.confirm('Put every original poster back and turn original-language posters off?')) return;
+                btn.disabled = true;
+                opFetch('OriginalPosters/Restore', { All: true }).then(function (res) {
+                    window.Dashboard.alert(res.Message || 'Done.');
+                    if (res.Success) {
+                        // Off, and saved, so the next run does not set them again.
+                        var chk = container.querySelector('#chkOpEnabled');
+                        if (chk && chk.checked) { chk.checked = false; chk.dispatchEvent(new Event('change', { bubbles: true })); }
+                        lastHscConfig.OrigPostersEnabled = false;
+                        window.ApiClient.getPluginConfiguration(pluginId).then(function (cfg) {
+                            var before = hscServerStamp(cfg);
+                            cfg.OrigPostersEnabled = false;
+                            return window.ApiClient.updatePluginConfiguration(pluginId, cfg)
+                                .then(function (r) { return advanceServerStamp(before).then(function () { return r; }); });
+                        }).then(function () {
+                            if (originalConfigState) {
+                                try {
+                                    var state = JSON.parse(originalConfigState);
+                                    state.OrigPostersEnabled = false;
+                                    originalConfigState = JSON.stringify(state);
+                                } catch (e2) {}
+                            }
+                            checkFormState();
+                        });
+                    }
+                }).catch(function (err) { window.Dashboard.alert('Could not restore: ' + err.message); })
+                  .then(function () { btn.disabled = false; loadOrigPostersStatus(container); });
+                return;
+            }
+            var id = btn.dataset.id;
+            btn.disabled = true;
+            var call = btn.classList.contains('op-restore')
+                ? opFetch('OriginalPosters/Restore', { Ids: [id] })
+                : opFetch('OriginalPosters/Include', { Id: id });
+            call.then(function (res) {
+                if (!res.Success) window.Dashboard.alert(res.Message || 'Failed.');
+            }).catch(function (err) { window.Dashboard.alert('Failed: ' + err.message); })
+              .then(function () { loadOrigPostersStatus(container); });
+        });
+
+        loadOrigPostersStatus(container);
     }
 
     function loadHstTab(view) {
@@ -7325,6 +7740,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 var cwbList = container.querySelector('#cwbUserList');
                 wireUserListSelectLinks(cwbList && cwbList.previousElementSibling, cwbList);
+                wireOrigPosters(container, view);
 
                 container.querySelectorAll('input, select').forEach(function (el) {
                     el.addEventListener('change', function () { setTimeout(checkFormState, 0); });
@@ -7344,6 +7760,220 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             if (offset < 0 && offset > closest.offset) return { offset: offset, element: child };
             return closest;
         }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+
+    // ---- Missing tab (Settings > Show missing titles) ----
+    // The titles on the External and AI lists that are not in the library, and the aired episodes the
+    // library lacks of the shows on them (MissingTitles.cs). The sync saves the lists; the server
+    // compares them with the library each time the tab opens.
+    function loadMissingTab(view) {
+        var container = view.querySelector('#mtContainer');
+        if (!container) return;
+        container.innerHTML = '<div style="padding:20px;color:var(--theme-text-secondary);display:flex;align-items:center;gap:10px;">Loading <span class="tc-dot-loader"><span></span><span></span><span></span></span></div>';
+        fetch(window.ApiClient.getUrl('HomeScreenCompanion/MissingTitles'), { headers: { 'X-MediaBrowser-Token': window.ApiClient.accessToken() } })
+            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function (data) { renderMissingTab(view, container, data || {}); })
+            .catch(function (err) {
+                container.innerHTML = '<div class="hsc-callout danger"><i class="md-icon">error</i><span>The missing titles could not be loaded (' + escapeHtml(err.message) + ').</span></div>';
+            });
+    }
+
+    // The file options show only with "Keep the list in a file" on.
+    function updateMissingExportUi(view) {
+        var on = view.querySelector('#chkMissingExportToFile').checked;
+        view.querySelector('#mtExportFileOptions').style.display = on ? '' : 'none';
+    }
+
+    // Download: what the tab shows now (the saved lists against the library), as a file.
+    function downloadMissingTitles(view, btn) {
+        var err = view.querySelector('#mtDownloadError');
+        err.style.display = 'none';
+        btn.disabled = true;
+        var params = { Format: btn.dataset.format, IncludeGaps: view.querySelector('#chkMissingIncludeGaps').checked };
+        fetch(window.ApiClient.getUrl('HomeScreenCompanion/MissingTitles/Export', params), { headers: { 'X-MediaBrowser-Token': window.ApiClient.accessToken() } })
+            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function (res) {
+                var csv = /\.csv$/.test(res.FileName || '');
+                // A BOM lets Excel read the CSV as UTF-8 (å, ä, ö …).
+                var blob = new Blob([csv ? '\ufeff' + res.Content : res.Content], { type: csv ? 'text/csv;charset=utf-8' : 'application/json' });
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url; a.download = res.FileName || 'missing_titles.json';
+                document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+            })
+            .catch(function (e) { err.textContent = 'The download failed: ' + e.message; err.style.display = ''; })
+            .then(function () { btn.disabled = false; });
+    }
+
+    // The kept file: when it was last written, or why it could not be.
+    function renderMissingExportStatus(view, data) {
+        var def = view.querySelector('#mtDefaultFolder');
+        if (def) def.textContent = data.ExportDefaultFolder ? ' (' + data.ExportDefaultFolder + ')' : '';
+        var el = view.querySelector('#mtExportStatus');
+        if (!el) return;
+        if (data.ExportError) {
+            el.innerHTML = '<span style="color:var(--hsc-danger-text);">The file could not be written: ' + escapeHtml(data.ExportError) + '</span>';
+        } else if (data.ExportWrittenUtc) {
+            el.textContent = 'Last written ' + new Date(data.ExportWrittenUtc).toLocaleString() + '.';
+        } else {
+            el.textContent = 'Not written yet. It is written a few seconds after you save, and after every sync.';
+        }
+    }
+
+    function renderMissingTab(view, container, data) {
+        renderMissingExportStatus(view, data);
+        var movies = data.Movies || [], shows = data.Shows || [];
+        var shown = 'movies';
+        try { if (localStorage.getItem('HomeScreenCompanion_MissingList') === 'shows') shown = 'shows'; } catch (e) { }
+
+        function plural(n, one) { return n + ' ' + (n === 1 ? one : one + 's'); }
+        function yearHtml(y) { return y ? '<span class="mt-year">(' + y + ')</span>' : ''; }
+        function linksHtml(t, tmdbType) {
+            return '<span class="mt-links">' +
+                (t.Imdb ? '<a href="https://www.imdb.com/title/' + encodeURIComponent(t.Imdb) + '/" target="_blank" rel="noopener" title="Open on IMDb">IMDb</a>' : '') +
+                (t.Tmdb ? '<a href="https://www.themoviedb.org/' + tmdbType + '/' + encodeURIComponent(t.Tmdb) + '" target="_blank" rel="noopener" title="Open on TMDb">TMDb</a>' : '') +
+                '</span>';
+        }
+        function listsHtml(t) {
+            var lists = t.Lists || [];
+            return '<span class="mt-lists" title="' + escapeHtml('On: ' + lists.join(', ')) + '">' + escapeHtml(lists.join(', ')) + '</span>';
+        }
+        function searchText(t) { return ((t.Name || '') + ' ' + (t.Year || '') + ' ' + (t.Lists || []).join(' ')).toLowerCase(); }
+
+        function movieRow(m) {
+            return '<div class="mt-row" data-search="' + escapeHtml(searchText(m)) + '"><div class="mt-head"><span class="mt-chev-spacer"></span>' +
+                '<span class="mt-title">' + escapeHtml(m.Name) + yearHtml(m.Year) + '</span>' +
+                listsHtml(m) + linksHtml(m, 'movie') + '</div></div>';
+        }
+
+        function episodeRow(e) {
+            return '<div class="mt-ep"><span class="mt-ep-num">E' + String(e.Number).padStart(2, '0') + '</span>' +
+                '<span class="mt-ep-name">' + escapeHtml(e.Name || '') + '</span>' +
+                '<span class="mt-ep-date">' + escapeHtml(e.AirDate || '') + '</span></div>';
+        }
+        function seasonRow(se) {
+            // A show that is not in the library comes without its episodes: read when a season opens.
+            var later = se.Episodes.length === 0;
+            var all = later || se.Episodes.length === se.AiredEpisodes;
+            var label = all ? 'all ' + plural(se.AiredEpisodes, 'episode') : se.Episodes.length + ' of ' + plural(se.AiredEpisodes, 'episode');
+            // A season that is missing entirely opens on a click; a gap in a season shows its episodes.
+            return '<div class="mt-season' + (all ? '' : ' mt-open') + (later ? ' mt-later' : '') + '" data-season="' + se.Number + '"><div class="mt-head mt-toggle">' +
+                '<i class="md-icon mt-chev">chevron_right</i>' +
+                '<span class="mt-title">Season ' + se.Number + '</span><span class="mt-count">' + label + '</span></div>' +
+                '<div class="mt-body">' + (later ? '<div class="mt-ep" style="color:var(--theme-text-secondary);">Loading…</div>' : se.Episodes.map(episodeRow).join('')) + '</div></div>';
+        }
+        function showRow(s) {
+            var inLib = !!s.LibraryId;
+            var pill = inLib
+                ? '<a class="mt-pill lib mt-nav" href="javascript:void(0)" data-navid="' + escapeHtml(s.LibraryId) + '" title="Open the show in Emby" style="text-decoration:none;">In library</a>'
+                : '<span class="mt-pill nolib">Not in library</span>';
+            var count = !s.EpisodesKnown ? (inLib ? '' : '<span title="TMDb has no episodes for this show (no TMDb id, or it could not be read on the last sync).">episodes not known</span>')
+                : inLib ? s.MissingEpisodes + ' of ' + plural(s.AiredEpisodes, 'episode') + ' missing'
+                : plural(s.AiredEpisodes, 'episode');
+            var open = s.Seasons && s.Seasons.length > 0;
+            return '<div class="mt-row mt-show" data-tmdb="' + escapeHtml(s.Tmdb || '') + '" data-search="' + escapeHtml(searchText(s)) + '">' +
+                '<div class="mt-head' + (open ? ' mt-toggle' : '') + '">' +
+                (open ? '<i class="md-icon mt-chev">chevron_right</i>' : '<span class="mt-chev-spacer"></span>') +
+                '<span class="mt-title">' + escapeHtml(s.Name) + yearHtml(s.Year) + '</span>' +
+                listsHtml(s) + (count ? '<span class="mt-count">' + count + '</span>' : '') + pill + linksHtml(s, 'tv') + '</div>' +
+                (open ? '<div class="mt-body">' + s.Seasons.map(seasonRow).join('') + '</div>' : '') +
+                '</div>';
+        }
+
+        var segBase = 'flex:1;cursor:pointer;border:none;border-radius:6px;padding:8px 12px;font-family:inherit;font-size:0.9em;font-weight:500;display:flex;align-items:center;justify-content:center;gap:6px;color:inherit;';
+        var segOn = segBase + 'background:var(--plugin-popup-bg2, var(--theme-background-level3));';
+        var segOff = segBase + 'background:transparent;opacity:0.7;';
+        var sections = [
+            { key: 'movies', label: 'Movies', icon: 'movie', count: movies.length },
+            { key: 'shows', label: 'Shows & episodes', icon: 'tv', count: shows.length }
+        ];
+
+        var updated = data.UpdatedUtc ? new Date(data.UpdatedUtc) : null;
+        var intro = !data.HasData
+            ? '<div class="hsc-callout" style="margin-bottom:16px;"><i class="md-icon">info</i><span>Nothing here yet. The list is made during the next sync of Tags &amp; Collections (or <em>Run</em> on a source).</span></div>'
+            : '<p class="textMuted" style="font-size:0.9em;margin:0 0 16px;">Titles on your ' + plural(data.ListCount || 0, 'External or AI list') +
+              ' that are not in your library. A title on several lists is shown once.' +
+              (updated ? ' Lists read ' + escapeHtml(updated.toLocaleString()) + '.' : '') + '</p>';
+        var noKey = data.HasData && !data.HasTmdbKey
+            ? '<div class="hsc-callout warning" style="margin-bottom:12px;"><i class="md-icon">warning</i><span>Add a TMDb key under <em>Settings › External list settings</em> to see which episodes are missing. Until then only shows that are not in your library are listed.</span></div>'
+            : '';
+
+        view.querySelector('#mtIntro').innerHTML = intro;
+        container.innerHTML =
+            '<div style="display:flex;border:1px solid var(--plugin-popup-border,rgba(255,255,255,0.12));border-radius:8px;overflow:hidden;margin-bottom:16px;padding:2px;gap:2px;background:var(--hsc-tint-1);max-width:560px;">' +
+            sections.map(function (s) {
+                return '<button type="button" class="btnMtList" data-key="' + s.key + '" style="' + (s.key === shown ? segOn : segOff) + '"><i class="md-icon" style="font-size:1.1em;">' + s.icon + '</i>' + s.label + ' <span style="opacity:0.7;">(' + s.count + ')</span></button>';
+            }).join('') + '</div>' +
+            '<div style="margin-bottom:12px;"><input type="text" id="mtSearch" placeholder="Search titles or lists…" style="background:rgba(128,128,128,0.08);border:1px solid var(--line-color);border-radius:6px;padding:5px 10px;font-size:0.9em;color:inherit;width:400px;max-width:100%;" /></div>' +
+            '<div id="mtMovies" style="display:' + (shown === 'movies' ? '' : 'none') + ';">' +
+            (movies.length ? movies.map(movieRow).join('') : '<div style="color:var(--theme-text-secondary);padding:8px 0;">' + (data.HasData ? 'Every movie on your lists is in your library.' : '') + '</div>') +
+            '</div>' +
+            '<div id="mtShows" style="display:' + (shown === 'shows' ? '' : 'none') + ';">' + noKey +
+            (shows.length ? shows.map(showRow).join('') : '<div style="color:var(--theme-text-secondary);padding:8px 0;">' + (data.HasData ? 'No shows or episodes are missing.' : '') + '</div>') +
+            '</div>' +
+            '<div id="mtNoHits" style="display:none;color:var(--theme-text-secondary);padding:8px 0;">No titles match the search.</div>';
+
+        function applySearch() {
+            var q = (container.querySelector('#mtSearch').value || '').trim().toLowerCase();
+            var list = container.querySelector(shown === 'movies' ? '#mtMovies' : '#mtShows');
+            var hits = 0;
+            container.querySelectorAll('.mt-row').forEach(function (r) {
+                var hit = !q || r.dataset.search.indexOf(q) >= 0;
+                r.style.display = hit ? '' : 'none';
+                if (hit && list.contains(r)) hits++;
+            });
+            container.querySelector('#mtNoHits').style.display = q && hits === 0 ? '' : 'none';
+        }
+        container.querySelector('#mtSearch').addEventListener('input', applySearch);
+
+        container.onclick = function (e) {
+            var nav = e.target.closest('.mt-nav');
+            if (nav) {
+                var serverId = (window.ApiClient && window.ApiClient.serverId) ? window.ApiClient.serverId() : '';
+                window.open(window.location.href.split('#')[0] + '#!/item?id=' + encodeURIComponent(nav.dataset.navid) +
+                    (serverId ? '&serverId=' + encodeURIComponent(serverId) : ''), '_blank');
+                return;
+            }
+            if (e.target.closest('.mt-links a')) return;
+            var pick = e.target.closest('.btnMtList');
+            if (pick) {
+                shown = pick.dataset.key;
+                try { localStorage.setItem('HomeScreenCompanion_MissingList', shown); } catch (err) { }
+                container.querySelectorAll('.btnMtList').forEach(function (b) { b.setAttribute('style', b.dataset.key === shown ? segOn : segOff); });
+                container.querySelector('#mtMovies').style.display = shown === 'movies' ? '' : 'none';
+                container.querySelector('#mtShows').style.display = shown === 'shows' ? '' : 'none';
+                applySearch();
+                return;
+            }
+            var head = e.target.closest('.mt-toggle');
+            if (!head) return;
+            var box = head.parentElement;
+            box.classList.toggle('mt-open');
+            // A show without its episodes reads them as soon as it opens, so its seasons are ready.
+            if (box.classList.contains('mt-open') && (box.classList.contains('mt-later') || box.querySelector('.mt-later'))) loadShowEpisodes(box.closest('.mt-show'));
+        };
+
+        // Fills every season of a show that came without its episodes (one request per show).
+        function loadShowEpisodes(showEl) {
+            if (!showEl || showEl.dataset.loading) return;
+            showEl.dataset.loading = '1';
+            var fail = function (text) {
+                showEl.querySelectorAll('.mt-later > .mt-body').forEach(function (b) { b.innerHTML = '<div class="mt-ep" style="color:var(--theme-text-secondary);">' + escapeHtml(text) + '</div>'; });
+                delete showEl.dataset.loading;
+            };
+            fetch(window.ApiClient.getUrl('HomeScreenCompanion/MissingTitles/Episodes', { Tmdb: showEl.dataset.tmdb }), { headers: { 'X-MediaBrowser-Token': window.ApiClient.accessToken() } })
+                .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+                .then(function (seasons) {
+                    (seasons || []).forEach(function (se) {
+                        var el = showEl.querySelector('.mt-later[data-season="' + se.Number + '"]');
+                        if (!el) return;
+                        el.querySelector('.mt-body').innerHTML = (se.Episodes || []).map(episodeRow).join('');
+                        el.classList.remove('mt-later');
+                    });
+                    if (showEl.querySelector('.mt-later')) fail('The episodes are not known yet – they are read on the next sync.');
+                })
+                .catch(function (err) { fail('The episodes could not be loaded (' + err.message + ').'); });
+        }
     }
 
     function loadTagManageTab(view) {
@@ -9304,8 +9934,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<div class="tlm-user-list">' + usersHtml + '</div>' +
                 '</div>' +
 
-                '<div style="' + fieldStyle + '">' +
-                '<label style="' + labelStyle + '">Show this section</label>' +
+                '<div class="hsc-adv" data-adv-def="" style="' + fieldStyle + '">' +
+                '<label style="' + labelStyle + '">Show this section' + ADV_BADGE + '</label>' +
                 '<select is="emby-select" class="tlm-display-mode" style="width:100%;">' +
                 '<option value="">Always</option>' +
                 '<option value="tv">When TV Display Mode is on</option>' +
@@ -9327,8 +9957,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<option value="Thumb">Thumb</option>' +
                 '</select></div>' +
 
-                '<div style="' + fieldStyle + '">' +
-                '<label style="' + labelStyle + '">Card Size</label>' +
+                '<div class="hsc-adv" data-adv-def="0" style="' + fieldStyle + '">' +
+                '<label style="' + labelStyle + '">Card Size' + ADV_BADGE + '</label>' +
                 '<select is="emby-select" class="tlm-card-size" style="width:100%;">' + cardSizeOptionsHtml(preset ? preset.cardSizeOffset : '0') + '</select></div>' +
 
                 buildBadgePickerHtml(preset ? preset.badgeStyle : 'neutral', preset ? preset.badgeOptions : '', preset ? preset.realPoster : '', isShows ? 'shows' : 'movies') +
@@ -9360,6 +9990,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 if (preset.imageType) modal.querySelector('.tlm-image-type').value = preset.imageType;
                 if (preset.maxItems && preset.maxItems !== '0') modal.querySelector('.tlm-max-items').value = preset.maxItems;
             }
+            refreshAdvanced(modal);
 
             modal.querySelector('.btnTlmClose').addEventListener('click', function () { modal.remove(); });
             modal.querySelector('.btnTlmCancel').addEventListener('click', function () { modal.remove(); });
@@ -9528,15 +10159,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 '<div style="' + fieldStyle + '">' + positionFieldHtml(preset ? preset.position : '', '', labelStyle, HSC_POSITION_DESC) + '</div>' +
 
-                '<div style="' + fieldStyle + '">' +
-                '<label style="' + labelStyle + '">Show this section</label>' +
+                '<div class="hsc-adv" data-adv-def="" style="' + fieldStyle + '">' +
+                '<label style="' + labelStyle + '">Show this section' + ADV_BADGE + '</label>' +
                 '<select is="emby-select" class="mtlDisplayMode" style="width:100%;">' + displayOptions + '</select></div>' +
 
                 '<div style="' + fieldStyle + '">' +
                 '<label style="' + labelStyle + '">Image Type</label>' +
                 '<select is="emby-select" class="mtlImageType" style="width:100%;">' + imageOptions + '</select></div>' +
-                '<div style="' + fieldStyle + '">' +
-                '<label style="' + labelStyle + '">Card Size</label>' +
+                '<div class="hsc-adv" data-adv-def="0" style="' + fieldStyle + '">' +
+                '<label style="' + labelStyle + '">Card Size' + ADV_BADGE + '</label>' +
                 '<select is="emby-select" class="mtlCardSize" style="width:100%;">' + cardSizeOptionsHtml(presetCardSize) + '</select></div>' +
 
                 '</div>' +
@@ -9571,6 +10202,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             initBadgePicker(modal);
             wireUserMultiSelect(modal);
             wirePositionField(modal);
+            refreshAdvanced(modal);
             fillPositionRows(modal, presetUserIds[0] || ((users || [])[0] || {}).Id, function () {
                 return (modal.querySelector('.mtlCustomName') || {}).value || (modal.querySelector('.mtlListName') || {}).value || '';
             });
@@ -9905,15 +10537,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     '<div style="' + fieldStyle + '"><span style="' + labelStyle + '">Target Users</span>' +
                     '<div>' + usersHtml + '</div></div>' +
 
-                    '<div style="' + fieldStyle + '">' +
-                    '<label style="' + labelStyle + '">Show this section</label>' +
+                    '<div class="hsc-adv" data-adv-def="" style="' + fieldStyle + '">' +
+                    '<label style="' + labelStyle + '">Show this section' + ADV_BADGE + '</label>' +
                     '<select is="emby-select" class="mtlDisplayMode" style="width:100%;">' + displayOptions + '</select></div>' +
 
                     '<div style="' + fieldStyle + '">' +
                     '<label style="' + labelStyle + '">Image Type</label>' +
                     '<select is="emby-select" class="mtlImageType" style="width:100%;">' + imageOptions + '</select></div>' +
-                '<div style="' + fieldStyle + '">' +
-                '<label style="' + labelStyle + '">Card Size</label>' +
+                '<div class="hsc-adv" data-adv-def="0" style="' + fieldStyle + '">' +
+                '<label style="' + labelStyle + '">Card Size' + ADV_BADGE + '</label>' +
                 '<select is="emby-select" class="mtlCardSize" style="width:100%;">' + cardSizeOptionsHtml(presetCardSize) + '</select></div>' +
 
                     '</div>' +
@@ -9946,6 +10578,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 body.appendChild(wrapper);
                 initBadgePicker(body, tagName);
                 wireUserMultiSelect(wrapper);
+                refreshAdvanced(wrapper);
 
                 var selectedMovies = presetMovies.slice();
                 var originalManualState;
@@ -10122,8 +10755,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     '<div>' + usersHtml + '</div>' +
                     '</div>' +
 
-                    '<div style="' + fieldStyle + '">' +
-                    '<label style="' + labelStyle + '">Show this section</label>' +
+                    '<div class="hsc-adv" data-adv-def="" style="' + fieldStyle + '">' +
+                    '<label style="' + labelStyle + '">Show this section' + ADV_BADGE + '</label>' +
                     '<select is="emby-select" class="tlm-display-mode" style="width:100%;">' +
                     '<option value="">Always</option>' +
                     '<option value="tv">When TV Display Mode is on</option>' +
@@ -10143,8 +10776,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     '<option value="Thumb">Thumb</option>' +
                     '</select></div>' +
 
-                    '<div style="' + fieldStyle + '">' +
-                    '<label style="' + labelStyle + '">Card Size</label>' +
+                    '<div class="hsc-adv" data-adv-def="0" style="' + fieldStyle + '">' +
+                    '<label style="' + labelStyle + '">Card Size' + ADV_BADGE + '</label>' +
                     '<select is="emby-select" class="tlm-card-size" style="width:100%;">' + cardSizeOptionsHtml(presetCardSize) + '</select></div>' +
 
                     buildBadgePickerHtml(presetBadgeStyle, presetBadgeOptions, presetRealPoster, isShows ? 'shows' : 'movies') +
@@ -10168,6 +10801,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 if (presetDisplay)    wrapper.querySelector('.tlm-display-mode').value = presetDisplay;
                 if (presetImageType)  wrapper.querySelector('.tlm-image-type').value = presetImageType;
                 if (presetMaxItems && presetMaxItems !== '0') wrapper.querySelector('.tlm-max-items').value = presetMaxItems;
+                refreshAdvanced(wrapper);
 
                 function getRegularFormState() {
                     return JSON.stringify({
@@ -11148,7 +11782,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var has = function (keys) { return keys.some(function (k) { return Object.prototype.hasOwnProperty.call(parsed, k); }); };
         if (has(['OpenAiModel', 'GeminiModel', 'ClaudeModel', 'OllamaBaseUrl', 'OllamaModel', 'AiSystemPrompt', 'ExtendedConsoleOutput',
             'LogMissingItems', 'DryRunMode', 'PreserveTagsOnEmptyResult', 'TopListMirrorCollections', 'ShowCopyPasteButtons',
-            'ShowImportCollectionButton', 'RankedCollectionsEnabled'])) info.sections.add('Settings');
+            'ShowImportCollectionButton', 'RankedCollectionsEnabled', 'ShowMissingTitles', 'MissingExportToFile'])) info.sections.add('Settings');
         if (has(['TraktClientId', 'MdblistApiKey', 'TmdbApiKey', 'OpenAiApiKey', 'GeminiApiKey', 'ClaudeApiKey'])) info.sections.add('ApiKeys');
         if (Array.isArray(parsed.Tags)) info.sections.add('Tags');
         if (Array.isArray(parsed.SavedFilters)) info.sections.add('SavedFilters');
@@ -12022,6 +12656,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var settingsTab = view.querySelector('#tabSettings');
             settingsTab.addEventListener('input',  changeHandler, { signal: _signal });
             settingsTab.addEventListener('change', changeHandler, { signal: _signal });
+            // The Missing tab's Export panel is saved with the settings.
+            var mtExport = view.querySelector('#mtExportPanel');
+            mtExport.addEventListener('input',  changeHandler, { signal: _signal });
+            mtExport.addEventListener('change', function () { updateMissingExportUi(view); changeHandler(); }, { signal: _signal });
+            view.querySelector('.btnMtRefresh').addEventListener('click', function () { loadMissingTab(view); }, { signal: _signal });
+            mtExport.addEventListener('click', function (e) {
+                var btn = e.target.closest('.btnMtDownload');
+                if (btn) downloadMissingTitles(view, btn);
+            }, { signal: _signal });
 
             var spTa = view.querySelector('#txtAiSystemPrompt');
             var resetBtn = view.querySelector('#btnResetAiSystemPrompt');
@@ -12172,6 +12815,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             .catch(function (err) { window.Dashboard.alert('Could not add the source: ' + (err.message || err)); })
                             .finally(function () { btn.disabled = false; });
                     });
+                });
+
+                view.querySelector('#selSettingsLevel').addEventListener('change', function () {
+                    if (this.value !== settingsLevel) setSettingsLevel(view, this.value, true);
                 });
 
                 view.querySelector('#btnOpenBugReport').addEventListener('click', () => bugOverlay.classList.add('modal-visible'));
@@ -12347,7 +12994,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         fileInput.value = '';
                         showRestoreModal(ev.target.result, function () {
                             // Server config changed underneath us — reload every tab from scratch.
-                            ['#hscContainer', '#hscManageContainer', '#tlContainer', '#tcManageContainer'].forEach(function (sel) {
+                            ['#hscContainer', '#hscManageContainer', '#hstContainer', '#tlContainer', '#tcManageContainer'].forEach(function (sel) {
                                 var el = view.querySelector(sel);
                                 if (el) el.dataset.loaded = '';
                             });
@@ -12358,6 +13005,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                                 if (target === 'HomeCompanion') { loadHscUsers(view); loadHscManageTab(view); }
                                 else if (target === 'TopLists') loadTopListsTab(view);
                                 else if (target === 'Cleanup') loadTagManageTab(view);
+                                else if (target === 'Missing') loadMissingTab(view);
                             });
                         });
                     };
@@ -12891,6 +13539,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             runTask('ContinueWatchingBumpTask', 'Continue Watching bump');
         });
 
+        view.querySelector('#btnDialOriginalPosters').addEventListener('click', function () {
+            runTask('OriginalPostersTask', 'Original-language posters');
+        });
+
         view.querySelector('#btnDialFullSync').addEventListener('click', function () {
             Promise.all([startHscTask('HomeScreenCompanionSyncTask'), startHscTask('HomeSectionSyncTask')])
                 .then(function (res) {
@@ -12973,9 +13625,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     ContinueWatchingBumpEnabled:  config.ContinueWatchingBumpEnabled  || false,
                     ContinueWatchingBumpMode:     config.ContinueWatchingBumpMode     || 'AllEpisodes',
                     ContinueWatchingBumpAllUsers: config.ContinueWatchingBumpAllUsers || false,
-                    ContinueWatchingBumpUserIds:  config.ContinueWatchingBumpUserIds  || []
+                    ContinueWatchingBumpUserIds:  config.ContinueWatchingBumpUserIds  || [],
+                    OrigPostersEnabled:   config.OrigPostersEnabled   || false,
+                    OrigPostersLanguages: config.OrigPostersLanguages || [],
+                    OrigPostersMovies:    config.OrigPostersMovies   !== false,
+                    OrigPostersSeries:    config.OrigPostersSeries   !== false,
+                    OrigPostersSeasons:   config.OrigPostersSeasons  !== false,
+                    OrigPostersEpisodes:  config.OrigPostersEpisodes  || false
                 };
                 savedFilters = config.SavedFilters || [];
+                setSettingsLevel(view, config.SettingsLevel || initialSettingsLevel(config), false);
 
                 var container = view.querySelector('#tagListContainer'); container.innerHTML = '';
                 view.querySelector('#txtTraktClientId').value = config.TraktClientId || '';
@@ -13001,7 +13660,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 view.querySelector('#chkHideTopListLibraries').checked = config.HideTopListLibraries !== false;
                 view.querySelector('#chkShowCopyPasteButtons').checked = config.ShowCopyPasteButtons || false;
                 view.querySelector('#chkShowImportCollectionButton').checked = config.ShowImportCollectionButton || false;
+                view.querySelector('#chkShowMissingTitles').checked = !!config.ShowMissingTitles;
+                view.querySelector('#chkMissingIncludeGaps').checked = !!config.MissingIncludeGaps;
+                view.querySelector('#chkMissingExportToFile').checked = !!config.MissingExportToFile;
+                view.querySelector('#txtMissingExportFolder').value = config.MissingExportFolder || '';
+                view.querySelector('#chkMissingExportJson').checked = config.MissingExportJson !== false;
+                view.querySelector('#chkMissingExportCsv').checked = config.MissingExportCsv !== false;
+                updateMissingExportUi(view);
                 view.querySelector('#chkRankedCollectionsEnabled').checked = config.RankedCollectionsEnabled || false;
+                view.querySelector('#chkShowAdvancedBadges').checked = config.ShowAdvancedBadges !== false;
                 if (view.querySelector('#txtSearchTags')) {
                     view.querySelector('#txtSearchTags').value = '';
                     view.querySelector('#btnClearSearch').style.display = 'none';
@@ -13061,6 +13728,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 } else if (target === 'Cleanup') {
                     var container = view.querySelector('#tcManageContainer');
                     if (container && !container.dataset.loaded) loadTagManageTab(view);
+                } else if (target === 'Missing') {
+                    // Compared with the library each time, so a title added since is gone.
+                    loadMissingTab(view);
                 } else if (target === 'TopLists') {
                     var tlContainer = view.querySelector('#tlContainer');
                     if (tlContainer && !tlContainer.dataset.loaded) loadTopListsTab(view);

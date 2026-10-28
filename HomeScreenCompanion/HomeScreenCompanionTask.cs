@@ -239,6 +239,7 @@ namespace HomeScreenCompanion
                 _log.Debug($"Library scan: {allItems.Count:N0} items, {imdbLookup.Count:N0} with IMDb id  ·  {RunLog.Elapsed(runTimer.Elapsed)}");
 
                 var fetcher = new ListFetcher(_httpClient, _jsonSerializer);
+                var missingRun = config.ShowMissingTitles ? new MissingTitles.Run() : null;
                 var desiredTagsMap = new Dictionary<Guid, HashSet<string>>();
                 var allScannedEpisodeItems = new Dictionary<Guid, BaseItem>();
                 var allScannedSeasonItems = new Dictionary<Guid, BaseItem>();
@@ -743,6 +744,7 @@ namespace HomeScreenCompanion
                                 (ListFetcher.IsFailure(fetchError) ? gs.Errors : gs.Warnings).Add(StandInMessage(tagConfig.Url!, fetchError, _lastGood.Value.SavedUtc));
                             }
                             gs.ListCount = items.Count;
+                            missingRun?.Record(tagConfig, items.Where(i => string.IsNullOrEmpty(i.Imdb) || !blacklist.Contains(i.Imdb)));
                             int _extBlacklisted = 0, _extNoImdb = 0;
 
                             if (items.Count > 0)
@@ -1012,12 +1014,13 @@ namespace HomeScreenCompanion
 
                             gs.ListCount = aiItems.Count;
                             fetchError = fetcher.LastError;
-                            int _aiTitleMatched = 0, _aiBlacklisted = 0;
+                            int _aiTitleMatched = 0, _aiBlacklisted = 0, _aiSeen = 0;
 
                             foreach (var aiItem in aiItems)
                             {
                                 // Asked for more than the limit (see AiAskCount): the first hits fill it.
                                 if (effectiveLimit < 10000 && TitleCount(matchedLocalItems) >= effectiveLimit) break;
+                                _aiSeen++;
                                 if (string.IsNullOrWhiteSpace(aiItem.title)) continue;
                                 string _aiLabel = aiItem.year.HasValue ? $"{aiItem.title} ({aiItem.year})" : aiItem.title;
 
@@ -1078,6 +1081,9 @@ namespace HomeScreenCompanion
                                 }
                             }
 
+                            // Only the titles the AI's answer was read up to (the limit was filled after them).
+                            missingRun?.Record(tagConfig, aiItems.Take(_aiSeen).Where(a => !string.IsNullOrWhiteSpace(a.title)
+                                && (string.IsNullOrEmpty(a.imdb_id) || !blacklist.Contains(a.imdb_id!.Trim()))).Select(MissingTitles.FromAi));
                             _log.Debug($"  AI ({AiConnection.Label(tagConfig.AiProvider)}) returned {gs.ListCount} items in {fetchTimer.ElapsedMilliseconds} ms  ·  {matchedLocalItems.Count} matched ({_aiTitleMatched} by title only)  ·  {gs.MissingItems.Count} not in library  ·  {_aiBlacklisted} blacklisted");
                             if (tagConfig.AiRefreshIntervalDays > 0 && aiItems.Count > 0)
                             {
@@ -1775,6 +1781,24 @@ namespace HomeScreenCompanion
                     _log.Blank();
                 }
 
+                if (missingRun != null)
+                {
+                    _log.Blank();
+                    _log.Info("» Missing titles");
+                    try
+                    {
+                        await MissingTitles.SaveAsync(missingRun, config, _httpClient, _jsonSerializer, _log, cancellationToken).ConfigureAwait(false);
+                        if (config.MissingExportToFile)
+                        {
+                            var folder = MissingTitlesExport.Write();
+                            if (folder != null) _log.Debug($"  Missing titles written to {folder}");
+                            else if (MissingTitlesExport.LastError != null) _log.Warn($"The missing titles could not be written to a file: {MissingTitlesExport.LastError}");
+                        }
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex) { _log.Warn($"The missing titles could not be saved: {ex.Message}"); }
+                }
+
                 // Final summary
                 int totalCollCreated = statsList.Count(g => g.CollectionCreated);
                 int totalCollUpdated = statsList.Count(g => !g.CollectionCreated && !g.Skipped && g.EnableCollection && (g.CollectionItemsAdded > 0 || g.CollectionItemsRemoved > 0));
@@ -2372,6 +2396,8 @@ namespace HomeScreenCompanion
                 return (true, gs.SkipReason + " — skipped");
             }
 
+            // Not for a Preview: it changes nothing.
+            var missingRun = config.ShowMissingTitles && _preview == null ? new MissingTitles.Run() : null;
             try
             {
                 var fetcher = new ListFetcher(_httpClient, _jsonSerializer);
@@ -2395,6 +2421,7 @@ namespace HomeScreenCompanion
                             (ListFetcher.IsFailure(fetcher.LastError) ? gs.Errors : gs.Warnings).Add(StandInMessage(src.Url, fetcher.LastError, _lastGood.Value.SavedUtc));
                         }
                         _listCount += items.Count;
+                        missingRun?.Record(src, items.Where(i => string.IsNullOrEmpty(i.Imdb) || !blacklist.Contains(i.Imdb)));
                         // One URL of several that does not exist (404): left out, as in the full sync.
                         if (items.Count == 0 && groupEntries.Count > 1 && ListFetcher.IsGone(fetcher.LastError))
                         {
@@ -2611,12 +2638,13 @@ namespace HomeScreenCompanion
                     _listCount = aiItems.Count;
                     if (aiItems.Count == 0) _emptySources.Add((string.IsNullOrWhiteSpace(tagConfig.AiProvider) ? "the AI" : AiConnection.Label(tagConfig.AiProvider)) + (fetcher.LastError != null ? $" ({fetcher.LastError})" : ""));
                     if (aiItems.Count == 0 && ListFetcher.IsFailure(fetcher.LastError)) _failedSources.Add(_emptySources[_emptySources.Count - 1]);
-                    int _aiTitleMatched = 0, _aiBlacklisted = 0;
+                    int _aiTitleMatched = 0, _aiBlacklisted = 0, _aiSeen = 0;
 
                     foreach (var aiItem in aiItems)
                     {
                         // Asked for more than the limit (see AiAskCount): the first hits fill it.
                         if (effectiveLimit < 10000 && TitleCount(matchedLocalItems) >= effectiveLimit) break;
+                        _aiSeen++;
                         if (string.IsNullOrWhiteSpace(aiItem.title)) continue;
                         string _aiLabel = aiItem.year.HasValue ? $"{aiItem.title} ({aiItem.year})" : aiItem.title;
 
@@ -2658,6 +2686,8 @@ namespace HomeScreenCompanion
                             }
                         }
                     }
+                    missingRun?.Record(tagConfig, aiItems.Take(_aiSeen).Where(a => !string.IsNullOrWhiteSpace(a.title)
+                        && (string.IsNullOrEmpty(a.imdb_id) || !blacklist.Contains(a.imdb_id!.Trim()))).Select(MissingTitles.FromAi));
                     _log.Debug($"  AI ({AiConnection.Label(tagConfig.AiProvider)}) returned {_listCount} items in {fetchTimer.ElapsedMilliseconds} ms  ·  {matchedLocalItems.Count} matched ({_aiTitleMatched} by title only)  ·  {gs.MissingItems.Count} not in library  ·  {_aiBlacklisted} blacklisted");
 
                     if (_preview != null)
@@ -2678,6 +2708,24 @@ namespace HomeScreenCompanion
                 WriteSingleRunFooter(gs, startTime, dryRun, logMissing);
                 if (_preview == null) LastRunStatus = $"Failed: {ex.Message}";
                 return (false, $"Error: {ex.Message}");
+            }
+
+            if (missingRun != null)
+            {
+                _log.Blank();
+                _log.Info("» Missing titles");
+                try
+                {
+                    await MissingTitles.SaveAsync(missingRun, config, _httpClient, _jsonSerializer, _log, cancellationToken).ConfigureAwait(false);
+                    if (config.MissingExportToFile)
+                    {
+                        var folder = MissingTitlesExport.Write();
+                        if (folder != null) _log.Debug($"  Missing titles written to {folder}");
+                        else if (MissingTitlesExport.LastError != null) _log.Warn($"The missing titles could not be written to a file: {MissingTitlesExport.LastError}");
+                    }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex) { _log.Warn($"The missing titles could not be saved: {ex.Message}"); }
             }
 
             // Some of the group's URLs came back empty (and had no last good list to stand in), the
