@@ -6368,6 +6368,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var cwbEnabled      = view.querySelector('#chkCwbEnabled');
         var cwbMode         = view.querySelector('#selCwbMode');
         var cwbAllUsers     = view.querySelector('#chkCwbAllUsers');
+        var opEnabled       = view.querySelector('#chkOpEnabled');
         // Compare what is in the field, so clearing one counts as a change; an empty field is
         // saved as the default the AI call needs.
         function fieldOr(id, def) {
@@ -6417,8 +6418,22 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             ContinueWatchingBumpAllUsers: cwbAllUsers ? cwbAllUsers.checked : (lastHscConfig.ContinueWatchingBumpAllUsers || false),
             ContinueWatchingBumpUserIds: cwbEnabled
                 ? Array.from(view.querySelectorAll('.cwb-user-chk:checked')).map(function(c) { return c.value; })
-                : (lastHscConfig.ContinueWatchingBumpUserIds || [])
+                : (lastHscConfig.ContinueWatchingBumpUserIds || []),
+            // Home Screen Tweaks is drawn when first opened: until then the loaded values are kept.
+            OrigPostersEnabled: opEnabled ? opEnabled.checked : (lastHscConfig.OrigPostersEnabled || false),
+            OrigPostersLanguages: opEnabled ? readOrigPostersLanguages(view) : (lastHscConfig.OrigPostersLanguages || []),
+            OrigPostersMovies: opEnabled ? view.querySelector('#chkOpMovies').checked : lastHscConfig.OrigPostersMovies !== false,
+            OrigPostersSeries: opEnabled ? view.querySelector('#chkOpSeries').checked : lastHscConfig.OrigPostersSeries !== false,
+            OrigPostersSeasons: opEnabled ? view.querySelector('#chkOpSeasons').checked : lastHscConfig.OrigPostersSeasons !== false,
+            OrigPostersEpisodes: opEnabled ? view.querySelector('#chkOpEpisodes').checked : (lastHscConfig.OrigPostersEpisodes || false)
         };
+    }
+
+    function readOrigPostersLanguages(view) {
+        var codes = Array.from(view.querySelectorAll('.op-lang-chk:checked')).map(function (c) { return c.value; });
+        var extra = view.querySelector('#opExtraLangs');
+        if (extra && extra.value) extra.value.split(',').forEach(function (c) { if (c && codes.indexOf(c) < 0) codes.push(c); });
+        return codes;
     }
 
     // ---- AI: OpenAI-compatible connections and model lists ----
@@ -6586,7 +6601,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         RankedCollectionsEnabled: 'Ranked collections', SavedFilters: 'Saved filters',
         HomeSyncEnabled: 'Home Screen sync: on/off', HomeSyncProfiles: 'Home Screen sync: profiles',
         ContinueWatchingBumpEnabled: 'Continue Watching bump: on/off', ContinueWatchingBumpMode: 'Continue Watching bump: mode',
-        ContinueWatchingBumpAllUsers: 'Continue Watching bump: all users', ContinueWatchingBumpUserIds: 'Continue Watching bump: users'
+        ContinueWatchingBumpAllUsers: 'Continue Watching bump: all users', ContinueWatchingBumpUserIds: 'Continue Watching bump: users',
+        OrigPostersEnabled: 'Original-language posters: on/off', OrigPostersLanguages: 'Original-language posters: languages',
+        OrigPostersMovies: 'Original-language posters: movies', OrigPostersSeries: 'Original-language posters: series',
+        OrigPostersSeasons: 'Original-language posters: seasons', OrigPostersEpisodes: 'Original-language posters: episodes'
     };
     // A source card's field → the card tab it lives on.
     function sourceFieldArea(k) {
@@ -7440,10 +7458,240 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '</div>',
 
             '</div>',
-            '</div>'
+            '</div>',
+
+            origPostersPanelHtml(config)
         ].join('');
 
         container.dataset.loaded = '1';
+    }
+
+    // ---- Original-language posters (OriginalPosters.cs) ----
+    // The languages offered (ISO 639-1, as TMDb gives a title's original language).
+    var OP_LANGUAGES = [
+        ['en', 'English'], ['sv', 'Swedish'], ['da', 'Danish'], ['no', 'Norwegian'], ['fi', 'Finnish'], ['is', 'Icelandic'],
+        ['de', 'German'], ['nl', 'Dutch'], ['fr', 'French'], ['es', 'Spanish'], ['pt', 'Portuguese'], ['it', 'Italian'],
+        ['pl', 'Polish'], ['cs', 'Czech'], ['hu', 'Hungarian'], ['ro', 'Romanian'], ['el', 'Greek'], ['tr', 'Turkish'],
+        ['ru', 'Russian'], ['uk', 'Ukrainian'], ['he', 'Hebrew'], ['ar', 'Arabic'], ['fa', 'Persian'], ['hi', 'Hindi'],
+        ['ta', 'Tamil'], ['te', 'Telugu'], ['th', 'Thai'], ['id', 'Indonesian'], ['ja', 'Japanese'], ['ko', 'Korean'], ['zh', 'Chinese']
+    ];
+    function opLanguageName(code) {
+        for (var i = 0; i < OP_LANGUAGES.length; i++) if (OP_LANGUAGES[i][0] === code) return OP_LANGUAGES[i][1];
+        return code;
+    }
+
+    function origPostersPanelHtml(config) {
+        var on = !!config.OrigPostersEnabled;
+        var chosen = config.OrigPostersLanguages || [];
+        function chk(id, value, label, desc) {
+            return '<div class="checkboxContainer checkboxContainer-withDescription" style="margin-bottom:6px;">' +
+                '<label><input is="emby-checkbox" type="checkbox" id="' + id + '"' + (value ? ' checked' : '') + ' /><span>' + label + '</span></label>' +
+                (desc ? '<div class="fieldDescription">' + desc + '</div>' : '') +
+                '</div>';
+        }
+        var langs = OP_LANGUAGES.map(function (l) {
+            return '<label class="op-lang" data-lang="' + l[0] + '"><input type="checkbox" class="op-lang-chk" value="' + l[0] + '"' + (chosen.indexOf(l[0]) >= 0 ? ' checked' : '') + ' />' +
+                '<span>' + escapeHtml(l[1]) + '</span><span class="op-lang-code">' + l[0] + '</span></label>';
+        }).join('');
+        // Codes chosen before that the list does not have (from a backup, or a later list) stay chosen.
+        var extra = chosen.filter(function (c) { return !OP_LANGUAGES.some(function (l) { return l[0] === c; }); });
+        return [
+            '<div class="advanced-section settings-panel" style="margin-bottom: 15px;">',
+            '<div class="advanced-header settings-panel-toggle">',
+            '<span class="hsc-title">Original-language posters</span>',
+            '<i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s;">expand_more</i>',
+            '</div>',
+            '<div class="advanced-body settings-panel-body" style="display:none; padding-top: 4px;">',
+
+            '<p style="font-size:0.9em; line-height:1.5; margin:0 0 16px;">',
+            'Emby gives every title a poster in your library\'s language. With this on, a movie or series made in one of the languages you choose gets its poster in that language instead, ',
+            'for example a Danish series its Danish poster. A title is only changed when a poster in exactly that language exists.',
+            '</p>',
+
+            '<div id="opNoKey" class="op-note" style="display:none;"><i class="md-icon" style="color:var(--hsc-warning-text);">warning</i>',
+            '<div>Needs a <strong>TMDb key</strong> in Settings › API keys. TMDb tells each title\'s original language.</div></div>',
+
+            chk('chkOpEnabled', on, 'Use original-language posters',
+                'Runs once a day and about 10 minutes after new titles are added. The first run reads the original language of every movie and series from TMDb, so it can take a while. Turned off, the next run puts the original posters back.'),
+
+            '<div id="opConfig" style="display:' + (on ? '' : 'none') + '">',
+            '<div class="hsc-eyebrow" style="margin:18px 0 8px;">Languages</div>',
+            '<div class="op-langs">', langs, '</div>',
+            (extra.length ? '<input type="hidden" id="opExtraLangs" value="' + escapeHtml(extra.join(',')) + '" />' : ''),
+            '<div class="fieldDescription" id="opLibLangs" style="margin-top:6px;">A title in your library\'s own image language is never changed.</div>',
+
+            '<div class="hsc-eyebrow" style="margin:18px 0 8px;">Change</div>',
+            chk('chkOpMovies', config.OrigPostersMovies !== false, 'Movie posters', ''),
+            chk('chkOpSeries', config.OrigPostersSeries !== false, 'Series posters', ''),
+            chk('chkOpSeasons', config.OrigPostersSeasons !== false, 'Season posters', 'A season follows the language of its series.'),
+            chk('chkOpEpisodes', !!config.OrigPostersEpisodes, 'Episode images',
+                'Episode images are mostly stills from the episode with no language, so most episodes keep theirs. Checks every episode of the series, so it adds time.'),
+            '</div>',
+
+            '<div class="hsc-eyebrow" style="margin:18px 0 8px;">Changed titles</div>',
+            '<div id="opStatus" class="fieldDescription">Loading…</div>',
+            '<div id="opList" class="op-list"></div>',
+            '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px;">',
+            '<button is="emby-button" type="button" class="raised btn-neutral" id="btnOpRun"><i class="md-icon" style="margin-right:5px;">play_arrow</i>Run now</button>',
+            '<button is="emby-button" type="button" class="raised btn-neutral" id="btnOpRestoreAll"><i class="md-icon" style="margin-right:5px;">undo</i>Restore all</button>',
+            '</div>',
+            '<div class="fieldDescription" style="margin-top:6px;">Run now uses the saved settings. Restore all puts every original poster back right away and turns this off.</div>',
+            '<div id="opExcludedWrap" style="display:none;">',
+            '<div class="hsc-eyebrow" style="margin:18px 0 8px;">Kept as they were</div>',
+            '<div id="opExcluded" class="op-list"></div>',
+            '</div>',
+
+            '<div style="margin-top:16px; padding:10px 14px; border:1px solid rgba(128,128,128,0.2); border-radius:6px;">',
+            '<div class="hsc-eyebrow" style="margin-bottom:6px;">Good to know</div>',
+            '<ul style="font-size:0.85em; line-height:1.5; margin:0; padding-left:18px; opacity:0.85;">',
+            '<li>The language is the one the title was <strong>made in</strong> (TMDb\'s original language), not the country. An English series never gets a poster in another language.</li>',
+            '<li>The poster is taken from Emby\'s own image sources (TheMovieDb, TheTVDB, FanArt), in the order your library uses.</li>',
+            '<li>The poster it replaced is <strong>kept</strong>. <em>Restore</em> on a title puts it back and leaves that title alone from then on. Unticking a language or a kind puts its originals back on the next run.</li>',
+            '<li>If Emby replaces a poster later (for example a refresh with <em>Replace existing images</em>), the next run puts the original-language one back. To keep a poster you picked yourself, use <em>Restore</em> first.</li>',
+            '<li>Turning this off (and saving) puts every original poster back on the next run, the same as <em>Restore all</em>. Titles you restored one by one stay as they are.</li>',
+            '</ul>',
+            '</div>',
+
+            '</div>',
+            '</div>'
+        ].join('');
+    }
+
+    // Run now runs what is saved, not what is on the page.
+    function lastSavedOrigPostersEnabled() {
+        try { return !!JSON.parse(originalConfigState).OrigPostersEnabled; } catch (e) { return !!lastHscConfig.OrigPostersEnabled; }
+    }
+
+    function opFetch(path, body) {
+        var opts = { headers: { 'X-MediaBrowser-Token': window.ApiClient.accessToken() } };
+        if (body) {
+            opts.method = 'POST';
+            opts.headers['Content-Type'] = 'application/json';
+            opts.body = JSON.stringify(body);
+        }
+        return fetch(window.ApiClient.getUrl('HomeScreenCompanion/' + path), opts).then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        });
+    }
+
+    function loadOrigPostersStatus(container) {
+        var status = container.querySelector('#opStatus');
+        var list = container.querySelector('#opList');
+        if (!status || !list) return;
+        opFetch('OriginalPosters').then(function (res) {
+            var noKey = container.querySelector('#opNoKey');
+            if (noKey) noKey.style.display = res.HasTmdbKey ? 'none' : 'flex';
+
+            var libLangs = res.LibraryLanguages || [];
+            container.querySelectorAll('.op-lang').forEach(function (el) {
+                var own = libLangs.indexOf(el.dataset.lang) >= 0;
+                el.classList.toggle('op-lang-own', own);
+                el.title = own ? 'Your library\'s own language: these titles already get posters in it' : '';
+            });
+            var libNote = container.querySelector('#opLibLangs');
+            if (libNote && libLangs.length)
+                libNote.innerHTML = 'Your libraries use <strong>' + libLangs.map(function (l) { return escapeHtml(opLanguageName(l)); }).join(', ') + '</strong> posters. A title in the library\'s own image language is never changed.';
+
+            var titles = res.Titles || [];
+            var when = res.LastRunUtc ? new Date(res.LastRunUtc).toLocaleString() : '';
+            status.textContent = (res.Running ? 'Running now. ' : '') +
+                (titles.length ? titles.length + (titles.length === 1 ? ' title has' : ' titles have') + ' an original-language poster.' : 'No titles changed yet.') +
+                (when ? ' Last run: ' + when + '.' : (res.Running ? '' : ' Not run yet.'));
+
+            function row(t, excluded) {
+                var parts = [];
+                if (t.Year) parts.push(t.Year);
+                parts.push(t.Type === 'Series' ? 'Series' : t.Type === 'Season' ? 'Season' : 'Movie');
+                if (t.Language) parts.push(escapeHtml(opLanguageName(t.Language)));
+                if (!excluded) {
+                    var what = [];
+                    if (t.Poster) what.push('poster');
+                    if (t.Seasons) what.push(t.Seasons + (t.Seasons === 1 ? ' season' : ' seasons'));
+                    if (t.Episodes) what.push(t.Episodes + (t.Episodes === 1 ? ' episode' : ' episodes'));
+                    if (what.length) parts.push(what.join(', '));
+                }
+                var img = window.ApiClient.getImageUrl(t.InternalId, { type: 'Primary', maxHeight: 100 });
+                return '<div class="op-row">' +
+                    '<div class="op-poster" style="background-image:url(&quot;' + escapeHtml(img) + '&quot;)"></div>' +
+                    '<div class="op-info"><div class="op-title" title="' + escapeHtml(t.Name) + '">' + escapeHtml(t.Name) + '</div>' +
+                    '<div class="op-meta">' + parts.join(' · ') + '</div></div>' +
+                    (excluded
+                        ? '<button is="emby-button" type="button" class="raised btn-neutral op-include" data-id="' + t.Id + '" title="The next run may change this title again">Allow again</button>'
+                        : '<button is="emby-button" type="button" class="raised btn-neutral op-restore" data-id="' + t.Id + '" title="Put the original poster back and leave this title alone">Restore</button>') +
+                    '</div>';
+            }
+            list.innerHTML = titles.map(function (t) { return row(t, false); }).join('');
+            var ex = res.Excluded || [];
+            var exWrap = container.querySelector('#opExcludedWrap');
+            if (exWrap) exWrap.style.display = ex.length ? '' : 'none';
+            var exList = container.querySelector('#opExcluded');
+            if (exList) exList.innerHTML = ex.map(function (t) { return row(t, true); }).join('');
+        }).catch(function (e) {
+            status.textContent = 'Could not load the changed titles: ' + e.message;
+        });
+    }
+
+    function wireOrigPosters(container, view) {
+        var enable = container.querySelector('#chkOpEnabled');
+        if (enable) enable.addEventListener('change', function () {
+            var cfg = container.querySelector('#opConfig');
+            if (cfg) cfg.style.display = this.checked ? '' : 'none';
+        });
+
+        container.addEventListener('click', function (e) {
+            var btn = e.target.closest('#btnOpRun, #btnOpRestoreAll, .op-restore, .op-include');
+            if (!btn || !container.contains(btn)) return;
+            if (btn.id === 'btnOpRun') {
+                if (!lastSavedOrigPostersEnabled() && !window.confirm('Original-language posters is off (as saved), so this run puts every original poster back. Go on?')) return;
+                opFetch('RunTask', { Key: 'OriginalPostersTask' }).then(function (res) {
+                    window.Dashboard.alert(res && res.Success ? (res.Message || 'Started.') : 'Could not start it' + (res && res.Message ? ': ' + res.Message : ''));
+                    setTimeout(function () { loadOrigPostersStatus(container); }, 1500);
+                }).catch(function (err) { window.Dashboard.alert('Could not start it: ' + err.message); });
+                return;
+            }
+            if (btn.id === 'btnOpRestoreAll') {
+                if (!window.confirm('Put every original poster back and turn original-language posters off?')) return;
+                btn.disabled = true;
+                opFetch('OriginalPosters/Restore', { All: true }).then(function (res) {
+                    window.Dashboard.alert(res.Message || 'Done.');
+                    if (res.Success) {
+                        // Off, and saved, so the next run does not set them again.
+                        var chk = container.querySelector('#chkOpEnabled');
+                        if (chk && chk.checked) { chk.checked = false; chk.dispatchEvent(new Event('change', { bubbles: true })); }
+                        lastHscConfig.OrigPostersEnabled = false;
+                        window.ApiClient.getPluginConfiguration(pluginId).then(function (cfg) {
+                            var before = hscServerStamp(cfg);
+                            cfg.OrigPostersEnabled = false;
+                            return window.ApiClient.updatePluginConfiguration(pluginId, cfg)
+                                .then(function (r) { return advanceServerStamp(before).then(function () { return r; }); });
+                        }).then(function () {
+                            if (originalConfigState) {
+                                try {
+                                    var state = JSON.parse(originalConfigState);
+                                    state.OrigPostersEnabled = false;
+                                    originalConfigState = JSON.stringify(state);
+                                } catch (e2) {}
+                            }
+                            checkFormState();
+                        });
+                    }
+                }).catch(function (err) { window.Dashboard.alert('Could not restore: ' + err.message); })
+                  .then(function () { btn.disabled = false; loadOrigPostersStatus(container); });
+                return;
+            }
+            var id = btn.dataset.id;
+            btn.disabled = true;
+            var call = btn.classList.contains('op-restore')
+                ? opFetch('OriginalPosters/Restore', { Ids: [id] })
+                : opFetch('OriginalPosters/Include', { Id: id });
+            call.then(function (res) {
+                if (!res.Success) window.Dashboard.alert(res.Message || 'Failed.');
+            }).catch(function (err) { window.Dashboard.alert('Failed: ' + err.message); })
+              .then(function () { loadOrigPostersStatus(container); });
+        });
+
+        loadOrigPostersStatus(container);
     }
 
     function loadHstTab(view) {
@@ -7472,6 +7720,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 var cwbList = container.querySelector('#cwbUserList');
                 wireUserListSelectLinks(cwbList && cwbList.previousElementSibling, cwbList);
+                wireOrigPosters(container, view);
 
                 container.querySelectorAll('input, select').forEach(function (el) {
                     el.addEventListener('change', function () { setTimeout(checkFormState, 0); });
@@ -12725,7 +12974,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         fileInput.value = '';
                         showRestoreModal(ev.target.result, function () {
                             // Server config changed underneath us — reload every tab from scratch.
-                            ['#hscContainer', '#hscManageContainer', '#tlContainer', '#tcManageContainer'].forEach(function (sel) {
+                            ['#hscContainer', '#hscManageContainer', '#hstContainer', '#tlContainer', '#tcManageContainer'].forEach(function (sel) {
                                 var el = view.querySelector(sel);
                                 if (el) el.dataset.loaded = '';
                             });
@@ -13270,6 +13519,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             runTask('ContinueWatchingBumpTask', 'Continue Watching bump');
         });
 
+        view.querySelector('#btnDialOriginalPosters').addEventListener('click', function () {
+            runTask('OriginalPostersTask', 'Original-language posters');
+        });
+
         view.querySelector('#btnDialFullSync').addEventListener('click', function () {
             Promise.all([startHscTask('HomeScreenCompanionSyncTask'), startHscTask('HomeSectionSyncTask')])
                 .then(function (res) {
@@ -13352,7 +13605,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     ContinueWatchingBumpEnabled:  config.ContinueWatchingBumpEnabled  || false,
                     ContinueWatchingBumpMode:     config.ContinueWatchingBumpMode     || 'AllEpisodes',
                     ContinueWatchingBumpAllUsers: config.ContinueWatchingBumpAllUsers || false,
-                    ContinueWatchingBumpUserIds:  config.ContinueWatchingBumpUserIds  || []
+                    ContinueWatchingBumpUserIds:  config.ContinueWatchingBumpUserIds  || [],
+                    OrigPostersEnabled:   config.OrigPostersEnabled   || false,
+                    OrigPostersLanguages: config.OrigPostersLanguages || [],
+                    OrigPostersMovies:    config.OrigPostersMovies   !== false,
+                    OrigPostersSeries:    config.OrigPostersSeries   !== false,
+                    OrigPostersSeasons:   config.OrigPostersSeasons  !== false,
+                    OrigPostersEpisodes:  config.OrigPostersEpisodes  || false
                 };
                 savedFilters = config.SavedFilters || [];
                 setSettingsLevel(view, config.SettingsLevel || initialSettingsLevel(config), false);

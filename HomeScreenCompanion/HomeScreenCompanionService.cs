@@ -385,6 +385,28 @@ namespace HomeScreenCompanion
         public string Tmdb { get; set; } = "";
     }
 
+    // Home Screen Tweaks › Original-language posters: the titles given one, and the excluded ones.
+    [Route("/HomeScreenCompanion/OriginalPosters", "GET")]
+    [Authenticated(Roles = "Admin")]
+    public class GetOriginalPostersRequest : IReturn<OriginalPosters.StatusResult> { }
+
+    // Puts the original posters back: of the titles in Ids (then excluded), or of all (All = true).
+    [Route("/HomeScreenCompanion/OriginalPosters/Restore", "POST")]
+    [Authenticated(Roles = "Admin")]
+    public class RestoreOriginalPostersRequest : IReturn<RunEntryResponse>
+    {
+        public List<string> Ids { get; set; } = new List<string>();
+        public bool All { get; set; }
+    }
+
+    // Lets an excluded title be changed again by the next run.
+    [Route("/HomeScreenCompanion/OriginalPosters/Include", "POST")]
+    [Authenticated(Roles = "Admin")]
+    public class IncludeOriginalPosterRequest : IReturn<RunEntryResponse>
+    {
+        public string Id { get; set; } = "";
+    }
+
     // Every playlist on the server (Cleanup tab), with its owner and the users it is shared with.
     [Route("/HomeScreenCompanion/Manage/Playlists", "GET")]
     [Authenticated(Roles = "Admin")]
@@ -744,6 +766,12 @@ namespace HomeScreenCompanion
         public string? ContinueWatchingBumpMode { get; set; }
         public bool? ContinueWatchingBumpAllUsers { get; set; }
         public List<string>? ContinueWatchingBumpUserIds { get; set; }
+        public bool? OrigPostersEnabled { get; set; }
+        public List<string>? OrigPostersLanguages { get; set; }
+        public bool? OrigPostersMovies { get; set; }
+        public bool? OrigPostersSeries { get; set; }
+        public bool? OrigPostersSeasons { get; set; }
+        public bool? OrigPostersEpisodes { get; set; }
     }
 
     public class BackupTopList
@@ -1311,7 +1339,7 @@ public class HomeScreenCompanionService : IService
         // The tasks the Run menu may start.
         private static readonly HashSet<string> RunMenuTasks = new HashSet<string>(StringComparer.Ordinal)
         {
-            "HomeScreenCompanionSyncTask", "HomeSectionSyncTask", "TopListSyncTask", "MergeTopListVersionsTask", "ContinueWatchingBumpTask"
+            "HomeScreenCompanionSyncTask", "HomeSectionSyncTask", "TopListSyncTask", "MergeTopListVersionsTask", "ContinueWatchingBumpTask", "OriginalPostersTask"
         };
 
         public object Post(RunTaskRequest request)
@@ -2275,6 +2303,37 @@ public class HomeScreenCompanionService : IService
             result.ExportWrittenUtc = MissingTitlesExport.WrittenUtc(config)?.ToString("o");
             result.ExportError = MissingTitlesExport.LastError;
             return result;
+        }
+
+        public object Get(GetOriginalPostersRequest request)
+        {
+            var config = Plugin.Instance?.Configuration;
+            if (config == null) return new OriginalPosters.StatusResult();
+            return OriginalPosters.Status(config, _libraryManager, _jsonSerializer);
+        }
+
+        public async Task<object> Post(RestoreOriginalPostersRequest request)
+        {
+            var ids = request.All ? null : (request.Ids ?? new List<string>());
+            if (ids != null && ids.Count == 0) return new RunEntryResponse { Success = false, Message = "No title given." };
+            try
+            {
+                var (n, interrupted) = await OriginalPosters.RestoreAsync(ids, _libraryManager, _providerManager, _fileSystem, _jsonSerializer, _logger, CancellationToken.None).ConfigureAwait(false);
+                // A run stopped for this goes on where it was (not after Restore all: the page turns the setting off).
+                if (interrupted && !request.All && Plugin.Instance?.Configuration?.OrigPostersEnabled == true)
+                    _taskManager.QueueScheduledTask<OriginalPostersTask>();
+                return new RunEntryResponse { Success = true, Message = n == 1 ? "1 original poster put back." : $"{n} original posters put back." };
+            }
+            catch (Exception ex)
+            {
+                return new RunEntryResponse { Success = false, Message = ex.Message };
+            }
+        }
+
+        public object Post(IncludeOriginalPosterRequest request)
+        {
+            OriginalPosters.Include(request.Id, _jsonSerializer);
+            return new RunEntryResponse { Success = true };
         }
 
         public object Get(ExportMissingTitlesRequest request)
@@ -4041,7 +4100,13 @@ public class HomeScreenCompanionService : IService
                     ContinueWatchingBumpEnabled  = config.ContinueWatchingBumpEnabled,
                     ContinueWatchingBumpMode     = config.ContinueWatchingBumpMode ?? ContinueWatchingBumper.ModeAllEpisodes,
                     ContinueWatchingBumpAllUsers = config.ContinueWatchingBumpAllUsers,
-                    ContinueWatchingBumpUserIds  = (config.ContinueWatchingBumpUserIds ?? new List<string>()).ToList()
+                    ContinueWatchingBumpUserIds  = (config.ContinueWatchingBumpUserIds ?? new List<string>()).ToList(),
+                    OrigPostersEnabled   = config.OrigPostersEnabled,
+                    OrigPostersLanguages = (config.OrigPostersLanguages ?? new List<string>()).ToList(),
+                    OrigPostersMovies    = config.OrigPostersMovies,
+                    OrigPostersSeries    = config.OrigPostersSeries,
+                    OrigPostersSeasons   = config.OrigPostersSeasons,
+                    OrigPostersEpisodes  = config.OrigPostersEpisodes
                 };
                 file.Sections.Add("HomeSync");
             }
@@ -4191,6 +4256,12 @@ public class HomeScreenCompanionService : IService
                         config.ContinueWatchingBumpUserIds = h.ContinueWatchingBumpUserIds.ToList();
                         PruneUnknownUsers(config.ContinueWatchingBumpUserIds, knownUsers, response.Warnings, "Continue Watching bump users");
                     }
+                    if (h.OrigPostersEnabled.HasValue)  config.OrigPostersEnabled  = h.OrigPostersEnabled.Value;
+                    if (h.OrigPostersLanguages != null) config.OrigPostersLanguages = h.OrigPostersLanguages.ToList();
+                    if (h.OrigPostersMovies.HasValue)   config.OrigPostersMovies   = h.OrigPostersMovies.Value;
+                    if (h.OrigPostersSeries.HasValue)   config.OrigPostersSeries   = h.OrigPostersSeries.Value;
+                    if (h.OrigPostersSeasons.HasValue)  config.OrigPostersSeasons  = h.OrigPostersSeasons.Value;
+                    if (h.OrigPostersEpisodes.HasValue) config.OrigPostersEpisodes = h.OrigPostersEpisodes.Value;
                     response.Applied.Add("Home screen sync");
                 }
 

@@ -209,7 +209,7 @@ namespace HomeScreenCompanion
             public string? air_date { get; set; }
         }
 
-        private static async Task<T?> TmdbGet<T>(string path, string key, IHttpClient http, IJsonSerializer json, CancellationToken cancellationToken) where T : class
+        internal static async Task<T?> TmdbGet<T>(string path, string key, IHttpClient http, IJsonSerializer json, CancellationToken cancellationToken) where T : class
         {
             // Same key handling as ListFetcher: a v4 read access token is sent as a bearer token.
             bool isToken = key.Length > 100 || key.Contains(".");

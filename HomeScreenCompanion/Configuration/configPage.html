@@ -551,6 +551,24 @@
         .stm-footer { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--plugin-popup-border, rgba(255,255,255,0.12)); font-size: 0.82em; color: var(--plugin-popup-muted, #aaa); }
         .stm-footer button { margin-left: auto; cursor: pointer; border: 1px solid var(--plugin-popup-border, var(--hsc-hairline-strong)); background: var(--hsc-tint-1); color: inherit; border-radius: 8px; padding: 8px 16px; font-family: inherit; font-size: 1.05em; font-weight: 500; }
         .stm-footer button:hover { background: var(--plugin-popup-hover, var(--hsc-tint-2)); }
+        /* Home Screen Tweaks › Original-language posters */
+        .op-langs { display: flex; flex-wrap: wrap; gap: 6px; }
+        .op-lang { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 6px; border: 1px solid var(--hsc-hairline-strong, rgba(128,128,128,0.35)); border-radius: 9999px; cursor: pointer; font-size: 0.88em; user-select: none; }
+        .op-lang:hover { background: var(--hsc-tint-1, rgba(128,128,128,0.08)); }
+        .op-lang input { margin: 0; cursor: pointer; accent-color: var(--hsc-primary, #52b54b); }
+        .op-lang:has(input:checked) { border-color: var(--hsc-primary, #52b54b); background: var(--hsc-tint-1, rgba(128,128,128,0.08)); }
+        .op-lang-code { opacity: 0.55; font-size: 0.85em; }
+        .op-lang-own { opacity: 0.45; }
+        .op-note { align-items: flex-start; gap: 8px; margin: 0 0 12px; padding: 8px 12px; border: 1px solid rgba(230,193,90,0.5); border-radius: 6px; background: rgba(230,193,90,0.08); font-size: 0.85em; line-height: 1.45; }
+        .op-list { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; max-height: 420px; overflow-y: auto; }
+        .op-list:empty { display: none; }
+        .op-row { display: flex; align-items: center; gap: 12px; padding: 6px 8px; border-radius: 6px; }
+        .op-row:hover { background: var(--hsc-tint-1, rgba(128,128,128,0.08)); }
+        .op-poster { width: 34px; height: 50px; border-radius: 4px; flex-shrink: 0; background: rgba(128,128,128,0.2) center/cover no-repeat; }
+        .op-info { flex: 1; min-width: 0; }
+        .op-title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .op-meta { font-size: 0.8em; opacity: 0.7; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .op-row button { margin: 0; flex-shrink: 0; padding: 0.35em 1em; font-size: 0.88em; }
         @keyframes stmIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
         /* Customise popup (generated art) */
         .artc-wrap { display:flex; gap:22px; align-items:flex-start; flex-wrap:wrap; }
@@ -2021,8 +2039,11 @@
                             <button type="button" class="run-dial-item" id="btnDialContinueWatching" data-tip="Moves shows you had finished to the front of Continue Watching when new episodes have arrived (if Continue Watching bump is on). Also runs by itself every 6 hours.">
                                 <i class="md-icon">fast_forward</i><span>Bump Continue Watching</span>
                             </button>
+                            <button type="button" class="run-dial-item" id="btnDialOriginalPosters" data-tip="Gives titles made in one of your chosen languages their poster in that language (Original-language posters, Home Screen Tweaks). When that is off, it puts the original posters back. Also runs by itself once a day and after new titles are added.">
+                                <i class="md-icon">translate</i><span>Original-language posters</span>
+                            </button>
                         </div>
-                        <button type="button" class="run-dial-item" id="btnDialOther" aria-expanded="false" aria-controls="runDialOther" data-tip="More runs: Merge top-list versions, Sync top-list rows and Bump Continue Watching. These also run by themselves when needed.">
+                        <button type="button" class="run-dial-item" id="btnDialOther" aria-expanded="false" aria-controls="runDialOther" data-tip="More runs: Merge top-list versions, Sync top-list rows, Bump Continue Watching and Original-language posters. These also run by themselves when needed.">
                             <i class="md-icon">more_horiz</i><span>Other</span><i class="md-icon run-dial-other-chevron">expand_less</i>
                         </button>
                         <button type="button" class="run-dial-item" id="btnDialHomeScreen" data-tip="Copies the home screen layout from the source user to the selected users (Home Screen tab).">
@@ -2705,7 +2726,7 @@
                     <i class="md-icon help-section-icon">home</i>
                     <span>Home Screen</span>
                 </div>
-                <div class="step-text" style="margin-bottom:10px; font-size:0.92em;">The <strong>Home Screen</strong> tab has three independent sub-sections: <strong>Manage</strong> (source-based rows), <strong>Copy &amp; Sync</strong> (copy one user's layout to others) and <strong>Home Screen Tweaks</strong> (adjustments to Emby's built-in rows).</div>
+                <div class="step-text" style="margin-bottom:10px; font-size:0.92em;">The <strong>Home Screen</strong> tab has three independent sub-sections: <strong>Manage</strong> (source-based rows), <strong>Copy &amp; Sync</strong> (copy one user's layout to others) and <strong>Home Screen Tweaks</strong> (adjustments to Emby's built-in rows and posters).</div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">view_list</i>
                     <div><strong>Manage</strong> — Creates and keeps custom home screen rows up to date. Each row is tied to one of your sources and is automatically refreshed for the selected users every time sync runs. To set up a row for a source, open that source card and go to its <em>Home Screen</em> tab.</div>
@@ -2726,7 +2747,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">tune</i>
-                    <div><strong>Home Screen Tweaks</strong> — <em>Continue Watching</em>: when a new episode arrives for a series you had watched to the end, the series moves to the front of Continue Watching / Next Up. Watched status is never changed. Runs automatically when new episodes are added, plus the scheduled task <em>Continue Watching Bump</em>.</div>
+                    <div><strong>Home Screen Tweaks</strong> — <em>Continue Watching</em>: when a new episode arrives for a series you had watched to the end, the series moves to the front of Continue Watching / Next Up. Watched status is never changed. Runs automatically when new episodes are added, plus the scheduled task <em>Continue Watching Bump</em>. <em>Original-language posters</em>: a movie or series made in a language you choose (for example Danish) gets its poster in that language instead of the library's. The poster it replaced is kept and can be restored.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">family_restroom</i>

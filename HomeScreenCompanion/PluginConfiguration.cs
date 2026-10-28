@@ -96,6 +96,15 @@ namespace HomeScreenCompanion
         public bool ContinueWatchingBumpAllUsers { get; set; } = false;
         public List<string> ContinueWatchingBumpUserIds { get; set; } = new List<string>();
 
+        // Original-language posters (Home Screen Tweaks): titles whose original language is one of
+        // OrigPostersLanguages (ISO 639-1) get a poster in that language (OriginalPosters).
+        public bool OrigPostersEnabled { get; set; } = false;
+        public List<string> OrigPostersLanguages { get; set; } = new List<string>();
+        public bool OrigPostersMovies { get; set; } = true;
+        public bool OrigPostersSeries { get; set; } = true;
+        public bool OrigPostersSeasons { get; set; } = true;
+        public bool OrigPostersEpisodes { get; set; } = false;
+
         // Set once LegacyForkCleanup has run (see there).
         public bool LegacyForkCleanupDone { get; set; } = false;
 
