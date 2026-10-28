@@ -2669,6 +2669,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '</div>';
     }
 
+    // The chosen AND / OR (ALL / ANY) button: a soft blue or orange tint, so the two read apart at a glance.
+    function opChoiceBg(value, active) {
+        return active ? (value === 'OR' ? 'var(--hsc-op-or-bg)' : 'var(--hsc-op-and-bg)') : 'transparent';
+    }
+    function opChoiceColor(value, active) {
+        return active ? (value === 'OR' ? 'var(--hsc-op-or-text)' : 'var(--hsc-op-and-text)') : 'var(--theme-text-secondary)';
+    }
+
     function getMediaInfoFilterGroupHtml(filter, _i, isFirst) {
         var op = (filter && filter.Operator) || 'AND';
         var groupOp = (filter && filter.GroupOperator) || 'AND';
@@ -2682,13 +2690,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     '<div style="display:flex; border-radius:8px; overflow:hidden; border:1px solid var(--hsc-hairline-strong); background:var(--hsc-tint-1); padding:2px; gap:2px;">' +
                         '<button type="button" class="btnGroupOpChoice" data-value="AND"' +
                         ' style="border:none; border-radius:6px; padding:4px 14px; font-family:inherit; font-size:0.82em; font-weight:600; cursor:pointer; letter-spacing:0.3px;' +
-                        ' background:' + (groupOp === 'AND' ? 'var(--theme-background-level3)' : 'transparent') + ';' +
-                        ' color:' + (groupOp === 'AND' ? 'var(--theme-text-primary)' : 'var(--theme-text-secondary)') + ';"' +
+                        ' background:' + opChoiceBg('AND', groupOp === 'AND') + ';' +
+                        ' color:' + opChoiceColor('AND', groupOp === 'AND') + ';"' +
                         ' title="Both filter groups must match">AND</button>' +
                         '<button type="button" class="btnGroupOpChoice" data-value="OR"' +
                         ' style="border:none; border-radius:6px; padding:4px 14px; font-family:inherit; font-size:0.82em; font-weight:600; cursor:pointer; letter-spacing:0.3px;' +
-                        ' background:' + (groupOp === 'OR' ? 'var(--theme-background-level3)' : 'transparent') + ';' +
-                        ' color:' + (groupOp === 'OR' ? 'var(--theme-text-primary)' : 'var(--theme-text-secondary)') + ';"' +
+                        ' background:' + opChoiceBg('OR', groupOp === 'OR') + ';' +
+                        ' color:' + opChoiceColor('OR', groupOp === 'OR') + ';"' +
                         ' title="Either filter group is enough">OR</button>' +
                     '</div>' +
                     '<span class="group-op-desc" style="font-size:0.7em; opacity:0.55; white-space:nowrap;">' +
@@ -2709,13 +2717,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         '<div style="display:flex; border-radius:8px; overflow:hidden; border:1px solid var(--hsc-hairline-strong); background:var(--hsc-tint-1); padding:2px; gap:2px;">' +
                             '<button type="button" class="btnGroupInnerOpChoice" data-value="AND"' +
                             ' style="border:none; border-radius:6px; padding:4px 14px; font-family:inherit; font-size:0.82em; font-weight:600; cursor:pointer; letter-spacing:0.3px;' +
-                            ' background:' + (op === 'AND' ? 'var(--theme-background-level3)' : 'transparent') + ';' +
-                            ' color:' + (op === 'AND' ? 'var(--theme-text-primary)' : 'var(--theme-text-secondary)') + ';"' +
+                            ' background:' + opChoiceBg('AND', op === 'AND') + ';' +
+                            ' color:' + opChoiceColor('AND', op === 'AND') + ';"' +
                             ' title="All rules in this group must match">ALL</button>' +
                             '<button type="button" class="btnGroupInnerOpChoice" data-value="OR"' +
                             ' style="border:none; border-radius:6px; padding:4px 14px; font-family:inherit; font-size:0.82em; font-weight:600; cursor:pointer; letter-spacing:0.3px;' +
-                            ' background:' + (op === 'OR' ? 'var(--theme-background-level3)' : 'transparent') + ';' +
-                            ' color:' + (op === 'OR' ? 'var(--theme-text-primary)' : 'var(--theme-text-secondary)') + ';"' +
+                            ' background:' + opChoiceBg('OR', op === 'OR') + ';' +
+                            ' color:' + opChoiceColor('OR', op === 'OR') + ';"' +
                             ' title="Any rule in this group is enough">ANY</button>' +
                         '</div>' +
                         '<span class="inner-op-desc" style="font-size:0.7em; opacity:0.55;">' +
@@ -4515,10 +4523,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 group.dataset.groupOp = newOp;
                 group.querySelectorAll('.btnGroupOpChoice').forEach(function(b) {
                     var active = b.dataset.value === newOp;
-                    b.style.background = active
-                        ? 'var(--theme-background-level3)'
-                        : 'transparent';
-                    b.style.color = active ? 'var(--theme-text-primary)' : 'var(--theme-text-secondary)';
+                    b.style.background = opChoiceBg(b.dataset.value, active);
+                    b.style.color = opChoiceColor(b.dataset.value, active);
                 });
                 var desc = group.querySelector('.group-op-desc');
                 if (desc) desc.textContent = newOp === 'AND' ? 'Both groups must match' : 'Either group is enough';
@@ -4532,10 +4538,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 group.dataset.op = newOp;
                 group.querySelectorAll('.btnGroupInnerOpChoice').forEach(function(b) {
                     var active = b.dataset.value === newOp;
-                    b.style.background = active
-                        ? 'var(--theme-background-level3)'
-                        : 'transparent';
-                    b.style.color = active ? 'var(--theme-text-primary)' : 'var(--theme-text-secondary)';
+                    b.style.background = opChoiceBg(b.dataset.value, active);
+                    b.style.color = opChoiceColor(b.dataset.value, active);
                 });
                 var desc = group.querySelector('.inner-op-desc');
                 if (desc) desc.textContent = newOp === 'AND' ? 'All rules must match' : 'Any rule is enough';
