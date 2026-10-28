@@ -745,6 +745,8 @@ namespace HomeScreenCompanion
         // Null in backups made before the settings level: the current level is kept.
         public string? SettingsLevel { get; set; }
         public bool? ShowAdvancedBadges { get; set; }
+        // Null in backups made before it was backed up: the current setting is kept.
+        public bool? HideTopListLibraries { get; set; }
     }
 
     public class BackupApiKeys
@@ -4044,7 +4046,8 @@ public class HomeScreenCompanionService : IService
                     MissingExportJson         = config.MissingExportJson,
                     MissingExportCsv          = config.MissingExportCsv,
                     SettingsLevel             = config.SettingsLevel ?? "",
-                    ShowAdvancedBadges        = config.ShowAdvancedBadges
+                    ShowAdvancedBadges        = config.ShowAdvancedBadges,
+                    HideTopListLibraries      = config.HideTopListLibraries
                 };
                 file.Sections.Add("Settings");
             }
@@ -4190,6 +4193,7 @@ public class HomeScreenCompanionService : IService
                     config.RankedCollectionsEnabled  = s.RankedCollectionsEnabled;
                     if (s.SettingsLevel != null) config.SettingsLevel = s.SettingsLevel;
                     if (s.ShowAdvancedBadges != null) config.ShowAdvancedBadges = s.ShowAdvancedBadges.Value;
+                    if (s.HideTopListLibraries != null) config.HideTopListLibraries = s.HideTopListLibraries.Value;
                     if (s.ShowMissingTitles != null) config.ShowMissingTitles = s.ShowMissingTitles.Value;
                     if (s.MissingIncludeGaps != null) config.MissingIncludeGaps = s.MissingIncludeGaps.Value;
                     if (s.MissingExportToFile != null) config.MissingExportToFile = s.MissingExportToFile.Value;
