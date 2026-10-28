@@ -1,0 +1,34 @@
+#!/bin/sh
+# Bumps the build number (the 4th digit of <Version> in the csproj) on every
+# ordinary commit on the dev branch: 4.4.3.1 -> 4.4.3.2.
+# Merges, rebases, cherry-picks and other branches are left alone; releases
+# on beta and main get their version set by hand.
+# Turn on once per clone: git config core.hooksPath .githooks
+
+f=HomeScreenCompanion/HomeScreenCompanion.csproj
+
+[ "$(git rev-parse --abbrev-ref HEAD)" = "dev" ] || exit 0
+
+gitdir=$(git rev-parse --git-dir)
+for m in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply; do
+	[ -e "$gitdir/$m" ] && exit 0
+done
+
+old=$(git show ":$f" | sed -n 's/.*<Version>\([0-9]*\.[0-9]*\.[0-9]*\.[0-9]*\)<\/Version>.*/\1/p' | head -n 1)
+if [ -z "$old" ]; then
+	echo "pre-commit: no four-part <Version> in $f, build number not bumped" >&2
+	exit 0
+fi
+base=${old%.*}
+new="$base.$((${old##*.} + 1))"
+
+# Write the new version into the staged copy only, so other unstaged
+# changes in the csproj stay out of this commit.
+mode=$(git ls-files -s -- "$f" | cut -d' ' -f1)
+blob=$(git show ":$f" | sed "s/<Version>$old<\/Version>/<Version>$new<\/Version>/" | git hash-object -w --stdin --no-filters) || exit 1
+git update-index --cacheinfo "$mode,$blob,$f" || exit 1
+
+# And into the working copy, so the next build uses it too.
+sed -i "s/<Version>[0-9.]*<\/Version>/<Version>$new<\/Version>/" "$f"
+
+echo "pre-commit: version $old -> $new"

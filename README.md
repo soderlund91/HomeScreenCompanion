@@ -334,6 +334,17 @@ All key fields are hidden by default. Tick **Show** next to a field to see its v
 
 The bump only applies to series a user watched up to the end, with no skipped episodes. A series hidden from Continue Watching stays hidden.
 
+**Original-language posters**
+
+| Setting | What it does |
+| --- | --- |
+| **Use original-language posters** | A movie or series made in one of the chosen languages gets its poster in that language, for example a Danish series its Danish poster. Needs a TMDb key. Turned off, the next run puts the original posters back. |
+| **Languages** | The original languages to change. A title in the library's own image language is never changed, so an English series keeps its English poster. |
+| **Movie / Series / Season posters / Episode images** | What to change. Seasons and episodes follow their series. Episode images rarely have a language, so most episodes keep theirs. |
+| **Restore / Restore all** | Puts the original poster back. **Restore** on one title also leaves that title alone from then on. **Restore all** also turns the feature off. |
+
+The posters come from Emby's own image sources (TheMovieDb, TheTVDB, FanArt). A title is only changed when a poster in exactly its language exists. It runs once a day and about 10 minutes after new titles are added.
+
 ### Run and Logs
 
 The **Run** button sits at the bottom right of the page, next to **Save Settings**. **Logs** is at the top.
@@ -343,7 +354,7 @@ The **Run** button sits at the bottom right of the page, next to **Save Settings
 | **Run → Full sync** | Syncs all sources and Home Screen Sync. |
 | **Run → Sync tags and collections** | Syncs every active source: tags, collections, playlists, home rows and top-lists. |
 | **Run → Sync home screen** | Runs Home Screen Sync only. |
-| **Run → Other** | **Bump Continue Watching**, **Sync top-list rows** and **Merge top-list versions**, which also run by themselves. |
+| **Run → Other** | **Bump Continue Watching**, **Original-language posters**, **Sync top-list rows** and **Merge top-list versions**, which also run by themselves. |
 | **Logs** | The latest Sync, Home Screen and Top-list runs, with ✔ / ⚠ / ✖ per step. **Warnings & errors only** filters the view. |
 | **Download logs** | One zip for troubleshooting. Tick **Anonymise user names** to replace names with User 1, User 2 and so on. |
 
