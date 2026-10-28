@@ -294,8 +294,10 @@ namespace HomeScreenCompanion
                 if (uri.Host.Equals("api.themoviedb.org", StringComparison.OrdinalIgnoreCase))
                 {
                     string? mediaType = null;
-                    if (uri.AbsolutePath.Contains("/movie/")) mediaType = "movie";
-                    else if (uri.AbsolutePath.Contains("/tv/")) mediaType = "tv";
+                    // "/3/discover/tv" and "/3/discover/movie" end in the type rather than carrying it mid-path.
+                    var apiPath = uri.AbsolutePath.TrimEnd('/');
+                    if (apiPath.Contains("/movie/") || apiPath.EndsWith("/movie", StringComparison.OrdinalIgnoreCase)) mediaType = "movie";
+                    else if (apiPath.Contains("/tv/") || apiPath.EndsWith("/tv", StringComparison.OrdinalIgnoreCase)) mediaType = "tv";
                     else if (uri.AbsolutePath.Contains("/collection/")) mediaType = "movie";   // a collection's parts are films
                     return new TmdbApiTarget { FullUrl = url, MediaType = mediaType };
                 }
