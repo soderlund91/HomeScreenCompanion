@@ -60,6 +60,8 @@ namespace HomeScreenCompanion
         // The page's settings level: "Basic" hides the power-user settings that are not in use,
         // "Advanced" shows them all. "" = not chosen yet (the page picks one from what is in use).
         public string SettingsLevel { get; set; } = "";
+        // Settings > Features: the "Advanced" badges in the Advanced level (Basic always shows them).
+        public bool ShowAdvancedBadges { get; set; } = true;
         public List<TagConfig> Tags { get; set; } = new List<TagConfig>();
         public List<TopListHomeSection> TopLists { get; set; } = new List<TopListHomeSection>();
         public List<SavedMediaInfoFilter> SavedFilters { get; set; } = new List<SavedMediaInfoFilter>();

@@ -210,6 +210,7 @@ namespace HomeScreenCompanion
             if (toAsk.Count > 0)
             {
                 log.Info($"  Reading the original language of {RunLog.Plural(toAsk.Count, "title")} from TMDb (once per title)");
+                log.Step("Original language from TMDb");
                 var throttle = new SemaphoreSlim(4);
                 int done = 0, failed = 0;
                 // In batches, so a long first run that is stopped keeps what it read.

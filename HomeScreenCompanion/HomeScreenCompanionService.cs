@@ -399,6 +399,11 @@ namespace HomeScreenCompanion
         public bool All { get; set; }
     }
 
+    // The poster run's log and state, for the page's Logs and the Last run chip.
+    [Route("/HomeScreenCompanion/OriginalPosters/RunStatus", "GET")]
+    [Authenticated(Roles = "Admin")]
+    public class GetOriginalPostersRunStatusRequest : IReturn<TopListStatusResponse> { }
+
     // Lets an excluded title be changed again by the next run.
     [Route("/HomeScreenCompanion/OriginalPosters/Include", "POST")]
     [Authenticated(Roles = "Admin")]
@@ -739,6 +744,7 @@ namespace HomeScreenCompanion
         public bool? MissingExportCsv { get; set; }
         // Null in backups made before the settings level: the current level is kept.
         public string? SettingsLevel { get; set; }
+        public bool? ShowAdvancedBadges { get; set; }
     }
 
     public class BackupApiKeys
@@ -2328,6 +2334,19 @@ public class HomeScreenCompanionService : IService
             {
                 return new RunEntryResponse { Success = false, Message = ex.Message };
             }
+        }
+
+        public object Get(GetOriginalPostersRunStatusRequest request)
+        {
+            List<string> logs;
+            lock (OriginalPostersTask.ExecutionLog) { logs = OriginalPostersTask.ExecutionLog.ToList(); }
+            return new TopListStatusResponse
+            {
+                IsRunning = OriginalPostersTask.IsRunning,
+                Logs = logs,
+                StartedUtc = OriginalPostersTask.LastStartedUtc?.ToString("o") ?? "",
+                Step = OriginalPostersTask.Progress.Step
+            };
         }
 
         public object Post(IncludeOriginalPosterRequest request)
@@ -4024,7 +4043,8 @@ public class HomeScreenCompanionService : IService
                     MissingExportFolder       = config.MissingExportFolder ?? "",
                     MissingExportJson         = config.MissingExportJson,
                     MissingExportCsv          = config.MissingExportCsv,
-                    SettingsLevel             = config.SettingsLevel ?? ""
+                    SettingsLevel             = config.SettingsLevel ?? "",
+                    ShowAdvancedBadges        = config.ShowAdvancedBadges
                 };
                 file.Sections.Add("Settings");
             }
@@ -4169,6 +4189,7 @@ public class HomeScreenCompanionService : IService
                     config.ShowImportCollectionButton = s.ShowImportCollectionButton;
                     config.RankedCollectionsEnabled  = s.RankedCollectionsEnabled;
                     if (s.SettingsLevel != null) config.SettingsLevel = s.SettingsLevel;
+                    if (s.ShowAdvancedBadges != null) config.ShowAdvancedBadges = s.ShowAdvancedBadges.Value;
                     if (s.ShowMissingTitles != null) config.ShowMissingTitles = s.ShowMissingTitles.Value;
                     if (s.MissingIncludeGaps != null) config.MissingIncludeGaps = s.MissingIncludeGaps.Value;
                     if (s.MissingExportToFile != null) config.MissingExportToFile = s.MissingExportToFile.Value;

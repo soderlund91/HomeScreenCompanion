@@ -28,6 +28,10 @@ namespace HomeScreenCompanion
         private readonly PluginLogger _logger;
 
         public static List<string> ExecutionLog { get; } = new List<string>();
+        // For the page's Logs and the Last run chip (OriginalPosters/RunStatus), like the other tasks.
+        internal static RunProgress Progress { get; } = new RunProgress();
+        public static bool IsRunning { get; private set; }
+        public static DateTime? LastStartedUtc { get; private set; }
 
         public OriginalPostersTask(ILibraryManager libraryManager, IProviderManager providerManager, IFileSystem fileSystem,
             IHttpClient httpClient, IJsonSerializer jsonSerializer, ILogManager logManager)
@@ -60,12 +64,24 @@ namespace HomeScreenCompanion
 
         public async Task Execute(CancellationToken cancellationToken, IProgress<double> progress)
         {
-            lock (ExecutionLog) { ExecutionLog.Clear(); }
-
             var config = Plugin.Instance?.Configuration;
             if (config == null) return;
 
-            var log = new RunLog(ExecutionLog, _logger, "[Original posters]", config.ExtendedConsoleOutput);
+            lock (ExecutionLog) { ExecutionLog.Clear(); }
+            IsRunning = true;
+            LastStartedUtc = DateTime.UtcNow;
+            Progress.Set("Starting");
+            try { await ExecuteRun(config, progress, cancellationToken).ConfigureAwait(false); }
+            finally
+            {
+                Progress.Clear();
+                IsRunning = false;
+            }
+        }
+
+        private async Task ExecuteRun(PluginConfiguration config, IProgress<double> progress, CancellationToken cancellationToken)
+        {
+            var log = new RunLog(ExecutionLog, _logger, "[Original posters]", config.ExtendedConsoleOutput, Progress);
             log.Rule();
             log.Info($"Original-language posters  ·  {DateTime.Now:yyyy-MM-dd HH:mm}");
             log.Rule();
@@ -78,6 +94,7 @@ namespace HomeScreenCompanion
                     log.Skip("Original-language posters is off in Home Screen Tweaks — nothing to do");
                     return;
                 }
+                log.Step("Putting the original posters back");
                 var (restored, _) = await OriginalPosters.RestoreAsync(null, _libraryManager, _providerManager, _fileSystem, _jsonSerializer, _logger, cancellationToken).ConfigureAwait(false);
                 log.Ok($"Original-language posters is off: {RunLog.Plural(restored, "original poster")} put back");
                 progress.Report(100);

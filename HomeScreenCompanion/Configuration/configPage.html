@@ -1453,6 +1453,7 @@
         /* Settings level: Basic hides the power-user settings (.hsc-adv) that are not in use
            (refreshAdvanced sets hsc-adv-hidden). Each one carries an "Advanced" badge. */
         .hsc-adv-hidden { display: none !important; }
+        .hsc-no-adv-badges .hsc-adv-badge { display: none !important; }
         .hsc-adv-badge {
             display: inline-block; margin-left: 6px; padding: 0 4px; border-radius: 4px;
             border: 1px solid var(--hsc-advanced-border); color: var(--hsc-advanced);
@@ -1536,7 +1537,7 @@
                 </button>
             </div>
 
-            <div id="tabSettings" class="page-tab-content" style="display:none;">
+            <div id="tabSettings" class="page-tab-content" style="display:none; max-width:900px;">
 
                 <div class="advanced-section settings-panel" style="margin-bottom: 15px;">
                     <div class="advanced-header settings-panel-toggle">
@@ -1897,6 +1898,14 @@
                                 <span><strong>Experimental.</strong> Makes a hidden extra library for each collection that keeps the list order. Turning it off removes it again.</span>
                             </div>
                         </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="chkShowAdvancedBadges" />
+                                <span>Show Advanced badges</span>
+                            </label>
+                            <div class="fieldDescription">Marks the settings that Basic hides with an "Advanced" badge. Only for the Advanced level; Basic always shows them.</div>
+                        </div>
                     </div>
                 </div>
 
@@ -2005,7 +2014,7 @@
                 <div id="tlContainer"></div>
             </div>
 
-            <div id="tabHomeCompanion" class="page-tab-content" style="display:none;">
+            <div id="tabHomeCompanion" class="page-tab-content" style="display:none; max-width:900px;">
                 <div class="hsc-sub-tab-nav">
                     <button class="hsc-sub-tab-btn active" data-hsc-tab="manage">Manage</button>
                     <button class="hsc-sub-tab-btn" data-hsc-tab="copy">Copy &amp; Sync</button>
@@ -2157,6 +2166,7 @@
                 <button type="button" class="log-tab" data-log="sync"><span class="status-dot"></span>Sync<span class="log-tab-time"></span></button>
                 <button type="button" class="log-tab" data-log="hsc"><span class="status-dot"></span>Home Screen<span class="log-tab-time"></span></button>
                 <button type="button" class="log-tab" data-log="tl"><span class="status-dot"></span>Top-list<span class="log-tab-time"></span></button>
+                <button type="button" class="log-tab" data-log="op"><span class="status-dot"></span>Posters<span class="log-tab-time"></span></button>
                 <button type="button" class="log-tab log-issues-toggle" id="btnLogIssuesOnly" title="Show only warnings and errors, each under its group"><i class="md-icon" style="font-size:1.1em;">warning</i>Warnings &amp; errors only</button>
             </div>
             <div class="modal-body-scroll" style="background: #1a1a1a; color: #d0d0d0; font-family: ui-monospace, Consolas, Menlo, monospace; font-size: 0.85em; padding: 16px 20px;" id="logContent">
@@ -2942,6 +2952,10 @@
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">format_list_numbered</i>
                     <div><strong>Ranked collections — movies only (experimental)</strong> <span style="opacity:0.6;">(Features)</span> — Off by default. Shows <em>Keep the list order</em> on the Collection tab of every source, so a collection can open in list order; HSC adds a hidden library per ranked collection for it. See <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-more-ranked').scrollIntoView({behavior:'smooth'});return false;">Keep the list order</a>.</div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">label</i>
+                    <div><strong>Show Advanced badges</strong> <span style="opacity:0.6;">(Features)</span> — On by default. Untick it to hide the <em>Advanced</em> badges when the settings level is <em>Advanced</em>, if you always use that level. In <em>Basic</em> the badges are always shown, since they tell why a setting in use is still visible.</div>
                 </div>
 
                 <div class="hsc-eyebrow" style="margin:18px 0 8px;">Running, logs and tools</div>

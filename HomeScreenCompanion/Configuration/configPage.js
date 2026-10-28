@@ -26,7 +26,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         if (statusInterval && ms !== statusPollMs && document.body.contains(view)) startStatusPolling(view, ms);
     }
     // Live log modal: latest status per task and the tab the user picked (null = automatic)
-    var _lastStatus = { sync: null, hsc: null, tl: null };
+    var _lastStatus = { sync: null, hsc: null, tl: null, op: null };
     var _logTab = null;
     var _logIssuesOnly = false;   // log modal: only warning / error lines (with their group's header)
     var originalConfigState = null;
@@ -813,12 +813,21 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         return used ? 'Advanced' : 'Basic';
     }
 
+    // Hides the "Advanced" badges in the Advanced level when Settings > Features says so (the saved
+    // setting, like the other Features). Basic always shows them: they tell why a setting in use is there.
+    function refreshAdvBadges(view) {
+        var show = true;
+        try { show = !originalConfigState || JSON.parse(originalConfigState).ShowAdvancedBadges !== false; } catch (e) { }
+        view.classList.toggle('hsc-no-adv-badges', settingsLevel === 'Advanced' && !show);
+    }
+
     // Sets the level on the page; save = also store it in the configuration right away (it is a
     // view choice, so it does not wait for Save or mark the page as changed).
     function setSettingsLevel(view, level, save) {
         settingsLevel = level === 'Advanced' ? 'Advanced' : 'Basic';
         view.querySelector('#selSettingsLevel').value = settingsLevel;
         refreshAdvanced(view);
+        refreshAdvBadges(view);
         if (!save) return;
         window.ApiClient.getPluginConfiguration(pluginId)
             .then(function (currentConfig) {
@@ -5101,12 +5110,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var tabs = view.querySelectorAll('#logTabs .log-tab[data-log]');
         if (!content) return;
 
-        var keys = ['sync', 'hsc', 'tl'];
         function startedMs(k) { var s = _lastStatus[k]; var t = s && s.StartedUtc ? Date.parse(s.StartedUtc) : NaN; return isNaN(t) ? 0 : t; }
         function running(k) { return !!(_lastStatus[k] && _lastStatus[k].IsRunning); }
         function logs(k) { return (_lastStatus[k] && _lastStatus[k].Logs) || []; }
+        // Posters only while Original-language posters is on (as saved), or while its run is busy
+        // (the run after turning it off puts the originals back).
+        var showPosters = lastSavedOrigPostersEnabled() || running('op');
+        var keys = showPosters ? ['sync', 'hsc', 'tl', 'op'] : ['sync', 'hsc', 'tl'];
 
         var selected = _logTab;
+        if (selected && keys.indexOf(selected) < 0) selected = null;
         if (!selected) {
             selected = keys.filter(running)[0];
             if (!selected) {
@@ -5118,6 +5131,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
         tabs.forEach(function (tab) {
             var k = tab.getAttribute('data-log');
+            tab.style.display = keys.indexOf(k) < 0 ? 'none' : '';
             tab.classList.toggle('active', k === selected);
             tab.classList.toggle('empty', logs(k).length === 0 && !running(k));
             var dot = tab.querySelector('.status-dot');
@@ -5143,7 +5157,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
     // A group, phase or run header line of the log (timestamp already removed).
     function isLogHeader(raw) {
-        return /^(»|Results$|Summary$|\[Cleanup\]$|\[\d+\/\d+\] |Home Screen (Companion|Sync) )/.test(raw);
+        return /^(»|Results$|Summary$|\[Cleanup\]$|\[\d+\/\d+\] |Home Screen (Companion|Sync) |Original-language posters )/.test(raw);
     }
 
     // The log's ⚠ / ✖ lines, each run of them under the group (or phase) header it belongs to.
@@ -5202,9 +5216,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
 
     // "Running · <step> · <elapsed>" for the Last run chip; the step comes from the Status endpoints.
-    function runningStepText(st, isHomeScreen) {
+    function runningStepText(st, isHomeScreen, isPosters) {
         var step = st.Step || '';
         if (isHomeScreen && step.indexOf('Home Screen Sync') !== 0) step = 'Home Screen Sync · ' + step;
+        if (isPosters) step = 'Original-language posters · ' + step;
         if (step.length > 70) step = step.substring(0, 69) + '…';
         var text = 'Running · ' + step;
         var started = st.StartedUtc ? Date.parse(st.StartedUtc) : NaN;
@@ -5224,10 +5239,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         Promise.all([
             window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/Status")),
             window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/Hsc/Status")).catch(function () { return null; }),
-            window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/TopList/Status")).catch(function () { return null; })
+            window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/TopList/Status")).catch(function () { return null; }),
+            window.ApiClient.getJSON(window.ApiClient.getUrl("HomeScreenCompanion/OriginalPosters/RunStatus")).catch(function () { return null; })
         ]).then(function (results) {
             if (myId !== statusRequestId) return;
-            var result = results[0], hscResult = results[1], tlResult = results[2];
+            var result = results[0], hscResult = results[1], tlResult = results[2], opResult = results[3];
             var label = view.querySelector('#lastRunStatusLabel'), dot = view.querySelector('#dotStatus'), content = view.querySelector('#logContent');
             var btnSave = view.querySelector('.btn-save'), btnRun = view.querySelector('#btnRunSync');
 
@@ -5239,7 +5255,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
 
             var eitherRunning = result.IsRunning || (hscResult && hscResult.IsRunning);
-            setStatusPollRate(view, eitherRunning || !!(tlResult && tlResult.IsRunning));
+            // The poster run does not lock Save: it does not touch the settings.
+            setStatusPollRate(view, eitherRunning || !!(tlResult && tlResult.IsRunning) || !!(opResult && opResult.IsRunning));
             if (eitherRunning) {
                 if (btnSave) { btnSave.disabled = true; btnSave.style.opacity = "0.5"; btnSave.querySelector('span').textContent = "Sync in progress..."; }
                 if (btnRun) btnRun.disabled = true;
@@ -5257,7 +5274,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             if (result.IsRunning && result.Step) live = result;
             else if (hscResult && hscResult.IsRunning && hscResult.Step) live = hscResult;
             else if (tlResult && tlResult.Step) live = tlResult;
-            var liveText = live ? runningStepText(live, live === hscResult) : '';
+            else if (opResult && opResult.IsRunning && opResult.Step) live = opResult;
+            var liveText = live ? runningStepText(live, live === hscResult, live === opResult) : '';
             if (label) { label.textContent = liveText || result.LastRunStatus || "Never"; label.title = liveText || result.LastRunStatus || ""; }
             if (dot) {
                 dot.className = "status-dot";
@@ -5267,7 +5285,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 else if (/warning/i.test(st)) dot.classList.add("warn");
             }
 
-            _lastStatus = { sync: result, hsc: hscResult, tl: tlResult };
+            _lastStatus = { sync: result, hsc: hscResult, tl: tlResult, op: opResult };
             if (content) renderLogModal(view);
         }).catch(function () {
             if (myId !== statusRequestId) return;
@@ -6407,6 +6425,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             MissingExportCsv: view.querySelector('#chkMissingExportCsv').checked,
             RankedCollectionsEnabled: view.querySelector('#chkRankedCollectionsEnabled').checked,
             SettingsLevel: settingsLevel,
+            ShowAdvancedBadges: view.querySelector('#chkShowAdvancedBadges').checked,
             Tags: flatTags,
             SavedFilters: savedFilters,
             HomeSyncEnabled: hscEnabled ? hscEnabled.checked : (lastHscConfig.HomeSyncEnabled || false),
@@ -6598,7 +6617,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         ShowCopyPasteButtons: 'Copy & paste sources', ShowImportCollectionButton: 'Import collection', ShowMissingTitles: 'Show missing titles',
         MissingIncludeGaps: 'Missing: include shows that lack episodes', MissingExportToFile: 'Missing: keep the list in a file',
         MissingExportFolder: 'Missing: file folder', MissingExportJson: 'Missing: JSON file', MissingExportCsv: 'Missing: CSV files',
-        RankedCollectionsEnabled: 'Ranked collections', SavedFilters: 'Saved filters',
+        RankedCollectionsEnabled: 'Ranked collections', ShowAdvancedBadges: 'Show Advanced badges', SavedFilters: 'Saved filters',
         HomeSyncEnabled: 'Home Screen sync: on/off', HomeSyncProfiles: 'Home Screen sync: profiles',
         ContinueWatchingBumpEnabled: 'Continue Watching bump: on/off', ContinueWatchingBumpMode: 'Continue Watching bump: mode',
         ContinueWatchingBumpAllUsers: 'Continue Watching bump: all users', ContinueWatchingBumpUserIds: 'Continue Watching bump: users',
@@ -6720,6 +6739,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             view.classList.toggle('hsc-no-copypaste', !saved.ShowCopyPasteButtons);
             view.classList.toggle('hsc-no-import', !saved.ShowImportCollectionButton);
             view.classList.toggle('hsc-no-ranked', !saved.RankedCollectionsEnabled);
+            refreshAdvBadges(view);
             view.classList.toggle('hsc-no-missing', !saved.ShowMissingTitles);
             // Turned off while its tab is open: back to Settings, where it was turned off.
             var mtTab = view.querySelector('#tabMissing');
@@ -13648,6 +13668,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 view.querySelector('#chkMissingExportCsv').checked = config.MissingExportCsv !== false;
                 updateMissingExportUi(view);
                 view.querySelector('#chkRankedCollectionsEnabled').checked = config.RankedCollectionsEnabled || false;
+                view.querySelector('#chkShowAdvancedBadges').checked = config.ShowAdvancedBadges !== false;
                 if (view.querySelector('#txtSearchTags')) {
                     view.querySelector('#txtSearchTags').value = '';
                     view.querySelector('#btnClearSearch').style.display = 'none';
