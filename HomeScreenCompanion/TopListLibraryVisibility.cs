@@ -23,8 +23,14 @@ namespace HomeScreenCompanion
     /// use the internal id. Earlier versions wrote internal ids into the user configuration,
     /// which Emby ignored; those are removed here.
     ///
+    /// Ranked-collection libraries follow the same setting for My Media and Latest, and are
+    /// also put in the excluded folders of every other saved home row, always: Emby filters a
+    /// row by its excluded folders, so a row made before the ranked library existed would show
+    /// the copies as duplicates. Not in a row on that library itself, nor in "boxset" and
+    /// "collections" rows (excluding the library there empties the ranked collection).
+    ///
     /// Runs on every top-list section sync, so new users and new top-lists are covered.
-    /// Turning the setting off removes the exclusions again.
+    /// Turning the setting off removes the exclusions again (not the always-on ranked ones).
     /// </summary>
     internal static class TopListLibraryVisibility
     {
@@ -33,10 +39,15 @@ namespace HomeScreenCompanion
             var withLibrary = (config.TopLists ?? new List<TopListHomeSection>())
                 .Where(t => !string.IsNullOrEmpty(t.HomeSectionLibraryId) && t.HomeSectionLibraryId != "auto")
                 .ToList();
-            var libIds = withLibrary
+            var topIds = withLibrary
                 .Where(t => !ShowTopList.IsShows(t))
                 .Select(t => t.HomeSectionLibraryId.Trim())
-                .Concat(RankedCollections.LibraryIds(libraryManager)) // ranked-collection libraries are hidden the same way
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var rankedIds = RankedCollections.LibraryIds(libraryManager)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var libIds = topIds.Concat(rankedIds) // ranked-collection libraries are hidden the same way
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
             // Show-list libraries: My Media only — their "Latest" exclusion is always on (TopListSyncTask).
@@ -51,6 +62,8 @@ namespace HomeScreenCompanion
             var showGuids = Guids(showIds, libraryManager);
             var mediaIds = libIds.Concat(showIds).ToList();
             var mediaGuids = libGuids.Concat(showGuids).ToList();
+            // A row on a ranked library may name it by internal id or GUID.
+            var rankedKeys = rankedIds.ToDictionary(id => id, id => new[] { id }.Concat(Guids(new List<string> { id }, libraryManager)).ToList(), StringComparer.OrdinalIgnoreCase);
 
             bool hide = config.HideTopListLibraries;
             int changedUsers = 0;
@@ -80,8 +93,16 @@ namespace HomeScreenCompanion
                                    ?? Array.Empty<ContentSection>();
                     foreach (var section in sections)
                     {
-                        if (section.SectionType != "latestmediablock" && section.SectionType != "userviews") continue;
-                        var excluded = Merge(section.ExcludedFolders, section.SectionType == "userviews" ? mediaIds : libIds, hide);
+                        string[]? excluded = null;
+                        if (section.SectionType == "latestmediablock" || section.SectionType == "userviews")
+                            excluded = Merge(section.ExcludedFolders, section.SectionType == "userviews" ? mediaIds : topIds, hide);
+                        // Ranked copies are duplicates: out of every other row, whatever "hide" is.
+                        if (section.SectionType != "userviews" && section.SectionType != "boxset" && section.SectionType != "collections")
+                        {
+                            var parent = (section.ParentId ?? "").Trim().Replace("-", "");
+                            var ranked = rankedIds.Where(id => !rankedKeys[id].Contains(parent, StringComparer.OrdinalIgnoreCase)).ToList();
+                            excluded = Merge(excluded ?? section.ExcludedFolders, ranked, true) ?? excluded;
+                        }
                         if (excluded == null) continue;
                         section.ExcludedFolders = excluded;
                         userManager.UpdateHomeSection(user.InternalId, section, CancellationToken.None);
@@ -118,9 +139,9 @@ namespace HomeScreenCompanion
                         if (latest != null) cfg.LatestItemsExcludes = latest;
                         userManager.UpdateConfiguration(user, cfg);
                     }
+                    // Every row type: ranked libraries are excluded from all of them (Apply).
                     foreach (var section in userManager.GetHomeSections(user.InternalId, CancellationToken.None)?.Sections ?? Array.Empty<ContentSection>())
                     {
-                        if (section.SectionType != "latestmediablock" && section.SectionType != "userviews") continue;
                         var excluded = Merge(section.ExcludedFolders, ids, false);
                         if (excluded == null) continue;
                         section.ExcludedFolders = excluded;

@@ -2610,7 +2610,7 @@
                     <div><strong>Keep the list order — movies only (experimental)</strong> — shown when <em>Ranked collections</em> is switched on under <em>Advanced Settings</em> in the Settings tab (and saved). The collection then opens in the order of the list instead of Emby's own order.
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li>For each movie HSC makes a hidden copy that carries its rank, linked to the real film as a version (so it appears once in search and shares its watched status).</li>
-                            <li>The copies sit in a hidden library "&lt;collection&gt; (ranked)" that is hidden from My Media and Latest like the top-list libraries (setting <em>Hide HSC libraries</em>).</li>
+                            <li>The copies sit in a hidden library "&lt;collection&gt; (ranked)" that is hidden from My Media and Latest like the top-list libraries (setting <em>Hide HSC libraries</em>). It is also always added to the excluded libraries of every user's other home rows (Continue Watching, library rows and so on, also rows made before it), so the copies never show twice; collection rows are left as they are.</li>
                             <li>When the list order changes, only the ranks of the copies change: a copy is added only for a new film and removed only when its film leaves the list, so nothing is rebuilt on a reorder.</li>
                             <li>Only movies are ranked: shows in the list keep their normal place after the ranked movies.</li>
                             <li>Untick it (or switch the feature off) and the next sync puts the real films back and removes the copies and their library. This is experimental.</li>
@@ -2929,7 +2929,7 @@
                 </div>
                 <div id="help-hide-libs" class="help-feature-row">
                     <i class="md-icon help-feat-icon">visibility_off</i>
-                    <div><strong>Hide HSC libraries</strong> <span style="opacity:0.6;">(Features)</span> — On by default. Keeps the libraries HSC creates — those of top-lists and of ranked collections — out of every user's sidebar, "My Media" tiles and "Latest" rows; only their top-list rows and collections show them. TV show top-list libraries are always kept out of Latest, Continue Watching and Next Up, whatever this setting is.</div>
+                    <div><strong>Hide HSC libraries</strong> <span style="opacity:0.6;">(Features)</span> — On by default. Keeps the libraries HSC creates — those of top-lists and of ranked collections — out of every user's sidebar, "My Media" tiles and "Latest" rows; only their top-list rows and collections show them. TV show top-list libraries are always kept out of Latest, Continue Watching and Next Up, and ranked-collection libraries out of every other home row, whatever this setting is.</div>
                 </div>
 
                 <div id="help-sec-8b" class="hsc-eyebrow" style="margin:18px 0 8px;">Advanced Settings</div>
