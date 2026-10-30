@@ -412,6 +412,11 @@ namespace HomeScreenCompanion
         public string Id { get; set; } = "";
     }
 
+    // The welcome tour opened by itself once (PluginConfiguration.WelcomeTourSeen).
+    [Route("/HomeScreenCompanion/WelcomeTour/Seen", "POST")]
+    [Authenticated(Roles = "Admin")]
+    public class WelcomeTourSeenRequest : IReturn<RunEntryResponse> { }
+
     // Every playlist on the server (Cleanup tab), with its owner and the users it is shared with.
     [Route("/HomeScreenCompanion/Manage/Playlists", "GET")]
     [Authenticated(Roles = "Admin")]
@@ -2354,6 +2359,12 @@ public class HomeScreenCompanionService : IService
         public object Post(IncludeOriginalPosterRequest request)
         {
             OriginalPosters.Include(request.Id, _jsonSerializer);
+            return new RunEntryResponse { Success = true };
+        }
+
+        public object Post(WelcomeTourSeenRequest request)
+        {
+            Plugin.Instance?.MarkWelcomeTourSeen();
             return new RunEntryResponse { Success = true };
         }
 

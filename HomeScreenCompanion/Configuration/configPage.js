@@ -6384,7 +6384,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var flatTags = [];
         var sourceRows = sourceRowsInManualOrder(view);
         var otherRows = Array.from(view.querySelectorAll('.tag-row')).filter(function (r) { return sourceRows.indexOf(r) < 0; });
-        sourceRows.concat(otherRows).forEach(row => { flatTags.push.apply(flatTags, rowToFlatTags(row, forComparison)); });
+        // The welcome tour's demo card is never saved (and never makes the page "changed").
+        sourceRows.concat(otherRows).filter(function (r) { return !r.classList.contains('hsc-tour-demo'); })
+            .forEach(row => { flatTags.push.apply(flatTags, rowToFlatTags(row, forComparison)); });
 
         var hscEnabled      = view.querySelector('#chkHscEnabled');
         var cwbEnabled      = view.querySelector('#chkCwbEnabled');
@@ -6428,7 +6430,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             MissingExportJson: view.querySelector('#chkMissingExportJson').checked,
             MissingExportCsv: view.querySelector('#chkMissingExportCsv').checked,
             RankedCollectionsEnabled: view.querySelector('#chkRankedCollectionsEnabled').checked,
-            SettingsLevel: settingsLevel,
+            // The welcome tour shows the page in Basic for a while: the level chosen is still the saved one.
+            SettingsLevel: (_tour && _tour.prevLevel) || settingsLevel,
             ShowAdvancedBadges: view.querySelector('#chkShowAdvancedBadges').checked,
             Tags: flatTags,
             SavedFilters: savedFilters,
@@ -12603,6 +12606,381 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
 
 
+    // ── Welcome tour ──
+    // Steps through the page with the rest dimmed: a "hole" around the part explained and a card
+    // with the text. Opens by itself the first time the page is shown (WelcomeTourSeen), and from
+    // the Tour button. Nothing is changed: it switches tabs, shows the page in Basic and adds a demo
+    // source card (never saved, see getUiConfig), and puts it all back when it closes.
+    var _tour = null;
+    // Help > Guides: links to forum posts that explain things, kept on the GitHub wiki.
+    var GUIDES_URL = 'https://github.com/soderlund91/HomeScreenCompanion/wiki/Community-guides';
+
+    function tourVisible(el) { return !!el && el.isConnected && el.getClientRects().length > 0; }
+    function tourDemoRow(view) { return view.querySelector('#tagListContainer .tag-row.hsc-tour-demo'); }
+    function tourInDemo(sel) { return function (view) { var row = tourDemoRow(view); return row && row.querySelector(sel); }; }
+    function tourSettingsPanel(title) {
+        return function (view) {
+            return Array.from(view.querySelectorAll('#tabSettings .settings-panel')).filter(function (p) {
+                var t = p.querySelector('.advanced-header .hsc-title');
+                return t && t.textContent.trim() === title;
+            })[0];
+        };
+    }
+
+    // A highlighted line that says plainly what the tour just opened (a tab of the source card, Help).
+    function tourNote(icon, html) {
+        return '<p class="hsc-tour-tabnote"><i class="md-icon">' + icon + '</i><span>' + html + '</span></p>';
+    }
+    function tourTabNote(tab) { return tourNote('tab', 'The tour opened the <strong>' + tab + '</strong> tab of the card.'); }
+    // The demo card's tab row together with the part explained, so it is clear which tab is open.
+    function tourWithCardTabs(sel) {
+        return function (view) { var row = tourDemoRow(view); return row && [row.querySelector('.tag-tabs'), row.querySelector(sel)]; };
+    }
+
+    function tourEnsureDemo(view) {
+        var row = tourDemoRow(view);
+        if (row) return row;
+        var container = view.querySelector('#tagListContainer');
+        renderTagGroup({
+            Name: 'Trending Movies', Tag: '', SourceType: 'External', Active: true,
+            Urls: [{ url: 'https://trakt.tv/movies/trending', limit: 20 }],
+            EnableTag: true, EnableHomeSection: true
+        }, container, true, undefined, true);
+        row = container.firstElementChild;
+        row.classList.add('hsc-tour-demo');
+        row.style.display = ''; // a search or filter on the list never hides it
+        return row;
+    }
+
+    function tourRemoveDemo(view) {
+        var row = tourDemoRow(view);
+        if (row) { row.remove(); setTimeout(checkFormState, 0); }
+    }
+
+    var TOUR_STEPS = [
+        { center: true, icon: 'explore', title: 'Welcome to Home Screen Companion', first: true,
+          html: '<p>This tour shows you around the page and walks you through a <strong>source</strong>, the thing every home screen row starts from.</p>' +
+                '<p>Nothing is changed or saved while the tour runs. Step with <strong>Next</strong> and <strong>Back</strong> (or the arrow keys), and close it at any time with ✕ or Esc.</p>' +
+                '<p>You can take the tour again later: it is in <strong>Help</strong>.</p>' },
+        { page: 'TagCollection', target: '#pageTabNav', icon: 'tab', title: 'Main menu',
+          html: '<ul><li><strong>Tag &amp; Collection</strong>: your sources. Each one is a list of movies and shows that becomes a tag, collection, playlist and/or home row.</li>' +
+                '<li><strong>Top-Lists</strong>: ranked rows with numbered posters, like a Top 10.</li>' +
+                '<li><strong>Home Screen</strong>: each user\'s rows, copying one home screen to other users, and extra tweaks.</li>' +
+                '<li><strong>Cleanup</strong>: tags, collections and playlists on the server, to remove what you no longer need.</li>' +
+                '<li><strong>Settings</strong>: API keys, AI, general settings and backup.</li></ul>' },
+        { page: 'TagCollection', target: '#btnOpenHelp', icon: 'help', title: 'Help when you need it',
+          html: '<p><strong>Help</strong> opens the Setup Guide: every feature explained, with search.</p>' },
+        { page: 'TagCollection', help: true, target: '#helpModalOverlay .help-start-row', icon: 'rocket_launch', title: 'Quick Start, Tour and Guides',
+          html: tourNote('help', 'The tour opened <strong>Help</strong>.') +
+                '<p>At the top of Help:</p>' +
+                '<ul><li><strong>Quick Start</strong>: a checklist from a list to a home row, with ready-made starter sources you add with one click.</li>' +
+                '<li><strong>Tour</strong>: starts this tour again.</li>' +
+                '<li><strong>Guides</strong>: step-by-step guides from the community, e.g. forum posts, on GitHub (opens in a new tab).</li></ul>' },
+        { page: 'TagCollection', target: ['#btnOpenBugReport', '#btnOpenLogs', '#lastRunIndicator'], icon: 'terminal', title: 'Logs and status',
+          html: '<p><strong>Last run</strong> shows how the latest run went.</p>' +
+                '<p><strong>Logs</strong> shows what each run did, step by step, with warnings and errors marked.</p>' +
+                '<p><strong>Report bug</strong> tells you where to report a problem. Add the file from <em>Download logs</em> in the Logs window.</p>' },
+        { page: 'TagCollection', target: '.hsc-level-switch', icon: 'tune', title: 'Settings level',
+          html: '<p><strong>Basic</strong> shows the settings most people need. <strong>Advanced</strong> shows every setting; the extra ones carry an <em>Advanced</em> badge.</p>' +
+                '<p>A setting you already use is always shown. This tour shows the page in Basic.</p>' },
+        { page: 'TagCollection', target: '.floating-actions .btn-save', icon: 'save', title: 'Save Settings',
+          html: '<p>Changes on the page are not used until you click <strong>Save Settings</strong>. It lights up when there is something to save.</p>' +
+                '<p>Leave the page with unsaved changes and it asks first.</p>' },
+        { page: 'TagCollection', target: '#btnRunSync', icon: 'play_arrow', title: 'Run',
+          html: '<p>The plugin syncs by itself every day (Emby\'s scheduled tasks). <strong>Run</strong> starts a sync now: a full sync, only tags and collections, or only the home screen.</p>' +
+                '<p>A run uses the saved settings, so save first.</p>' },
+        { page: 'TagCollection', target: ['.page-tab-btn[data-page-tab="TagCollection"]', '#tabTagCollection .sectionTitle'], icon: 'local_offer', title: 'Main menu → Tag & Collection',
+          html: '<p>Now the tour goes through <strong>Tag &amp; Collection</strong>, the first tab of the main menu.</p>' +
+                '<p>This is where your <strong>sources</strong> are: each one is a list of movies and shows that becomes a tag, collection, playlist and/or home row. The next steps show how one is set up.</p>' },
+        { page: 'TagCollection', target: '#btnAddTag', icon: 'add_circle', title: 'Add a source',
+          html: '<p>Every row on the home screen starts as a <strong>source</strong>: a list of movies and shows. <strong>+ Add New Source</strong> adds an empty source card at the top of the list.</p>' +
+                '<p>On the next step the tour adds a demo card, so you can see what is in one. It goes away when the tour ends and is never saved.</p>' },
+        { page: 'TagCollection', demo: 'general', target: tourInDemo('.tag-header'), icon: 'view_agenda', title: 'A source card',
+          html: '<p>The header shows the source at a glance: the <strong>Active</strong> switch (off = runs skip it), the handle to drag it up or down, the source type and chips for what it makes (Tag, Collection, Home Section…).</p>' +
+                '<p>Click the header to open or close the card.</p>' },
+        { page: 'TagCollection', demo: 'general', target: tourInDemo('.tag-tabs'), icon: 'tab', title: 'The card\'s tabs',
+          html: '<ul><li><strong>Source</strong>: where the list comes from.</li>' +
+                '<li><strong>Tag</strong>, <strong>Collection</strong>, <strong>Playlist</strong>: what is made in Emby from the titles found.</li>' +
+                '<li><strong>Schedule</strong>: when the source is active.</li>' +
+                '<li><strong>Home Screen</strong>: the row on users\' home screens.</li></ul>' +
+                '<p>The next steps open them one by one.</p>' },
+        { page: 'TagCollection', demo: 'general',
+          target: tourWithCardTabs('.txtEntryLabel'),
+          icon: 'badge', title: 'Source tab: name',
+          html: tourTabNote('Source') +
+                '<p><strong>Display Name</strong> names the source. The tag, collection, playlist and home row use it too, unless you give them a name of their own.</p>' },
+        { page: 'TagCollection', demo: 'general',
+          target: function (view) { var row = tourDemoRow(view); var hint = row && row.querySelector('.source-type-hint'); return hint && hint.parentElement; },
+          icon: 'category', title: 'Source tab: source type',
+          html: '<p><strong>Source Type</strong> is where the titles come from:</p>' +
+                '<ul><li><strong>External List</strong>: a list on Trakt, MDBList or TMDb.</li>' +
+                '<li><strong>Local Collection / Playlist</strong>: one you already have in Emby.</li>' +
+                '<li><strong>Local Media Information</strong>: filters on your own library (a smart playlist).</li>' +
+                '<li><strong>Manual List</strong>: titles you pick by hand.</li>' +
+                '<li><strong>AI created lists</strong>: describe the list and an AI builds it.</li>' +
+                '<li><strong>Your Next Watch</strong>: picks for each user from what they watch.</li></ul>' },
+        { page: 'TagCollection', demo: 'general', target: tourInDemo('.source-external-container'), icon: 'link', title: 'Source tab: the list',
+          html: '<p>For an External List, paste the list\'s address here, e.g. a Trakt list or an MDBList top-list. <strong>Add another URL</strong> merges more lists into this source.</p>' +
+                '<p>The number next to a URL caps how many titles are taken from it (0 = all). Only titles that are in your library are used.</p>' +
+                '<p>Trakt, MDBList and TMDb need a free API key, under <strong>Settings</strong>.</p>' },
+        { page: 'TagCollection', demo: 'general', target: tourInDemo('.mi-toggle-row'), icon: 'filter_list', title: 'Source tab: filters (optional)',
+          html: '<p><strong>Add filters</strong> keeps only the titles that also match rules on your own library, e.g. only unwatched, only 4K or only one genre.</p>' },
+        { page: 'TagCollection', demo: 'tag', target: tourWithCardTabs('.tagname-tab .tag-tab-controls'), icon: 'label', title: 'Tag tab',
+          html: tourTabNote('Tag') +
+                '<p><strong>Apply Tag</strong> puts a tag on every title found. It is kept up to date on every run: titles that drop off the list lose the tag.</p>' +
+                '<p>A tag is the simplest base for a home row. <strong>Add another tag</strong> puts more tags on the same titles.</p>' },
+        { page: 'TagCollection', demo: 'collection', target: tourWithCardTabs('.collection-tab-controls'), icon: 'library_books', title: 'Collection tab',
+          html: tourTabNote('Collection') +
+                '<p><strong>Create Collection</strong> makes an Emby collection with the titles and keeps it in step with the list.</p>' +
+                '<p>Tick it to name it and choose a poster: your own image, or one drawn from the titles\' posters.</p>' },
+        { page: 'TagCollection', demo: 'playlist', target: tourWithCardTabs('.playlist-tab > .checkboxContainer'), icon: 'queue_music', title: 'Playlist tab',
+          html: tourTabNote('Playlist') +
+                '<p><strong>Create Playlist</strong> makes a playlist with the titles for each user you choose.</p>' },
+        { page: 'TagCollection', demo: 'schedule', target: tourWithCardTabs('.schedule-tab'), icon: 'event', title: 'Schedule tab',
+          html: tourTabNote('Schedule') +
+                '<p>Empty means the source is always active.</p>' +
+                '<p><strong>Add Schedule Rule</strong> limits it to dates, weekdays or times of day, and <strong>Holiday presets</strong> add a rule like Christmas or Halloween in one click. A Christmas row then only shows around Christmas.</p>' },
+        { page: 'TagCollection', demo: 'homescreen', target: tourWithCardTabs('.homescreen-tab > .checkboxContainer'), icon: 'home', title: 'Home Screen tab: the row',
+          html: tourTabNote('Home Screen') +
+                '<p><strong>Add as home screen section</strong> makes the source a row on users\' home screens.</p>' +
+                '<p>The row shows the source\'s tag, collection or playlist, so one of them must be on.</p>' },
+        { page: 'TagCollection', demo: 'homescreen', target: tourInDemo('.toplist-tab'), icon: 'leaderboard', title: 'Home Screen tab: top-list',
+          html: '<p><strong>Create as top-list</strong> turns the row into a ranked list with numbered posters in the list\'s order, like Netflix\'s Top 10.</p>' },
+        { page: 'TagCollection', demo: 'homescreen',
+          target: function (view) { var row = tourDemoRow(view); var u = row && row.querySelector('.hse-user-list-inner'); return u && u.parentElement; },
+          icon: 'group', title: 'Home Screen tab: users',
+          html: '<p>Under <strong>Target Users</strong>, pick the users who get the row on their home screen.</p>' },
+        { page: 'TagCollection', demo: 'homescreen', maxH: 220,
+          target: function (view) { var row = tourDemoRow(view); var f = row && row.querySelector('.hse-fields-inner'); return f ? [f.parentElement.querySelector('p'), f] : null; },
+          icon: 'tune', title: 'Home Screen tab: the row\'s look',
+          html: '<p><strong>Section Settings</strong> start here and go on below: the row\'s title, where on the home screen it goes (<em>Position</em>), how it looks (<em>View Type</em>, <em>Image Type</em>) and the sort order.</p>' +
+                '<p>The defaults are fine to start with.</p>' },
+        { page: 'TagCollection', demo: 'homescreen', target: function (view) { var row = tourDemoRow(view); var b = row && row.querySelector('.btnRunEntry'); return b && b.parentElement; },
+          icon: 'play_arrow', title: 'Run one source',
+          html: '<p><strong>Run Group</strong> runs only this source, handy while you set it up. <strong>Remove Group</strong> deletes it.</p>' +
+                '<p>To finish a new source: <strong>Save Settings</strong>, then <strong>Run Group</strong> (or wait for the daily sync), and the row shows up on the home screen.</p>' },
+        { page: 'TopLists', target: ['.page-tab-btn[data-page-tab="TopLists"]', '#tlContainer .sectionTitleContainer'], icon: 'leaderboard', title: 'Main menu → Top-Lists',
+          html: '<p>Every top-list in one place: the ones made from a source with <strong>Create as top-list</strong>, and ones made here with <strong>+ Create New</strong>.</p>' +
+                '<p>A top-list gets a hidden library of its own for its numbered posters, so your own titles are never changed.</p>' },
+        { page: 'HomeCompanion', sub: 'manage', maxH: 360, target: ['#pageTabNav', '.hsc-sub-tab-btn[data-hsc-tab="manage"]', '#hscManageContainer'], icon: 'home', title: 'Main menu → Home Screen: Manage',
+          html: '<p>Pick a user to see the rows on their home screen. Drag rows to change the order, then apply.</p>' },
+        { page: 'HomeCompanion', sub: 'copy', maxH: 300, target: ['.hsc-sub-tab-btn[data-hsc-tab="copy"]', '#hscContainer'], icon: 'content_copy', title: 'Copy & Sync',
+          html: '<p>Copies one user\'s home screen to other users, so they get the same rows. Each profile has its own source user and target users, and it runs with the sync.</p>' },
+        { page: 'HomeCompanion', sub: 'tweaks', maxH: 300, target: ['.hsc-sub-tab-btn[data-hsc-tab="tweaks"]', '#hstContainer'], icon: 'build', title: 'Home Screen Tweaks',
+          html: '<p>Extras for the home screen: <strong>Continue Watching bump</strong> moves a show you had finished to the front when new episodes arrive, and <strong>Original-language posters</strong> gives titles their poster in their own language.</p>' },
+        { page: 'Cleanup', maxH: 300, target: ['.page-tab-btn[data-page-tab="Cleanup"]', '#tcManageContainer'], icon: 'auto_delete', title: 'Cleanup',
+          html: '<p>Lists the tags, collections and playlists on the server, also ones made by hand or by another plugin, so you can remove what you no longer need.</p>' },
+        { page: 'Settings', target: tourSettingsPanel('External list settings'), icon: 'link', title: 'API keys for lists',
+          html: '<p>Trakt, MDBList and TMDb need a free API key before External List sources work. Open a provider to add its key; the text under the field links to where you get one.</p>' },
+        { page: 'Settings', target: tourSettingsPanel('AI Settings'), icon: 'auto_awesome', title: 'AI',
+          html: '<p>For AI created lists: add a key for Gemini, OpenAI or Claude, or the address of your own Ollama server.</p>' },
+        { page: 'Settings', target: function (view) { return [tourSettingsPanel('Settings')(view), tourSettingsPanel('Advanced Settings')(view)]; },
+          icon: 'settings', title: 'Settings and Advanced Settings',
+          html: '<ul><li><strong>Settings</strong>: how runs behave, and features like the <strong>Missing</strong> tab.</li>' +
+                '<li><strong>Advanced Settings</strong>: troubleshooting (extended log, dry run) and more niche features.</li></ul>' },
+        { page: 'Settings', target: function (view) {
+              var h = Array.from(view.querySelectorAll('#tabSettings h3.hsc-title')).filter(function (x) { return /Backup/.test(x.textContent); })[0];
+              return h ? [h, view.querySelector('#btnBackupConfig')] : null;
+          }, icon: 'backup', title: 'Backup & Restore',
+          html: '<p>Saves your setup to a file, or restores it, all of it or only some parts. Handy before big changes or when you move to another server.</p>' },
+        { center: true, icon: 'check_circle', title: 'You\'re all set', last: true,
+          html: '<p>A good first step: open <strong>Quick Start</strong> and add a starter source, or click <strong>+ Add New Source</strong> and build your own.</p>' +
+                '<p>Take this tour again any time from <strong>Help</strong>.</p>' }
+    ];
+
+    function startTour(view, auto) {
+        if (_tour) return;
+        document.querySelectorAll('.modal-backdrop.modal-visible').forEach(function (m) { m.classList.remove('modal-visible'); });
+        var activeTab = view.querySelector('.page-tab-btn.active');
+        var activeSub = view.querySelector('.hsc-sub-tab-btn.active');
+        _tour = {
+            view: view, i: -1, waitSince: 0, auto: !!auto,
+            prevLevel: settingsLevel,
+            prevTab: activeTab ? activeTab.getAttribute('data-page-tab') : 'TagCollection',
+            prevSub: activeSub ? activeSub.getAttribute('data-hsc-tab') : 'manage'
+        };
+        if (settingsLevel !== 'Basic') setSettingsLevel(view, 'Basic', false);
+
+        var block = document.createElement('div');
+        block.className = 'hsc-tour-block';
+        var hole = document.createElement('div');
+        hole.className = 'hsc-tour-hole';
+        var card = document.createElement('div');
+        card.className = 'hsc-tour-card';
+        card.setAttribute('role', 'dialog');
+        card.setAttribute('aria-modal', 'true');
+        document.body.appendChild(block);
+        document.body.appendChild(hole);
+        document.body.appendChild(card);
+        _tour.block = block; _tour.hole = hole; _tour.card = card;
+
+        card.addEventListener('click', function (e) {
+            var b = e.target.closest('[data-tour]');
+            if (!b) return;
+            var act = b.getAttribute('data-tour');
+            if (act === 'next') tourGo(_tour.i + 1, 1);
+            else if (act === 'back') tourGo(_tour.i - 1, -1);
+            else if (act === 'close') endTour();
+            else if (act === 'quickstart') { endTour(); var qs = view.querySelector('#btnOpenQuickStart'); if (qs) qs.click(); }
+        });
+        _tour.onKey = function (e) {
+            if (!_tour) return;
+            if (e.key === 'Escape') endTour();
+            else if (e.key === 'ArrowRight') tourGo(_tour.i + 1, 1);
+            else if (e.key === 'ArrowLeft') { if (_tour.i > 0) tourGo(_tour.i - 1, -1); }
+            else return;
+            e.preventDefault(); e.stopPropagation();
+        };
+        document.addEventListener('keydown', _tour.onKey, true);
+        _tour.onResize = function () { tourPlace(); };
+        window.addEventListener('resize', _tour.onResize);
+        // Follows the part explained while the page scrolls, or a tab fills in after loading.
+        _tour.timer = setInterval(tourPlace, 120);
+
+        tourGo(0, 1);
+    }
+
+    // leaving: the page was left (or rebuilt by Emby) while the tour was open. Only a tour the user
+    // closed or finished counts as seen, so one cut short that way opens by itself next time.
+    function endTour(leaving) {
+        if (!_tour) return;
+        var t = _tour, view = t.view;
+        if (t.auto && !leaving) postSourceJson('HomeScreenCompanion/WelcomeTour/Seen', {}).catch(function () { });
+        clearInterval(t.timer);
+        document.removeEventListener('keydown', t.onKey, true);
+        window.removeEventListener('resize', t.onResize);
+        [t.block, t.hole, t.card].forEach(function (el) { if (el) el.remove(); });
+        var help = view.querySelector('#helpModalOverlay');
+        if (help) help.classList.remove('modal-visible');
+        tourRemoveDemo(view);
+        if (t.prevLevel !== settingsLevel) setSettingsLevel(view, t.prevLevel, false);
+        _tour = null;
+        if (view._hscShowPageTab) view._hscShowPageTab(t.prevTab);
+        if (view._hscShowSubTab) view._hscShowSubTab(t.prevSub);
+        var top = view.querySelector('.hsc-top-row');
+        if (top) top.scrollIntoView({ block: 'start' });
+        setTimeout(checkFormState, 0);
+    }
+
+    // The step's elements (a selector, a function or a list of them), the ones that are shown.
+    function tourTargets(step) {
+        var view = _tour.view;
+        var t = step.target;
+        if (typeof t === 'function') t = t(view);
+        var list = Array.isArray(t) ? t : [t];
+        return list.map(function (x) { return typeof x === 'string' ? view.querySelector(x) : x; }).filter(tourVisible);
+    }
+
+    // Shows step i; a step whose part of the page is not there (e.g. hidden in this setup) is
+    // skipped in the direction of travel.
+    function tourGo(i, dir) {
+        if (!_tour) return;
+        if (i >= TOUR_STEPS.length) { endTour(); return; }
+        if (i < 0) i = 0;
+        var view = _tour.view, step = TOUR_STEPS[i];
+        if (step.page) {
+            var tabBtn = view.querySelector('.page-tab-btn[data-page-tab="' + step.page + '"]');
+            if (tabBtn && !tabBtn.classList.contains('active')) view._hscShowPageTab(step.page);
+        }
+        if (step.sub && view._hscShowSubTab) view._hscShowSubTab(step.sub);
+        // Help is open only for its own step (Quick Start and Tour are in it).
+        var help = view.querySelector('#helpModalOverlay');
+        if (help) {
+            if (step.help && !help.classList.contains('modal-visible')) {
+                var helpScroll = help.querySelector('.modal-body-scroll');
+                if (helpScroll) helpScroll.scrollTop = 0;
+            }
+            help.classList.toggle('modal-visible', !!step.help);
+        }
+        if (step.demo) {
+            var row = tourEnsureDemo(view);
+            var body = row.querySelector('.tag-body');
+            if (body.style.display === 'none') row.querySelector('.tag-header').click();
+            var tab = row.querySelector('.tag-tab[data-tab="' + step.demo + '"]');
+            if (tab && !tab.classList.contains('active')) tab.click();
+        } else {
+            tourRemoveDemo(view);
+        }
+        _tour.i = i; _tour.dir = dir; _tour.waitSince = Date.now(); _tour.scrolled = false;
+        tourRenderCard(step, i);
+        tourPlace();
+    }
+
+    function tourRenderCard(step, i) {
+        var n = TOUR_STEPS.length;
+        var back = step.first
+            ? '<button type="button" class="hsc-mbtn hsc-btn-secondary" data-tour="close">Not now</button>'
+            : '<button type="button" class="hsc-mbtn hsc-btn-secondary" data-tour="back">Back</button>';
+        var next = step.first ? 'Start the tour' : (step.last ? 'Finish' : 'Next');
+        var extra = step.last ? '<button type="button" class="hsc-mbtn hsc-btn-secondary" data-tour="quickstart">Open Quick Start</button>' : '';
+        _tour.card.innerHTML =
+            '<div class="hsc-tour-progress"><div style="width:' + Math.round((i + 1) / n * 100) + '%;"></div></div>' +
+            '<div class="hsc-tour-head"><i class="md-icon">' + step.icon + '</i><div class="hsc-tour-title">' + step.title + '</div>' +
+                '<button type="button" class="hsc-tour-close" data-tour="close" aria-label="Close the tour" title="Close the tour (Esc)"><i class="md-icon">close</i></button></div>' +
+            '<div class="hsc-tour-body">' + step.html + '</div>' +
+            '<div class="hsc-tour-foot"><span class="hsc-tour-count">' + (i + 1) + ' of ' + n + '</span>' + back + extra +
+                '<button type="button" class="hsc-mbtn hsc-btn-primary" data-tour="next">' + next + '</button></div>';
+        _tour.card.setAttribute('aria-label', step.title);
+        var nb = _tour.card.querySelector('[data-tour="next"]');
+        if (nb) nb.focus({ preventScroll: true });
+    }
+
+    // Puts the hole around the step's elements and the card next to it (below, above, beside, or
+    // at the bottom of the screen when the part is too big).
+    function tourPlace() {
+        if (!_tour || _tour.i < 0) return;
+        var step = TOUR_STEPS[_tour.i];
+        var hole = _tour.hole, card = _tour.card;
+        var W = window.innerWidth, H = window.innerHeight, M = 16, PAD = 6;
+        var cw = card.offsetWidth, ch = card.offsetHeight;
+        var els = step.center ? [] : tourTargets(step);
+
+        if (!step.center && !els.length) {
+            // Not there (yet): a tab may still be loading. Give it a moment, then skip the step.
+            if (Date.now() - _tour.waitSince > 1500) { tourGo(_tour.i + (_tour.dir || 1), _tour.dir || 1); return; }
+        }
+        if (!els.length) {
+            hole.classList.add('centered');
+            hole.style.left = (W / 2) + 'px'; hole.style.top = (H / 2) + 'px';
+            hole.style.width = '0px'; hole.style.height = '0px';
+            card.style.left = Math.max(M, (W - cw) / 2) + 'px';
+            card.style.top = Math.max(M, (H - ch) / 2) + 'px';
+            return;
+        }
+        hole.classList.remove('centered');
+        var top = Infinity, left = Infinity, bottom = -Infinity, right = -Infinity;
+        els.forEach(function (el) {
+            var r = el.getBoundingClientRect();
+            top = Math.min(top, r.top); left = Math.min(left, r.left);
+            bottom = Math.max(bottom, r.bottom); right = Math.max(right, r.right);
+        });
+        if (step.maxH && bottom - top > step.maxH) bottom = top + step.maxH;
+        // Scrolled once per step, so the whole part is in view: centred, or from the top (with a
+        // little room above) when it is too tall for that.
+        if (!_tour.scrolled) {
+            _tour.scrolled = true;
+            if (top < 60 || bottom > H - 60) {
+                var first = els[0];
+                first.style.scrollMarginTop = '24px';
+                first.scrollIntoView({ block: bottom - top > H / 2 - 60 ? 'start' : 'center', behavior: 'smooth' });
+                setTimeout(function () { first.style.scrollMarginTop = ''; }, 1000);
+            }
+        }
+        top = Math.max(top - PAD, 4); left = Math.max(left - PAD, 4);
+        bottom = Math.min(bottom + PAD, H - 4); right = Math.min(right + PAD, W - 4);
+        hole.style.left = left + 'px'; hole.style.top = top + 'px';
+        hole.style.width = Math.max(0, right - left) + 'px'; hole.style.height = Math.max(0, bottom - top) + 'px';
+
+        var cx = Math.min(Math.max(M, (left + right) / 2 - cw / 2), W - cw - M), cy;
+        if (H - bottom >= ch + M + 8) cy = bottom + 12;
+        else if (top >= ch + M + 8) cy = top - ch - 12;
+        else if (W - right >= cw + M + 8) { cx = right + 12; cy = Math.min(Math.max(M, top), H - ch - M); }
+        else if (left >= cw + M + 8) { cx = left - cw - 12; cy = Math.min(Math.max(M, top), H - ch - M); }
+        else cy = H - ch - M;
+        card.style.left = Math.max(M, cx) + 'px';
+        card.style.top = Math.max(M, cy) + 'px';
+    }
+
     return function (view) {
         view.addEventListener('viewshow', () => {
             _activeView = view;
@@ -12796,11 +13174,18 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 helpSearchPrev.addEventListener('click', () => showHelpHit(helpHitIdx - 1));
                 helpSearchNext.addEventListener('click', () => showHelpHit(helpHitIdx + 1));
 
-                // Quick Start: opens only from its button and the "Quick Start" links (never by itself).
+                // Quick Start: opens only from its button (in Help) and the "Quick Start" links (never by itself).
                 var quickStartOverlay = view.querySelector('#quickStartModalOverlay');
-                view.querySelector('#btnOpenQuickStart').addEventListener('click', () => quickStartOverlay.classList.add('modal-visible'));
+                view.querySelector('#btnOpenQuickStart').addEventListener('click', () => {
+                    helpOverlay.classList.remove('modal-visible');
+                    quickStartOverlay.classList.add('modal-visible');
+                });
                 view.querySelector('#btnCloseQuickStart').addEventListener('click', () => quickStartOverlay.classList.remove('modal-visible'));
                 quickStartOverlay.addEventListener('click', e => { if (e.target === quickStartOverlay) quickStartOverlay.classList.remove('modal-visible'); });
+                // Welcome tour: the Tour button in Help (startTour closes Help).
+                view.querySelector('#btnOpenTour').addEventListener('click', () => startTour(view, false));
+                // Guides: the community guides page on the GitHub wiki, in a new tab.
+                view.querySelector('#btnOpenGuides').addEventListener('click', () => window.open(GUIDES_URL, '_blank', 'noopener'));
                 view.addEventListener('click', e => {
                     if (!e.target.closest('.hsc-open-quickstart')) return;
                     e.preventDefault();
@@ -13051,6 +13436,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             Object.keys(view._bodyOverlays || {}).forEach(function (id) { view._bodyOverlays[id].classList.remove('modal-visible'); });
             // App pause hides the current view without a new one; real navigation always has newViewInfo.
             view._hscPaused = !!(e.detail && e.detail.newViewInfo === null);
+            // Leaving the page closes the welcome tour (it lives on document.body).
+            if (!view._hscPaused && _tour && _tour.view === view) endTour(true);
         });
 
         // ---- Unsaved changes survive leaving the page ----
@@ -13616,6 +14003,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         pageScroller(view).scrollTop = 0;
                     }
                     else if (ui) applyUiRows(ui);
+                    // The first time the page is shown: the welcome tour (not over a popup, and
+                    // not when unsaved changes were just put back).
+                    if (!config.WelcomeTourSeen && !restored && !view._hscTourOffered) {
+                        view._hscTourOffered = true;
+                        setTimeout(function () {
+                            if (_activeView === view && view.isConnected && !document.querySelector('.modal-backdrop.modal-visible, .dialogContainer .dialog'))
+                                startTour(view, true);
+                        }, 600);
+                    }
                 });
             }).catch(function () { view._hscLoading = false; });
         }
@@ -13836,6 +14232,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         });
 
         // Shows a Home Screen sub-tab (and runs its lazy loader).
+        view._hscShowSubTab = function (target) { showSubTab(target); };
         function showSubTab(target) {
             var btn = view.querySelector('.hsc-sub-tab-btn[data-hsc-tab="' + target + '"]');
             if (!btn) return;

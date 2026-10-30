@@ -112,7 +112,7 @@ namespace HomeScreenCompanion
             var type = (a.type ?? "").Trim().ToLowerInvariant();
             return new ExternalItemDto
             {
-                Name = a.title.Trim(),
+                Name = (a.title ?? "").Trim(),
                 Imdb = (a.imdb_id ?? "").Trim(),
                 Type = type == "movie" || type == "film" ? "movie" : type == "show" || type == "series" || type == "tv" ? "show" : null,
                 Year = a.year > 0 ? a.year : null
@@ -124,11 +124,14 @@ namespace HomeScreenCompanion
         {
             internal readonly Dictionary<string, StoredSource> Read = new Dictionary<string, StoredSource>(StringComparer.Ordinal);
 
-            /// <summary>The entries a source's list gave (blacklisted ones left out). A source
-            /// that gave nothing is not recorded and keeps the entries it had.</summary>
-            internal void Record(TagConfig source, IEnumerable<ExternalItemDto> items)
+            /// <summary>The entries a source's list gave, each with its place on the list, and those
+            /// <paramref name="keep"/> turns down (blacklisted) left out, so the places stay the list's own.
+            /// A source that gave nothing is not recorded and keeps the entries it had.</summary>
+            internal void Record(TagConfig source, IEnumerable<ExternalItemDto> items, Func<ExternalItemDto, bool>? keep = null)
             {
-                var list = items.Where(i => i != null && !string.IsNullOrWhiteSpace(i.Name)).ToList();
+                var all = items.Where(i => i != null).ToList();
+                for (int n = 0; n < all.Count; n++) all[n].Rank = n + 1;
+                var list = all.Where(i => !string.IsNullOrWhiteSpace(i.Name) && (keep == null || keep(i))).ToList();
                 if (list.Count == 0) return;
                 var key = SourceKey(source);
                 if (Read.TryGetValue(key, out var had)) { had.Items.AddRange(list); return; }
@@ -368,6 +371,15 @@ namespace HomeScreenCompanion
             public string Imdb { get; set; } = "";
             public string Tmdb { get; set; } = "";
             public List<string> Lists { get; set; } = new List<string>();
+            public List<ListPlace> Places { get; set; } = new List<ListPlace>();
+        }
+
+        /// <summary>Where a title is on one of its lists: 3 of 20.</summary>
+        public sealed class ListPlace
+        {
+            public string List { get; set; } = "";
+            public int? Rank { get; set; }   // null = saved before places were recorded
+            public int Of { get; set; }
         }
 
         public sealed class MissingShow
@@ -378,6 +390,7 @@ namespace HomeScreenCompanion
             public string Tmdb { get; set; } = "";
             public string Tvdb { get; set; } = "";
             public List<string> Lists { get; set; } = new List<string>();
+            public List<ListPlace> Places { get; set; } = new List<ListPlace>();
             public string LibraryId { get; set; } = "";   // the show in the library; "" = not in it
             public bool EpisodesKnown { get; set; }        // TMDb's episodes are cached for it
             public int AiredEpisodes { get; set; }
@@ -408,6 +421,7 @@ namespace HomeScreenCompanion
             public string Tmdb = "";
             public string? Type;
             public readonly List<string> Lists = new List<string>();
+            public readonly List<ListPlace> Places = new List<ListPlace>();
         }
 
         private static string NormTitle(string s) =>
@@ -450,6 +464,8 @@ namespace HomeScreenCompanion
             // Merge the lists: one title per IMDb id (else TMDb id, else name + year).
             var titles = new Dictionary<string, Title>(StringComparer.OrdinalIgnoreCase);
             foreach (var src in sources)
+            {
+                int of = Math.Max(src.Items.Count, src.Items.Max(i => i.Rank) ?? 0);
                 foreach (var i in src.Items)
                 {
                     var imdb = (i.Imdb ?? "").Trim();
@@ -460,7 +476,12 @@ namespace HomeScreenCompanion
                     if (string.IsNullOrEmpty(t.Tmdb) && !string.IsNullOrEmpty(i.Tmdb)) t.Tmdb = i.Tmdb!;
                     t.Type ??= i.Type;
                     if (!t.Lists.Contains(src.Name)) t.Lists.Add(src.Name);
+                    // A list of several URLs (or a title twice on one): its best place.
+                    var place = t.Places.FirstOrDefault(p => p.List == src.Name);
+                    if (place == null) t.Places.Add(new ListPlace { List = src.Name, Rank = i.Rank, Of = of });
+                    else if (i.Rank != null && (place.Rank == null || i.Rank < place.Rank)) { place.Rank = i.Rank; place.Of = of; }
                 }
+            }
             foreach (var t in titles.Values)
                 if (t.Imdb.Length > 0 && lookups.TryGetValue(t.Imdb, out var l))
                 {
@@ -512,7 +533,7 @@ namespace HomeScreenCompanion
                 if (local.Count == 0)
                 {
                     if (t.Type == "show") shows.Add((t, new List<Series>()));
-                    else result.Movies.Add(new MissingMovie { Name = t.Name, Year = t.Year, Imdb = t.Imdb, Tmdb = t.Tmdb, Lists = t.Lists });
+                    else result.Movies.Add(new MissingMovie { Name = t.Name, Year = t.Year, Imdb = t.Imdb, Tmdb = t.Tmdb, Lists = t.Lists, Places = t.Places.ToList() });
                     continue;
                 }
                 var localShows = local.OfType<Series>().ToList();
@@ -540,7 +561,7 @@ namespace HomeScreenCompanion
             {
                 var show = new MissingShow
                 {
-                    Name = t.Name, Year = t.Year, Imdb = t.Imdb, Tmdb = t.Tmdb, Lists = t.Lists,
+                    Name = t.Name, Year = t.Year, Imdb = t.Imdb, Tmdb = t.Tmdb, Lists = t.Lists, Places = t.Places.ToList(),
                     LibraryId = local.Count > 0 ? local[0].Id.ToString("N") : ""
                 };
                 if (local.Count > 0 && t.Year == null) show.Year = local[0].ProductionYear;

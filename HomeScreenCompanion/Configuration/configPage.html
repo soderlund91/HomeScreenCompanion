@@ -352,8 +352,8 @@
             }
         }
 
-        /* Top row: Help, Quick Start, Report bug, Logs are secondary buttons */
-        .btn-log-trigger, .btn-bug-trigger, .btn-help-trigger, .btn-quickstart-trigger {
+        /* Top row: Help, Quick Start, Tour, Report bug, Logs are secondary buttons */
+        .btn-log-trigger, .btn-bug-trigger, .btn-help-trigger, .btn-quickstart-trigger, .btn-tour-trigger, .btn-guides-trigger {
             background: var(--hsc-tint-1) !important;
             color: var(--theme-text-primary) !important;
             padding: 0 12px !important;
@@ -369,12 +369,59 @@
             box-shadow: none !important;
             transition: border-color 0.15s, background-color 0.15s, color 0.15s;
         }
-        .btn-log-trigger .md-icon, .btn-bug-trigger .md-icon, .btn-help-trigger .md-icon, .btn-quickstart-trigger .md-icon {
+        .btn-log-trigger .md-icon, .btn-bug-trigger .md-icon, .btn-help-trigger .md-icon, .btn-quickstart-trigger .md-icon, .btn-tour-trigger .md-icon, .btn-guides-trigger .md-icon {
             font-size: 1.15em;
             color: var(--theme-text-secondary);
         }
-        .btn-log-trigger:hover, .btn-bug-trigger:hover, .btn-help-trigger:hover, .btn-quickstart-trigger:hover {
+        .btn-log-trigger:hover, .btn-bug-trigger:hover, .btn-help-trigger:hover, .btn-quickstart-trigger:hover, .btn-tour-trigger:hover, .btn-guides-trigger:hover {
             background: var(--hsc-tint-2) !important;
+        }
+
+        /* Welcome tour: a click-blocking layer, a "hole" around the part explained (its huge
+           shadow dims the rest) and a card with the text. Built in configPage.js (startTour). */
+        .hsc-tour-block { position: fixed; inset: 0; z-index: 100000; background: transparent; }
+        .hsc-tour-hole {
+            position: fixed; z-index: 100001; pointer-events: none;
+            border-radius: 8px;
+            box-shadow: 0 0 0 2px var(--hsc-primary), 0 0 0 9999px rgba(0,0,0,0.6);
+            transition: top 0.25s ease, left 0.25s ease, width 0.25s ease, height 0.25s ease;
+        }
+        .hsc-tour-hole.centered { box-shadow: 0 0 0 9999px rgba(0,0,0,0.6); }
+        .hsc-tour-card {
+            position: fixed; z-index: 100002;
+            width: 380px; max-width: calc(100vw - 32px); box-sizing: border-box;
+            background: var(--plugin-popup-bg, #2a2a2a); color: var(--plugin-popup-color, #e8e8e8);
+            border: 1px solid var(--plugin-popup-border, rgba(255,255,255,0.15));
+            border-radius: 12px; box-shadow: var(--hsc-shadow-modal);
+            transition: top 0.25s ease, left 0.25s ease;
+        }
+        .hsc-tour-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 0; }
+        .hsc-tour-head .md-icon { color: var(--hsc-primary-text); font-size: 1.3em; }
+        .hsc-tour-title { flex: 1; min-width: 0; font-size: 1.05em; font-weight: 600; letter-spacing: -0.1px; }
+        .hsc-tour-close {
+            background: transparent; border: none; color: inherit; opacity: 0.7; cursor: pointer;
+            width: 30px; height: 30px; border-radius: 6px; display: flex; align-items: center; justify-content: center; padding: 0;
+        }
+        .hsc-tour-close:hover { opacity: 1; background: var(--plugin-popup-hover, var(--hsc-tint-2)); }
+        .hsc-tour-body { padding: 8px 16px 14px; font-size: 0.92em; line-height: 1.55; }
+        .hsc-tour-body p { margin: 0 0 8px; }
+        .hsc-tour-body p:last-child { margin-bottom: 0; }
+        .hsc-tour-body ul { margin: 4px 0 8px; padding-left: 18px; }
+        .hsc-tour-body li { margin-bottom: 2px; }
+        .hsc-tour-body .hsc-tour-tabnote {
+            display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px;
+            background: var(--hsc-tint-2); border: 1px solid var(--plugin-popup-border, var(--hsc-hairline));
+        }
+        .hsc-tour-tabnote .md-icon { font-size: 1.1em; color: var(--hsc-primary-text); }
+        .hsc-tour-foot {
+            display: flex; align-items: center; gap: 8px; padding: 10px 16px;
+            border-top: 1px solid var(--plugin-popup-border, var(--hsc-hairline));
+        }
+        .hsc-tour-count { margin-right: auto; font-size: 0.8em; color: var(--plugin-popup-muted, inherit); }
+        .hsc-tour-progress { height: 3px; background: var(--hsc-tint-2); }
+        .hsc-tour-progress > div { height: 100%; background: var(--hsc-primary); transition: width 0.25s ease; }
+        @media (prefers-reduced-motion: reduce) {
+            .hsc-tour-hole, .hsc-tour-card, .hsc-tour-progress > div { transition: none; }
         }
 
         /* The top row is as wide as the tab content (the form is max 900px). */
@@ -741,6 +788,9 @@
         }
 
         /* Setup Guide: search box above Contents */
+        /* Setup Guide: Quick Start and Tour, between the intro and the search box */
+        .help-start-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 16px; }
+
         .help-search {
             display: flex;
             align-items: center;
@@ -1494,11 +1544,6 @@
                     <span>Help</span>
                 </button>
 
-                <button type="button" is="emby-button" class="btn-quickstart-trigger" id="btnOpenQuickStart" title="Open Quick Start">
-                    <i class="md-icon">rocket_launch</i>
-                    <span>Quick Start</span>
-                </button>
-
                 <button type="button" is="emby-button" class="btn-bug-trigger" id="btnOpenBugReport" title="Report a Bug">
                     <i class="md-icon">bug_report</i>
                     <span>Report bug</span>
@@ -2211,6 +2256,22 @@
                     </ul>
                 </div>
 
+                <!-- QUICK START + TOUR + GUIDES -->
+                <div class="help-start-row">
+                    <button type="button" is="emby-button" class="btn-quickstart-trigger" id="btnOpenQuickStart" title="Open Quick Start">
+                        <i class="md-icon">rocket_launch</i>
+                        <span>Quick Start</span>
+                    </button>
+                    <button type="button" is="emby-button" class="btn-tour-trigger" id="btnOpenTour" title="Take the tour of the plugin">
+                        <i class="md-icon">explore</i>
+                        <span>Tour</span>
+                    </button>
+                    <button type="button" is="emby-button" class="btn-guides-trigger" id="btnOpenGuides" title="Community guides on GitHub (opens in a new tab)">
+                        <i class="md-icon">menu_book</i>
+                        <span>Guides</span>
+                    </button>
+                </div>
+
                 <!-- SEARCH -->
                 <div class="help-search">
                     <i class="md-icon">search</i>
@@ -2238,12 +2299,12 @@
                     </ol>
                 </nav>
 
-                <!-- 1. QUICK START (its own popup: Quick Start button at the top) -->
+                <!-- 1. QUICK START (its own popup: Quick Start button at the top of this guide) -->
                 <div id="help-sec-1" class="help-section" style="margin-top:0;">
                     <i class="md-icon help-section-icon">rocket_launch</i>
                     <span>Quick Start</span>
                 </div>
-                <p style="margin:0 0 10px; line-height:1.6;">The steps from a new source to a row on the home screen, a checklist for when nothing shows up, starter sources and how to get API keys are in <a href="javascript:void(0)" class="help-link hsc-open-quickstart">Quick Start</a> (the button next to Help).</p>
+                <p style="margin:0 0 10px; line-height:1.6;">The steps from a new source to a row on the home screen, a checklist for when nothing shows up, starter sources and how to get API keys are in <a href="javascript:void(0)" class="help-link hsc-open-quickstart">Quick Start</a> (the button at the top of this guide).</p>
 
                 <!-- 2. SOURCE TYPES -->
                 <div id="help-sec-2" class="help-section">

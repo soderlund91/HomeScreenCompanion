@@ -12,6 +12,8 @@ namespace HomeScreenCompanion
         // Missing titles tab (MissingTitles).
         public string? Type { get; set; }
         public int? Year { get; set; }
+        // Its place on the list it came from (1 = first), set when the Missing titles record it.
+        public int? Rank { get; set; }
     }
 
     public class MdbListItem

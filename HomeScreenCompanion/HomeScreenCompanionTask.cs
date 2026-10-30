@@ -744,7 +744,7 @@ namespace HomeScreenCompanion
                                 (ListFetcher.IsFailure(fetchError) ? gs.Errors : gs.Warnings).Add(StandInMessage(tagConfig.Url!, fetchError, _lastGood.Value.SavedUtc));
                             }
                             gs.ListCount = items.Count;
-                            missingRun?.Record(tagConfig, items.Where(i => string.IsNullOrEmpty(i.Imdb) || !blacklist.Contains(i.Imdb)));
+                            missingRun?.Record(tagConfig, items, i => string.IsNullOrEmpty(i.Imdb) || !blacklist.Contains(i.Imdb));
                             int _extBlacklisted = 0, _extNoImdb = 0;
 
                             if (items.Count > 0)
@@ -1082,8 +1082,8 @@ namespace HomeScreenCompanion
                             }
 
                             // Only the titles the AI's answer was read up to (the limit was filled after them).
-                            missingRun?.Record(tagConfig, aiItems.Take(_aiSeen).Where(a => !string.IsNullOrWhiteSpace(a.title)
-                                && (string.IsNullOrEmpty(a.imdb_id) || !blacklist.Contains(a.imdb_id!.Trim()))).Select(MissingTitles.FromAi));
+                            missingRun?.Record(tagConfig, aiItems.Take(_aiSeen).Select(MissingTitles.FromAi),
+                                i => string.IsNullOrEmpty(i.Imdb) || !blacklist.Contains(i.Imdb));
                             _log.Debug($"  AI ({AiConnection.Label(tagConfig.AiProvider)}) returned {gs.ListCount} items in {fetchTimer.ElapsedMilliseconds} ms  ·  {matchedLocalItems.Count} matched ({_aiTitleMatched} by title only)  ·  {gs.MissingItems.Count} not in library  ·  {_aiBlacklisted} blacklisted");
                             if (tagConfig.AiRefreshIntervalDays > 0 && aiItems.Count > 0)
                             {
@@ -2421,7 +2421,7 @@ namespace HomeScreenCompanion
                             (ListFetcher.IsFailure(fetcher.LastError) ? gs.Errors : gs.Warnings).Add(StandInMessage(src.Url, fetcher.LastError, _lastGood.Value.SavedUtc));
                         }
                         _listCount += items.Count;
-                        missingRun?.Record(src, items.Where(i => string.IsNullOrEmpty(i.Imdb) || !blacklist.Contains(i.Imdb)));
+                        missingRun?.Record(src, items, i => string.IsNullOrEmpty(i.Imdb) || !blacklist.Contains(i.Imdb));
                         // One URL of several that does not exist (404): left out, as in the full sync.
                         if (items.Count == 0 && groupEntries.Count > 1 && ListFetcher.IsGone(fetcher.LastError))
                         {
@@ -2686,8 +2686,8 @@ namespace HomeScreenCompanion
                             }
                         }
                     }
-                    missingRun?.Record(tagConfig, aiItems.Take(_aiSeen).Where(a => !string.IsNullOrWhiteSpace(a.title)
-                        && (string.IsNullOrEmpty(a.imdb_id) || !blacklist.Contains(a.imdb_id!.Trim()))).Select(MissingTitles.FromAi));
+                    missingRun?.Record(tagConfig, aiItems.Take(_aiSeen).Select(MissingTitles.FromAi),
+                        i => string.IsNullOrEmpty(i.Imdb) || !blacklist.Contains(i.Imdb));
                     _log.Debug($"  AI ({AiConnection.Label(tagConfig.AiProvider)}) returned {_listCount} items in {fetchTimer.ElapsedMilliseconds} ms  ·  {matchedLocalItems.Count} matched ({_aiTitleMatched} by title only)  ·  {gs.MissingItems.Count} not in library  ·  {_aiBlacklisted} blacklisted");
 
                     if (_preview != null)

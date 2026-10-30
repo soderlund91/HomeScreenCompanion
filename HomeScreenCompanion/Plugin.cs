@@ -51,6 +51,8 @@ namespace HomeScreenCompanion
                 incoming.HomeSyncAdditions = (current.HomeSyncAdditions ?? new List<HomeSyncAddition>())
                     .Select(a => new HomeSyncAddition { List = a.List, Key = a.Key, UserId = a.UserId, Picked = a.Picked, SectionId = a.SectionId }).ToList();
                 HomeSectionSyncTask.KeepKeysOfRenamedSources(current, incoming);
+                // The page does not send it: once the tour has been shown it stays shown.
+                incoming.WelcomeTourSeen = incoming.WelcomeTourSeen || current.WelcomeTourSeen;
             }
             base.UpdateConfiguration(configuration);
             HomeScreenCompanionTask.RecordImportedCollections(Configuration);
@@ -77,6 +79,15 @@ namespace HomeScreenCompanion
         {
             base.SaveConfiguration();
             HomeScreenCompanionTask.RecordImportedCollections(Configuration);
+        }
+
+        // The welcome tour opened by itself: it does not open by itself again. Saved on its own, so
+        // the page's unsaved changes and Save's checks are not involved.
+        internal void MarkWelcomeTourSeen()
+        {
+            if (Configuration.WelcomeTourSeen) return;
+            Configuration.WelcomeTourSeen = true;
+            base.SaveConfiguration();
         }
 
         public IEnumerable<PluginPageInfo> GetPages()

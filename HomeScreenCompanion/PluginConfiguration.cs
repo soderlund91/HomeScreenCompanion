@@ -62,6 +62,9 @@ namespace HomeScreenCompanion
         public string SettingsLevel { get; set; } = "";
         // Settings > Features: the "Advanced" badges in the Advanced level (Basic always shows them).
         public bool ShowAdvancedBadges { get; set; } = true;
+        // The welcome tour has been shown (it opens by itself once, then only from its Tour button).
+        // Set by WelcomeTour/Seen; a Save from the page never clears it (see Plugin.UpdateConfiguration).
+        public bool WelcomeTourSeen { get; set; } = false;
         public List<TagConfig> Tags { get; set; } = new List<TagConfig>();
         public List<TopListHomeSection> TopLists { get; set; } = new List<TopListHomeSection>();
         public List<SavedMediaInfoFilter> SavedFilters { get; set; } = new List<SavedMediaInfoFilter>();
