@@ -2539,7 +2539,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }).join('');
     }
 
-    function getMiValueHtml(prop, savedOp, savedVal, savedUserId) {
+    function getMiValueHtml(prop, savedOp, savedVal, savedUserId, savedDateMode) {
         var userHtml = '';
         if (MI_USER_PROPS.indexOf(prop) >= 0) {
             var specialOpts =
@@ -2603,6 +2603,26 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 return '<option value="' + pair[0] + '"' + (pair[0] === savedVal ? ' selected' : '') + '>' + pair[1] + '</option>';
             }).join('');
             return userHtml + '<select class="selMiValue" is="emby-select" style="flex:1;">' + opts + '</select>';
+        }
+        if (prop === 'DateAdded' || prop === 'DateModified') {
+            var dateMode = savedDateMode || (!savedVal || /^\d{4}-\d{2}-\d{2}$/.test(savedVal) ? 'date' : 'days');
+            var dateInputValue = dateMode === 'date'
+                ? (/^\d{4}-\d{2}-\d{2}$/.test(savedVal || '') ? savedVal : '')
+                : (/^-?\d+(?:\.\d+)?$/.test(savedVal || '') ? savedVal : '');
+            var dateOps = ['=', '>', '>=', '<', '<='];
+            var dateOpOpts = dateOps.map(function (o) {
+                return '<option value="' + o + '"' + (o === (savedOp || '<=') ? ' selected' : '') + '>' + o + '</option>';
+            }).join('');
+            return userHtml +
+                '<select class="selMiDateMode" is="emby-select" aria-label="Date filter mode" style="flex:0 0 105px;">' +
+                '<option value="date"' + (dateMode === 'date' ? ' selected' : '') + '>Date</option>' +
+                '<option value="days"' + (dateMode === 'days' ? ' selected' : '') + '>Days ago</option>' +
+                '</select>' +
+                '<select class="selMiOp" is="emby-select" style="flex:0 0 64px;">' + dateOpOpts + '</select>' +
+                '<input class="txtMiNum" is="emby-input" type="' + (dateMode === 'date' ? 'date' : 'number') + '"' +
+                (dateMode === 'days' ? ' step="0.01"' : '') +
+                ' value="' + dateInputValue + '" style="flex:1;" />' +
+                (dateMode === 'days' ? '<span class="mi-date-days-unit" style="font-size:0.82em; white-space:nowrap; opacity:0.7;">days ago</span>' : '');
         }
         if (MI_NUMERIC_PROPS.indexOf(prop) >= 0) {
             var ops = ['=', '>', '>=', '<', '<='];
@@ -4218,6 +4238,18 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 miRule.querySelector('.mi-value-wrapper').innerHTML = getMiValueHtml(e.target.value, '', '');
                 var existingHint = miRule.querySelector('.mi-rule-hint');
                 if (existingHint) existingHint.outerHTML = getMiHintHtml(e.target.value);
+            }
+            if (e.target.classList.contains('selMiDateMode')) {
+                var dateMiRule = e.target.closest('.mi-rule');
+                var dateMiInput = dateMiRule.querySelector('.txtMiNum');
+                var dateMiOp = dateMiRule.querySelector('.selMiOp');
+                var dateMiProperty = dateMiRule.querySelector('.selMiProperty');
+                dateMiRule.querySelector('.mi-value-wrapper').innerHTML = getMiValueHtml(
+                    dateMiProperty.value,
+                    dateMiOp ? dateMiOp.value : '<=',
+                    dateMiInput ? dateMiInput.value : '',
+                    '',
+                    e.target.value);
             }
             if (e.target.classList.contains('selMiValue')) {
                 var _miRule = e.target.closest('.mi-rule');

@@ -6238,7 +6238,12 @@ namespace HomeScreenCompanion
             bool userDataRule = parts.Length == 4 && UserDataRuleProps.Contains(parts[0]);
             bool numericRule = parts.Length == 3 && double.TryParse(parts[2], System.Globalization.NumberStyles.Any,
                 System.Globalization.CultureInfo.InvariantCulture, out _);
-            if (parts.Length > 2 && !userDataRule && !numericRule) parts = SplitTextCriterion(c);
+            bool calendarDateRule = parts.Length == 3 &&
+                (parts[0] == "DateAdded" || parts[0] == "DateModified") &&
+                DateTime.TryParseExact(parts[2], "yyyy-MM-dd",
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out _);
+            if (parts.Length > 2 && !userDataRule && !numericRule && !calendarDateRule) parts = SplitTextCriterion(c);
             if (parts.Length == 2)
             {
                 var prop = parts[0]; var val = parts[1].Trim();
@@ -6409,6 +6414,18 @@ namespace HomeScreenCompanion
                                         : item.ProductionLocations != null && SplitCommaValues(tVal).Any(v => MatchesAny(item.ProductionLocations, v)),
                     _ => false
                 };
+            }
+            if (parts.Length == 3 &&
+                (parts[0] == "DateAdded" || parts[0] == "DateModified") &&
+                DateTime.TryParseExact(parts[2], "yyyy-MM-dd",
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var calendarDate))
+            {
+                DateTime? itemDate = parts[0] == "DateAdded"
+                    ? item.DateCreated.UtcDateTime
+                    : TryGetDateModifiedDate(item);
+                if (!itemDate.HasValue) return false;
+                return ApplyDateOp(itemDate.Value.Date, parts[1], calendarDate.Date);
             }
             if (parts.Length == 3 && double.TryParse(parts[2],
                 System.Globalization.NumberStyles.Any,
@@ -6810,6 +6827,29 @@ namespace HomeScreenCompanion
             "="  => Math.Abs(v - num) < 0.01,
             _ => false
         };
+
+        private static bool ApplyDateOp(DateTime date, string op, DateTime target) => op switch
+        {
+            ">"  => date > target,
+            ">=" => date >= target,
+            "<"  => date < target,
+            "<=" => date <= target,
+            "="  => date == target,
+            _ => false
+        };
+
+        private static DateTime? TryGetDateModifiedDate(BaseItem item)
+        {
+            try
+            {
+                dynamic d = item;
+                object value = d.DateModified;
+                if (value is DateTimeOffset dateTimeOffset) return dateTimeOffset.UtcDateTime;
+                if (value is DateTime dateTime) return dateTime;
+                return null;
+            }
+            catch (Microsoft.CSharp.RuntimeBinder.RuntimeBinderException) { return null; }
+        }
 
         private static double? TryGetDateModified(BaseItem item)
         {
