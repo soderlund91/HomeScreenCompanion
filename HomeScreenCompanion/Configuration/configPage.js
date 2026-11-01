@@ -709,8 +709,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     <input is="emby-input" class="txtTagUrl" type="text" label="Trakt/MDBList/TMDb URL" value="${val}" />
                 </div>
                 <div style="width:110px; position:relative;">
-                    <input is="emby-input" class="txtUrlLimit" type="number" label="Max (0=limit)" value="${lim}" min="0" />
-                    <div class="url-limit-note" style="display:none; position:absolute; left:2px; top:100%; margin-top:2px; font-size:0.78em; white-space:nowrap; cursor:help;"></div>
+                    <input is="emby-input" class="txtUrlLimit" type="number" label="Max (0=All)" value="${lim}" min="0" />
+                    <div class="url-limit-note" style="display:none; position:absolute; left:2px; top:100%; margin-top:3px;"></div>
                 </div>
                 <button type="button" is="emby-button" class="raised button-submit btnTestUrl hsc-btn-secondary hsc-btn-sm" style="margin-top:12px;" title="Test Source"><span>Test</span></button>
                 <button type="button" is="emby-button" class="raised btnRemoveUrl btn-row-remove" title="Remove URL"><i class="md-icon">remove_circle_outline</i></button>
@@ -748,10 +748,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // an endless read. The notes under Max say what that limit is. The limits are read from the
     // Settings fields, so a change there shows before Save: 0 = the whole list, empty = 1000.
     var LIST_CAP_NAMES = { Trakt: 'Trakt', Mdblist: 'MDBList', Tmdb: 'TMDb' };
+    // Each provider's default (ListFetcher.Default*Max): Trakt and MDBList read the whole list,
+    // TMDb (a request per title) and the AI stop at 1000.
+    var LIST_CAP_DEFAULTS = { Trakt: 0, Mdblist: 0, Tmdb: 1000, Ai: 1000 };
     function listCap(p) {
         var v = activeView();
         var n = parseInt((((v && v.querySelector('#num' + p + 'MaxItems')) || {}).value || '').trim(), 10);
-        return n >= 0 ? n : 1000;
+        return n >= 0 ? n : LIST_CAP_DEFAULTS[p];
     }
     // Which limit a URL falls under: the same test as the server (ListFetcher.CapForUrl).
     function urlCapProvider(url) {
@@ -779,18 +782,17 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         root.querySelectorAll('.url-row').forEach(function (uRow) {
             var el = uRow.querySelector('.url-limit-note');
             if (!el) return;
-            // A short "≤ 1,000" under the Max box, the whole sentence as its tooltip; in the warning
-            // colour when Max is above the limit (only the limit is read).
+            // "⚠ Reads max 1,000" under the Max box whenever a limit applies (Max 0 or above the
+            // limit), with the same (i) as the filter operators; hovering it shows the whole sentence.
             var max = parseInt(uRow.querySelector('.txtUrlLimit').value, 10) || 0;
             var note = urlLimitNote(uRow.querySelector('.txtTagUrl').value, max);
-            var over = note && max > 0;
-            el.innerHTML = note ? '≤ ' + listCap(urlCapProvider(uRow.querySelector('.txtTagUrl').value)).toLocaleString('en-US')
-                + ' <i class="md-icon" style="font-size:1.1em; vertical-align:-3px;">' + (over ? 'warning' : 'info') + '</i>' : '';
-            el.title = note;
-            el.style.color = over ? 'var(--hsc-warning-text)' : '';
-            el.style.opacity = over ? '1' : '0.6';
+            el.innerHTML = note
+                ? '<span class="mi-op-info url-limit-info"><i class="md-icon">warning</i>Reads max '
+                    + listCap(urlCapProvider(uRow.querySelector('.txtTagUrl').value)).toLocaleString('en-US')
+                    + '<span class="mi-op-info-icon">i</span><span class="mi-op-tooltip mi-op-tooltip-wide url-limit-tip">' + escapeHtml(note) + '</span></span>'
+                : '';
             el.style.display = note ? 'block' : 'none';
-            uRow.style.paddingBottom = note ? '10px' : '';
+            uRow.style.paddingBottom = note ? '14px' : '';
         });
         root.querySelectorAll('.ai-limit-note').forEach(function (el) {
             var inp = el.parentElement.querySelector('.txtAiLimit');
@@ -2608,7 +2610,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }).join('');
     }
 
-    function getMiValueHtml(prop, savedOp, savedVal, savedUserId) {
+    function getMiValueHtml(prop, savedOp, savedVal, savedUserId, savedDateMode) {
         var userHtml = '';
         if (MI_USER_PROPS.indexOf(prop) >= 0) {
             var specialOpts =
@@ -2672,6 +2674,38 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 return '<option value="' + pair[0] + '"' + (pair[0] === savedVal ? ' selected' : '') + '>' + pair[1] + '</option>';
             }).join('');
             return userHtml + '<select class="selMiValue" is="emby-select" style="flex:1;">' + opts + '</select>';
+        }
+        // Date added / modified: "Days ago" (a number, the default) or "Date" (a calendar day, stored
+        // as yyyy-MM-dd). The mode follows the saved value. The operators read the other way round
+        // in the two modes (<= 30 days ago is newer, <= a date is older), so each has its own tooltip
+        // and default operator.
+        if (prop === 'DateAdded' || prop === 'DateModified') {
+            var dateMode = savedDateMode || (/^\d{4}-\d{2}-\d{2}$/.test(savedVal || '') ? 'date' : 'days');
+            var dateInputValue = dateMode === 'date'
+                ? (/^\d{4}-\d{2}-\d{2}$/.test(savedVal || '') ? savedVal : '')
+                : (/^-?\d+(?:\.\d+)?$/.test(savedVal || '') ? savedVal : '');
+            var dateOps = ['=', '>', '>=', '<', '<='];
+            var dateOp = savedOp || (dateMode === 'date' ? '>=' : '<=');
+            var dateOpOpts = dateOps.map(function (o) {
+                return '<option value="' + o + '"' + (o === dateOp ? ' selected' : '') + '>' + o + '</option>';
+            }).join('');
+            var dateOpWords = dateMode === 'date'
+                ? ['On that day', 'After', 'On or after', 'Before', 'On or before']
+                : ['Exactly that many days ago', 'Longer ago', 'That many days ago or longer', 'More recently', 'Within that many days'];
+            var dateTooltip = '<div class="mi-op-info"><div class="mi-op-info-icon">i</div><div class="mi-op-tooltip"><table>' +
+                dateOps.map(function (o, i) { return '<tr><td>' + o.replace('>', '&gt;').replace('<', '&lt;') + '</td><td>' + dateOpWords[i] + '</td></tr>'; }).join('') +
+                '</table></div></div>';
+            return userHtml +
+                '<select class="selMiDateMode" is="emby-select" aria-label="Date filter mode" style="flex:0 0 105px;">' +
+                '<option value="days"' + (dateMode === 'days' ? ' selected' : '') + '>Days ago</option>' +
+                '<option value="date"' + (dateMode === 'date' ? ' selected' : '') + '>Date</option>' +
+                '</select>' +
+                '<select class="selMiOp" is="emby-select" style="flex:0 0 64px;">' + dateOpOpts + '</select>' +
+                dateTooltip +
+                '<input class="txtMiNum" is="emby-input" type="' + (dateMode === 'date' ? 'date' : 'number') + '"' +
+                (dateMode === 'days' ? ' step="0.01"' : '') +
+                ' value="' + dateInputValue + '" style="flex:1;" />' +
+                (dateMode === 'days' ? unitLabel : '');
         }
         if (MI_NUMERIC_PROPS.indexOf(prop) >= 0) {
             var ops = ['=', '>', '>=', '<', '<='];
@@ -4289,6 +4323,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 miRule.querySelector('.mi-value-wrapper').innerHTML = getMiValueHtml(e.target.value, '', '');
                 var existingHint = miRule.querySelector('.mi-rule-hint');
                 if (existingHint) existingHint.outerHTML = getMiHintHtml(e.target.value);
+            }
+            // A new mode starts empty with its own default operator: the old value and operator mean
+            // something else in the other mode.
+            if (e.target.classList.contains('selMiDateMode')) {
+                var dateMiRule = e.target.closest('.mi-rule');
+                dateMiRule.querySelector('.mi-value-wrapper').innerHTML = getMiValueHtml(
+                    dateMiRule.querySelector('.selMiProperty').value, '', '', '', e.target.value);
             }
             if (e.target.classList.contains('selMiValue')) {
                 var _miRule = e.target.closest('.mi-rule');
@@ -6471,20 +6512,20 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var v = (view.querySelector(id) || {}).value || '';
             return forComparison ? v : (v.trim() ? v : def);
         }
-        // A list cap in Settings: 0 = no limit; an empty or invalid field is the default, 1000.
-        function listCapField(v, id) {
-            var n = parseInt(((v.querySelector(id) || {}).value || '').trim(), 10);
-            return n >= 0 ? n : 1000;
+        // A list cap in Settings: 0 = no limit; an empty or invalid field is the provider's default.
+        function listCapField(v, p) {
+            var n = parseInt(((v.querySelector('#num' + p + 'MaxItems') || {}).value || '').trim(), 10);
+            return n >= 0 ? n : LIST_CAP_DEFAULTS[p];
         }
 
         return {
             TraktClientId: view.querySelector('#txtTraktClientId').value,
             MdblistApiKey: view.querySelector('#txtMdblistApiKey').value,
             TmdbApiKey: view.querySelector('#txtTmdbApiKey').value,
-            TraktMaxItems: listCapField(view, '#numTraktMaxItems'),
-            MdblistMaxItems: listCapField(view, '#numMdblistMaxItems'),
-            TmdbMaxItems: listCapField(view, '#numTmdbMaxItems'),
-            AiMaxItems: listCapField(view, '#numAiMaxItems'),
+            TraktMaxItems: listCapField(view, 'Trakt'),
+            MdblistMaxItems: listCapField(view, 'Mdblist'),
+            TmdbMaxItems: listCapField(view, 'Tmdb'),
+            AiMaxItems: listCapField(view, 'Ai'),
             OpenAiApiKey: (view.querySelector('#txtOpenAiApiKey') || {}).value || '',
             OpenAiModel: fieldOr('#txtOpenAiModel', 'gpt-4o-mini'),
             GeminiApiKey: (view.querySelector('#txtGeminiApiKey') || {}).value || '',
@@ -14133,7 +14174,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var omElInit = view.querySelector('#txtOllamaModel'); if (omElInit) omElInit.value = config.OllamaModel || '';
                 ['Trakt', 'Mdblist', 'Tmdb', 'Ai'].forEach(function (p) {
                     var capEl = view.querySelector('#num' + p + 'MaxItems');
-                    if (capEl) capEl.value = config[p + 'MaxItems'] >= 0 ? config[p + 'MaxItems'] : 1000;
+                    if (capEl) capEl.value = config[p + 'MaxItems'] >= 0 ? config[p + 'MaxItems'] : LIST_CAP_DEFAULTS[p];
                 });
                 refreshLimitNotes(view);
                 if (!view._hscCapNotes) {

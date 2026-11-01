@@ -25,21 +25,23 @@ namespace HomeScreenCompanion
             _jsonSerializer = jsonSerializer;
         }
 
-        // At most this many list entries are read from a list, unless Settings set another number
-        // for its provider (TraktMaxItems, MdblistMaxItems, TmdbMaxItems; AiMaxItems for the AI).
+        // How many list entries are read from a list, per provider (Settings: TraktMaxItems,
+        // MdblistMaxItems, TmdbMaxItems; AiMaxItems for the AI). Trakt and MDBList send a whole list
+        // in one or a few requests, so they read it all by default; TMDb needs a request per title,
+        // so it and the AI stop at 1000 unless Settings say otherwise.
         internal const int DefaultMaxScan = 1000;
+        internal const int DefaultTraktMax = 0, DefaultMdblistMax = 0, DefaultTmdbMax = DefaultMaxScan, DefaultAiMax = DefaultMaxScan;
 
-        // The cap Settings give a provider: 0 = no cap (the whole list), below 0 = the default.
+        // The cap Settings give a provider: 0 = no cap (the whole list), below 0 = its default.
         // A config saved before the setting gets the default from PluginConfiguration.
         internal const int NoCap = int.MaxValue;
-        internal static int Cap(int configured) => configured > 0 ? configured : configured == 0 ? NoCap : DefaultMaxScan;
+        internal static int Cap(int configured, int fallback) => configured > 0 ? configured : configured == 0 ? NoCap : Cap(fallback, 0);
 
         internal static int CapForUrl(string url, PluginConfiguration? config)
         {
-            if (config == null) return DefaultMaxScan;
-            if (url.Contains("mdblist.com")) return Cap(config.MdblistMaxItems);
-            if (url.Contains("themoviedb.org")) return Cap(config.TmdbMaxItems);
-            return Cap(config.TraktMaxItems);
+            if (url.Contains("mdblist.com")) return Cap(config?.MdblistMaxItems ?? DefaultMdblistMax, DefaultMdblistMax);
+            if (url.Contains("themoviedb.org")) return Cap(config?.TmdbMaxItems ?? DefaultTmdbMax, DefaultTmdbMax);
+            return Cap(config?.TraktMaxItems ?? DefaultTraktMax, DefaultTraktMax);
         }
 
         /// <summary>Why the last fetch returned nothing (e.g. "HTTP 403 Forbidden"); null when it did not fail.</summary>
