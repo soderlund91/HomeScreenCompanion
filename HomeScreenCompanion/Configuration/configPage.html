@@ -1199,6 +1199,25 @@
             color: var(--plugin-popup-color, #e8e8e8) !important;
         }
 
+        /* The list limit under a URL's Max box (refreshLimitNotes): warning text + (i), tooltip above it. */
+        .url-limit-info {
+            gap: 4px;
+            cursor: help;
+            white-space: nowrap;
+            font-size: 0.85em;
+            font-weight: 600;
+            color: var(--hsc-warning-text);
+        }
+        .url-limit-info .md-icon { font-size: 1.15em; }
+        .url-limit-info .mi-op-info-icon { margin-left: 2px; font-weight: bold; }
+        .url-limit-info .mi-op-tooltip.url-limit-tip {
+            left: auto;
+            right: -40px;
+            transform: none;
+            width: 300px;
+            font-weight: normal;
+        }
+
         .mi-op-tooltip.mi-op-tooltip-wide p {
             margin: 0 0 6px 0;
         }
@@ -1622,8 +1641,8 @@
                                 </div>
                                 <div class="inputContainer" style="margin-top: 12px;">
                                     <label class="selectLabel" for="numTraktMaxItems">Max entries per list</label>
-                                    <input is="emby-input" type="number" min="0" step="1" id="numTraktMaxItems" placeholder="1000" />
-                                    <div class="fieldDescription">At most this many entries are read from one Trakt list, however high a source's Max is. Default 1,000; 0 = no limit (the whole list).</div>
+                                    <input is="emby-input" type="number" min="0" step="1" id="numTraktMaxItems" placeholder="0" />
+                                    <div class="fieldDescription">At most this many entries are read from one Trakt list, however high a source's Max is. Default 0 = no limit (the whole list).</div>
                                 </div>
                             </div>
                         </div>
@@ -1647,8 +1666,8 @@
                                 </div>
                                 <div class="inputContainer" style="margin-top: 12px;">
                                     <label class="selectLabel" for="numMdblistMaxItems">Max entries per list</label>
-                                    <input is="emby-input" type="number" min="0" step="1" id="numMdblistMaxItems" placeholder="1000" />
-                                    <div class="fieldDescription">At most this many entries are read from one MDBList list, however high a source's Max is. Default 1,000; 0 = no limit (the whole list). MDBList is read 1000 entries per request.</div>
+                                    <input is="emby-input" type="number" min="0" step="1" id="numMdblistMaxItems" placeholder="0" />
+                                    <div class="fieldDescription">At most this many entries are read from one MDBList list, however high a source's Max is. Default 0 = no limit (the whole list). MDBList is read 1000 entries per request.</div>
                                 </div>
                             </div>
                         </div>
@@ -2378,7 +2397,7 @@
                     <div><strong>External</strong> — paste a list URL from <strong>Trakt</strong>, <strong>MDBList</strong> or <strong>TMDb</strong>. The plugin downloads the list and tags every matching title it finds in your library.
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li><strong>Several URLs</strong> — <em>Add another URL</em> adds more lists to the same source; their titles are combined under the one tag, collection and playlist. Links next to <em>Source URLs</em> open each site's list pages, to find lists.</li>
-                            <li><strong>Max (0=limit)</strong> — each URL has its own limit. It counts titles <strong>found in your library</strong> (not blacklisted and passing the source's filters), from the top of the list: <em>Max 10</em> on a top-100 list gives the 10 highest-ranked titles you have, even if titles 1–3 are missing. With 0 (or a Max above it) a list is read up to its provider's limit: 1,000 entries unless you change it in Settings → External list settings, where 0 means the whole list.</li>
+                            <li><strong>Max (0=All)</strong> — each URL has its own limit. It counts titles <strong>found in your library</strong> (not blacklisted and passing the source's filters), from the top of the list: <em>Max 10</em> on a top-100 list gives the 10 highest-ranked titles you have, even if titles 1–3 are missing. With 0 (or a Max above it) a list is read up to its provider's limit in Settings → External list settings: the whole list for Trakt and MDBList, 1,000 entries for TMDb, unless you change it there (0 means the whole list).</li>
                             <li><strong>Matching</strong> — titles are matched by their <strong>IMDb id</strong>, so your library items need IMDb ids (Emby's metadata usually adds them). A title on the list without an IMDb id is skipped. TMDb entries are looked up to find their IMDb id.</li>
                             <li><strong>Trakt</strong> — needs a <strong>Trakt Client ID</strong> in the Settings tab. Public user lists work, and so do Trakt's own lists that its API offers, such as <code>trakt.tv/movies/trending</code> or <code>/shows/popular</code>.</li>
                             <li><strong>MDBList</strong> — public lists work without a key; private lists need the <strong>MDBList API Key</strong>. MDBList's official lists (<code>/lists/official/…</code>) are always read without the key.</li>
