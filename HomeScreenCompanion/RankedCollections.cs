@@ -296,7 +296,7 @@ namespace HomeScreenCompanion
             GrantRestrictedUsers(lib, movies, libraryManager, userManager, log);
             // Every sync (not only on creation), so turning "Hide HSC libraries" on or off reaches
             // ranked libraries without a top-list sync (that one stops early when there are no top-lists).
-            var visChanged = TopListLibraryVisibility.Apply(config, userManager, libraryManager, m => log.Warn(m));
+            var visChanged = TopListLibraryVisibility.Apply(config, userManager, libraryManager, m => log.Warn(m), m => log.Info("    " + m));
             if (visChanged > 0)
                 log.Info($"    HSC libraries {(config.HideTopListLibraries ? "hidden from" : "shown again in")} My Media and Latest for {RunLog.Plural(visChanged, "user")}");
 

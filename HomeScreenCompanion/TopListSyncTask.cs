@@ -348,6 +348,8 @@ namespace HomeScreenCompanion
             var allTlLibIds = topLists
                 .Where(t => !string.IsNullOrEmpty(t.HomeSectionLibraryId) && t.HomeSectionLibraryId != "auto")
                 .Select(t => t.HomeSectionLibraryId.Trim().ToLowerInvariant())
+                // Ranked-collection libraries too: TopListLibraryVisibility.Apply puts them in every row.
+                .Concat(RankedCollections.LibraryIds(libraryManager).Select(id => id.Trim().ToLowerInvariant()))
                 .Distinct().ToList();
 
             foreach (var tl in topLists)
@@ -558,6 +560,8 @@ namespace HomeScreenCompanion
 
             if (allTopListLibIds.Count > 0)
             {
+                var rankedLibIds = RankedCollections.LibraryIds(libraryManager);
+                var allLibIds = TopListLibraryVisibility.AllLibraryIds(libraryManager);
                 foreach (var tc in config.Tags ?? new List<TagConfig>())
                 {
                     if (!SourceTopLists.PlainRow(tc)) continue;
@@ -608,6 +612,10 @@ namespace HomeScreenCompanion
                     }
 
 
+                    // Never saved: only the rows get the ranked-collection libraries.
+                    var rowSettings = new Dictionary<string, string>(tcSettings, StringComparer.OrdinalIgnoreCase);
+                    TopListLibraryVisibility.AddRankedExclusions(rowSettings, tc.HomeSectionLibraryId, rankedLibIds, allLibIds, jsonSerializer);
+
                     var realTracked = (tc.HomeSectionTracked ?? new List<HomeSectionTracking>())
                         .Where(t => !string.IsNullOrEmpty(t.SectionId) && !t.SectionId.StartsWith("hsc__"))
                         .ToList();
@@ -620,7 +628,7 @@ namespace HomeScreenCompanion
                             var secs = userManager.GetHomeSections(uid, cancellationToken)?.Sections ?? Array.Empty<ContentSection>();
                             var owned = secs.FirstOrDefault(s => s.Id == tracking.SectionId);
                             if (owned == null) continue;
-                            var updatedSec = HomeScreenCompanionTask.BuildContentSection(jsonSerializer, tcSettings, string.Empty, owned);
+                            var updatedSec = HomeScreenCompanionTask.BuildContentSection(jsonSerializer, rowSettings, string.Empty, owned);
                             typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSec, owned.Id);
                             userManager.UpdateHomeSection(uid, updatedSec, cancellationToken);
                             totalUpdated++;
@@ -663,7 +671,7 @@ namespace HomeScreenCompanion
                 var libGuid = ResolveLibraryGuid(tl.HomeSectionLibraryId.Trim(), libraryManager);
                 if (!string.IsNullOrEmpty(libGuid)) SetLatestExclusion(userManager, libGuid!, true, logger);
             }
-            return TopListLibraryVisibility.Apply(config, userManager, libraryManager, warn);
+            return TopListLibraryVisibility.Apply(config, userManager, libraryManager, warn, m => logger.Info(m));
         }
 
         internal static void GrantTopListLibraryAccess(List<TopListHomeSection> topLists, IUserManager userManager, ILibraryManager libraryManager, PluginLogger logger)

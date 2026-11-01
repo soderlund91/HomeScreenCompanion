@@ -1620,6 +1620,11 @@
                                         Create app at <a href="https://trakt.tv/oauth/applications" target="_blank" class="help-link">Trakt.tv</a>.
                                     </div>
                                 </div>
+                                <div class="inputContainer" style="margin-top: 12px;">
+                                    <label class="selectLabel" for="numTraktMaxItems">Max entries per list</label>
+                                    <input is="emby-input" type="number" min="0" step="1" id="numTraktMaxItems" placeholder="1000" />
+                                    <div class="fieldDescription">At most this many entries are read from one Trakt list, however high a source's Max is. Default 1,000; 0 = no limit (the whole list).</div>
+                                </div>
                             </div>
                         </div>
 
@@ -1640,6 +1645,11 @@
                                         Get key at <a href="https://mdblist.com/preferences/" target="_blank" class="help-link">MDBList Preferences</a>.
                                     </div>
                                 </div>
+                                <div class="inputContainer" style="margin-top: 12px;">
+                                    <label class="selectLabel" for="numMdblistMaxItems">Max entries per list</label>
+                                    <input is="emby-input" type="number" min="0" step="1" id="numMdblistMaxItems" placeholder="1000" />
+                                    <div class="fieldDescription">At most this many entries are read from one MDBList list, however high a source's Max is. Default 1,000; 0 = no limit (the whole list). MDBList is read 1000 entries per request.</div>
+                                </div>
                             </div>
                         </div>
 
@@ -1659,6 +1669,11 @@
                                     <div class="fieldDescription">
                                         Required for TMDb lists. Get key at <a href="https://www.themoviedb.org/settings/api" target="_blank" class="help-link">TMDb Settings</a>.
                                     </div>
+                                </div>
+                                <div class="inputContainer" style="margin-top: 12px;">
+                                    <label class="selectLabel" for="numTmdbMaxItems">Max entries per list</label>
+                                    <input is="emby-input" type="number" min="0" step="1" id="numTmdbMaxItems" placeholder="1000" />
+                                    <div class="fieldDescription">At most this many entries are read from one TMDb list, however high a source's Max is. Default 1,000; 0 = no limit (the whole list). TMDb is read 20 entries per request, plus one request per title, so a high number makes a sync slow.</div>
                                 </div>
                             </div>
                         </div>
@@ -1802,13 +1817,31 @@
                             </div>
                         </div>
 
+                        <div class="hsc-eyebrow" style="margin-top: 18px; margin-bottom: 8px;">Limits</div>
+
+                        <!-- Max titles asked of the AI -->
+                        <div class="advanced-section settings-panel" style="margin-bottom: 8px;">
+                            <div class="advanced-header settings-panel-toggle" style="padding: 10px 14px;">
+                                <i class="md-icon" style="margin-right: 8px; font-size: 1.1em; opacity: 0.65;">format_list_numbered</i>
+                                <span style="font-size: 0.95em; font-weight: 600;">Max titles per AI list</span>
+                                <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s; font-size: 1.1em; opacity: 0.65;">expand_more</i>
+                            </div>
+                            <div class="settings-panel-body" style="display:none; padding: 0 14px 14px;">
+                                <div class="inputContainer">
+                                    <input is="emby-input" type="number" min="0" step="1" id="numAiMaxItems" label="Max titles" placeholder="1000" />
+                                    <div class="fieldDescription">The AI is never asked for more titles than this, however high a source's Max is; with Max 0 it is asked for exactly this many. Default 1,000; 0 = no limit. Models often return fewer than they are asked for.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="hsc-adv" data-adv="group">
                         <div class="hsc-eyebrow" style="margin-top: 18px; margin-bottom: 8px;">Advanced AI Settings</div>
 
                         <!-- Edit system prompt -->
-                        <div class="advanced-section settings-panel" style="margin-bottom: 8px;">
+                        <div class="advanced-section settings-panel hsc-adv" data-adv="sysprompt" style="margin-bottom: 8px;">
                             <div class="advanced-header settings-panel-toggle" style="padding: 10px 14px;">
                                 <i class="md-icon" style="margin-right: 8px; font-size: 1.1em; opacity: 0.65;">tune</i>
-                                <span style="font-size: 0.95em; font-weight: 600;">Edit system prompt</span>
+                                <span style="font-size: 0.95em; font-weight: 600;">Edit system prompt<span class="hsc-adv-badge">Advanced</span></span>
                                 <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s; font-size: 1.1em; opacity: 0.65;">expand_more</i>
                             </div>
                             <div class="settings-panel-body" style="display:none; padding: 0 14px 14px;">
@@ -1824,6 +1857,7 @@
                                     </button>
                                 </div>
                             </div>
+                        </div>
                         </div>
 
                     </div>
@@ -2344,7 +2378,7 @@
                     <div><strong>External</strong> — paste a list URL from <strong>Trakt</strong>, <strong>MDBList</strong> or <strong>TMDb</strong>. The plugin downloads the list and tags every matching title it finds in your library.
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li><strong>Several URLs</strong> — <em>Add another URL</em> adds more lists to the same source; their titles are combined under the one tag, collection and playlist. Links next to <em>Source URLs</em> open each site's list pages, to find lists.</li>
-                            <li><strong>Max (0=All)</strong> — each URL has its own limit. It counts titles <strong>found in your library</strong> (not blacklisted and passing the source's filters), from the top of the list: <em>Max 10</em> on a top-100 list gives the 10 highest-ranked titles you have, even if titles 1–3 are missing. Up to 1,000 entries are read per URL.</li>
+                            <li><strong>Max (0=limit)</strong> — each URL has its own limit. It counts titles <strong>found in your library</strong> (not blacklisted and passing the source's filters), from the top of the list: <em>Max 10</em> on a top-100 list gives the 10 highest-ranked titles you have, even if titles 1–3 are missing. With 0 (or a Max above it) a list is read up to its provider's limit: 1,000 entries unless you change it in Settings → External list settings, where 0 means the whole list.</li>
                             <li><strong>Matching</strong> — titles are matched by their <strong>IMDb id</strong>, so your library items need IMDb ids (Emby's metadata usually adds them). A title on the list without an IMDb id is skipped. TMDb entries are looked up to find their IMDb id.</li>
                             <li><strong>Trakt</strong> — needs a <strong>Trakt Client ID</strong> in the Settings tab. Public user lists work, and so do Trakt's own lists that its API offers, such as <code>trakt.tv/movies/trending</code> or <code>/shows/popular</code>.</li>
                             <li><strong>MDBList</strong> — public lists work without a key; private lists need the <strong>MDBList API Key</strong>. MDBList's official lists (<code>/lists/official/…</code>) are always read without the key.</li>
@@ -2671,7 +2705,7 @@
                     <div><strong>Keep the list order — movies only (experimental)</strong> — shown when <em>Ranked collections</em> is switched on under <em>Advanced Settings</em> in the Settings tab (and saved). The collection then opens in the order of the list instead of Emby's own order.
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li>For each movie HSC makes a hidden copy that carries its rank, linked to the real film as a version (so it appears once in search and shares its watched status).</li>
-                            <li>The copies sit in a hidden library "&lt;collection&gt; (ranked)" that is hidden from My Media and Latest like the top-list libraries (setting <em>Hide HSC libraries</em>).</li>
+                            <li>The copies sit in a hidden library "&lt;collection&gt; (ranked)" that is hidden from My Media and Latest like the top-list libraries (setting <em>Hide HSC libraries</em>). It is also always added to the excluded libraries of every user's other home rows (Continue Watching, library rows and so on, also rows made before it), so the copies never show twice; collection and playlist rows are left as they are.</li>
                             <li>When the list order changes, only the ranks of the copies change: a copy is added only for a new film and removed only when its film leaves the list, so nothing is rebuilt on a reorder.</li>
                             <li>Only movies are ranked: shows in the list keep their normal place after the ranked movies.</li>
                             <li>Untick it (or switch the feature off) and the next sync puts the real films back and removes the copies and their library. This is experimental.</li>
@@ -2990,7 +3024,7 @@
                 </div>
                 <div id="help-hide-libs" class="help-feature-row">
                     <i class="md-icon help-feat-icon">visibility_off</i>
-                    <div><strong>Hide HSC libraries</strong> <span style="opacity:0.6;">(Features)</span> — On by default. Keeps the libraries HSC creates — those of top-lists and of ranked collections — out of every user's sidebar, "My Media" tiles and "Latest" rows; only their top-list rows and collections show them. TV show top-list libraries are always kept out of Latest, Continue Watching and Next Up, whatever this setting is.</div>
+                    <div><strong>Hide HSC libraries</strong> <span style="opacity:0.6;">(Features)</span> — On by default. Keeps the libraries HSC creates — those of top-lists and of ranked collections — out of every user's sidebar, "My Media" tiles and "Latest" rows; only their top-list rows and collections show them. TV show top-list libraries are always kept out of Latest, Continue Watching and Next Up, and ranked-collection libraries out of every other home row, whatever this setting is.</div>
                 </div>
 
                 <div id="help-sec-8b" class="hsc-eyebrow" style="margin:18px 0 8px;">Advanced Settings</div>

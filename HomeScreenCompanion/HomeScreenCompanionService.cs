@@ -752,6 +752,11 @@ namespace HomeScreenCompanion
         public bool? ShowAdvancedBadges { get; set; }
         // Null in backups made before it was backed up: the current setting is kept.
         public bool? HideTopListLibraries { get; set; }
+        // Null in backups made before the per-provider caps: the current caps are kept.
+        public int? TraktMaxItems { get; set; }
+        public int? MdblistMaxItems { get; set; }
+        public int? TmdbMaxItems { get; set; }
+        public int? AiMaxItems { get; set; }
     }
 
     public class BackupApiKeys
@@ -2086,6 +2091,7 @@ public class HomeScreenCompanionService : IService
                 int updated = 0;
                 var topListLibraries = TopListSyncTask.TopListLibraryIds(config, _libraryManager);
                 var userStatus = UserStatus.Read(_userManager);
+                var rowSettings = TopListLibraryVisibility.WithRankedExclusions(settingsDict, tc.HomeSectionLibraryId, _libraryManager, _jsonSerializer);
                 foreach (var userId in (tc.HomeSectionUserIds ?? new System.Collections.Generic.List<string>()))
                 {
                     var tracking = realTracked.FirstOrDefault(t => t.UserId == userId);
@@ -2108,7 +2114,7 @@ public class HomeScreenCompanionService : IService
 
                         if (ownedSection == null) continue;
 
-                        var updatedSection = HomeScreenCompanionTask.BuildContentSection(_jsonSerializer, settingsDict, resolvedLibraryId, ownedSection);
+                        var updatedSection = HomeScreenCompanionTask.BuildContentSection(_jsonSerializer, rowSettings, resolvedLibraryId, ownedSection);
                         typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSection, ownedSection.Id);
                         _userManager.UpdateHomeSection(userInternalId, updatedSection, CancellationToken.None);
                         updated++;
@@ -3801,7 +3807,7 @@ public class HomeScreenCompanionService : IService
                         string trackId;
                         if (ownedSection != null)
                         {
-                            var updatedSection = HomeScreenCompanionTask.BuildContentSection(_jsonSerializer, settingsDict, resolvedLibraryId, ownedSection);
+                            var updatedSection = HomeScreenCompanionTask.BuildContentSection(_jsonSerializer, TopListLibraryVisibility.WithRankedExclusions(settingsDict, resolvedLibraryId, _libraryManager, _jsonSerializer), resolvedLibraryId, ownedSection);
                             typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSection, ownedSection.Id);
                             _userManager.UpdateHomeSection(userInternalId, updatedSection, CancellationToken.None);
                             trackId = ownedSection.Id ?? sectionMarker;
@@ -3812,7 +3818,7 @@ public class HomeScreenCompanionService : IService
                             var beforeIds = new HashSet<string>(
                                 allSections.Where(s => !string.IsNullOrEmpty(s.Id)).Select(s => s.Id));
                             _userManager.AddHomeSection(userInternalId,
-                                HomeScreenCompanionTask.BuildContentSection(_jsonSerializer, settingsDict, resolvedLibraryId),
+                                HomeScreenCompanionTask.BuildContentSection(_jsonSerializer, TopListLibraryVisibility.WithRankedExclusions(settingsDict, resolvedLibraryId, _libraryManager, _jsonSerializer), resolvedLibraryId),
                                 CancellationToken.None);
                             var afterSections = _userManager.GetHomeSections(userInternalId, CancellationToken.None);
                             var newId = (afterSections?.Sections ?? Array.Empty<ContentSection>())
@@ -3904,7 +3910,7 @@ public class HomeScreenCompanionService : IService
                                 var owned = secs.FirstOrDefault(s => s.Id == tracking.SectionId)
                                     ?? secs.FirstOrDefault(s => s.Subtitle == tcMarker);
                                 if (owned == null) continue;
-                                var updatedSec = HomeScreenCompanionTask.BuildContentSection(_jsonSerializer, tcSettings, null, owned);
+                                var updatedSec = HomeScreenCompanionTask.BuildContentSection(_jsonSerializer, TopListLibraryVisibility.WithRankedExclusions(tcSettings, tc.HomeSectionLibraryId, _libraryManager, _jsonSerializer), null, owned);
                                 typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSec, owned.Id);
                                 _userManager.UpdateHomeSection(uid, updatedSec, CancellationToken.None);
                             }
@@ -3957,7 +3963,7 @@ public class HomeScreenCompanionService : IService
                                 var owned = secs.FirstOrDefault(s => s.Id == tracking.SectionId)
                                     ?? secs.FirstOrDefault(s => s.Subtitle == otherMarker);
                                 if (owned == null) continue;
-                                var updatedSec = HomeScreenCompanionTask.BuildContentSection(_jsonSerializer, otherSettings, otherTl.HomeSectionLibraryId, owned);
+                                var updatedSec = HomeScreenCompanionTask.BuildContentSection(_jsonSerializer, TopListLibraryVisibility.WithRankedExclusions(otherSettings, otherTl.HomeSectionLibraryId, _libraryManager, _jsonSerializer), otherTl.HomeSectionLibraryId, owned);
                                 typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSec, owned.Id);
                                 _userManager.UpdateHomeSection(uid, updatedSec, CancellationToken.None);
                             }
@@ -4058,7 +4064,11 @@ public class HomeScreenCompanionService : IService
                     MissingExportCsv          = config.MissingExportCsv,
                     SettingsLevel             = config.SettingsLevel ?? "",
                     ShowAdvancedBadges        = config.ShowAdvancedBadges,
-                    HideTopListLibraries      = config.HideTopListLibraries
+                    HideTopListLibraries      = config.HideTopListLibraries,
+                    TraktMaxItems             = config.TraktMaxItems,
+                    MdblistMaxItems           = config.MdblistMaxItems,
+                    TmdbMaxItems              = config.TmdbMaxItems,
+                    AiMaxItems                = config.AiMaxItems
                 };
                 file.Sections.Add("Settings");
             }
@@ -4205,6 +4215,10 @@ public class HomeScreenCompanionService : IService
                     if (s.SettingsLevel != null) config.SettingsLevel = s.SettingsLevel;
                     if (s.ShowAdvancedBadges != null) config.ShowAdvancedBadges = s.ShowAdvancedBadges.Value;
                     if (s.HideTopListLibraries != null) config.HideTopListLibraries = s.HideTopListLibraries.Value;
+                    if (s.TraktMaxItems != null) config.TraktMaxItems = s.TraktMaxItems.Value;
+                    if (s.MdblistMaxItems != null) config.MdblistMaxItems = s.MdblistMaxItems.Value;
+                    if (s.TmdbMaxItems != null) config.TmdbMaxItems = s.TmdbMaxItems.Value;
+                    if (s.AiMaxItems != null) config.AiMaxItems = s.AiMaxItems.Value;
                     if (s.ShowMissingTitles != null) config.ShowMissingTitles = s.ShowMissingTitles.Value;
                     if (s.MissingIncludeGaps != null) config.MissingIncludeGaps = s.MissingIncludeGaps.Value;
                     if (s.MissingExportToFile != null) config.MissingExportToFile = s.MissingExportToFile.Value;

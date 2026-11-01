@@ -708,8 +708,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 <div style="flex-grow:1;">
                     <input is="emby-input" class="txtTagUrl" type="text" label="Trakt/MDBList/TMDb URL" value="${val}" />
                 </div>
-                <div style="width:110px;">
-                    <input is="emby-input" class="txtUrlLimit" type="number" label="Max (0=All)" value="${lim}" min="0" />
+                <div style="width:110px; position:relative;">
+                    <input is="emby-input" class="txtUrlLimit" type="number" label="Max (0=limit)" value="${lim}" min="0" />
+                    <div class="url-limit-note" style="display:none; position:absolute; left:2px; top:100%; margin-top:2px; font-size:0.78em; white-space:nowrap; cursor:help;"></div>
                 </div>
                 <button type="button" is="emby-button" class="raised button-submit btnTestUrl hsc-btn-secondary hsc-btn-sm" style="margin-top:12px;" title="Test Source"><span>Test</span></button>
                 <button type="button" is="emby-button" class="raised btnRemoveUrl btn-row-remove" title="Remove URL"><i class="md-icon">remove_circle_outline</i></button>
@@ -742,6 +743,61 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         el.style.display = note ? 'block' : 'none';
     }
 
+    // ---- List limits (Settings: External list settings / AI Settings) ----
+    // A source's Max 0 reads a list only up to its provider's limit, so a forgotten Max never starts
+    // an endless read. The notes under Max say what that limit is. The limits are read from the
+    // Settings fields, so a change there shows before Save: 0 = the whole list, empty = 1000.
+    var LIST_CAP_NAMES = { Trakt: 'Trakt', Mdblist: 'MDBList', Tmdb: 'TMDb' };
+    function listCap(p) {
+        var v = activeView();
+        var n = parseInt((((v && v.querySelector('#num' + p + 'MaxItems')) || {}).value || '').trim(), 10);
+        return n >= 0 ? n : 1000;
+    }
+    // Which limit a URL falls under: the same test as the server (ListFetcher.CapForUrl).
+    function urlCapProvider(url) {
+        url = (url || '').trim();
+        if (!url) return '';
+        return url.indexOf('mdblist.com') >= 0 ? 'Mdblist' : url.indexOf('themoviedb.org') >= 0 ? 'Tmdb' : 'Trakt';
+    }
+    function urlLimitNote(url, max) {
+        var p = urlCapProvider(url), cap = p ? listCap(p) : 0;
+        if (!cap || (max > 0 && max <= cap)) return '';
+        var n = cap.toLocaleString('en-US'), where = 'the ' + LIST_CAP_NAMES[p] + ' limit in Settings → External list settings';
+        return max > 0
+            ? 'Only the first ' + n + ' entries of this list are read (' + where + ').'
+            : '0 reads up to ' + n + ' entries of this list. For the whole list, raise ' + where + '.';
+    }
+    function aiLimitNote(max) {
+        var cap = listCap('Ai');
+        if (!cap) return '0 = no limit. Injected into the prompt automatically.';
+        var n = cap.toLocaleString('en-US');
+        return '0 = up to ' + n + ' titles (the AI limit in Settings → AI Settings)'
+            + (max > cap ? '; never more than ' + n + ' are asked for' : '') + '. Injected into the prompt automatically.';
+    }
+    function refreshLimitNotes(root) {
+        if (!root) return;
+        root.querySelectorAll('.url-row').forEach(function (uRow) {
+            var el = uRow.querySelector('.url-limit-note');
+            if (!el) return;
+            // A short "≤ 1,000" under the Max box, the whole sentence as its tooltip; in the warning
+            // colour when Max is above the limit (only the limit is read).
+            var max = parseInt(uRow.querySelector('.txtUrlLimit').value, 10) || 0;
+            var note = urlLimitNote(uRow.querySelector('.txtTagUrl').value, max);
+            var over = note && max > 0;
+            el.innerHTML = note ? '≤ ' + listCap(urlCapProvider(uRow.querySelector('.txtTagUrl').value)).toLocaleString('en-US')
+                + ' <i class="md-icon" style="font-size:1.1em; vertical-align:-3px;">' + (over ? 'warning' : 'info') + '</i>' : '';
+            el.title = note;
+            el.style.color = over ? 'var(--hsc-warning-text)' : '';
+            el.style.opacity = over ? '1' : '0.6';
+            el.style.display = note ? 'block' : 'none';
+            uRow.style.paddingBottom = note ? '10px' : '';
+        });
+        root.querySelectorAll('.ai-limit-note').forEach(function (el) {
+            var inp = el.parentElement.querySelector('.txtAiLimit');
+            el.textContent = aiLimitNote(parseInt((inp || {}).value, 10) || 0);
+        });
+    }
+
     // ---- Settings level (Basic / Advanced) ----
     // A power-user setting is an .hsc-adv element with an "Advanced" badge. Basic hides the ones
     // at their default; one in use stays visible, so nothing that is in force is ever hidden.
@@ -749,12 +805,25 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     var ADV_BADGE = '<span class="hsc-adv-badge">Advanced</span>';
 
     // Whether an .hsc-adv element is set to something other than its default. data-adv says how to
-    // tell: check (its checkbox ticked), target (other than Series only), tag-art (a generated or
+    // tell: check (its checkbox ticked), number (its number is not data-adv-def), sysprompt (not the
+    // default AI system prompt), group (any .hsc-adv inside it in use), target (other than Series only), tag-art (a generated or
     // uploaded tag image), blacklist (the card's blacklist has ids); otherwise its select's value
     // is not one of data-adv-def ("|"-separated).
     function advInUse(el) {
         var kind = el.getAttribute('data-adv') || '';
         if (kind === 'check') return !!el.querySelector('input[type="checkbox"]:checked');
+        // The AI system prompt: in use when it is not the default (empty = default).
+        if (kind === 'sysprompt') {
+            var sp = ((el.querySelector('textarea') || {}).value || '').trim();
+            return sp !== '' && sp !== DEFAULT_AI_SYSTEM_PROMPT.trim();
+        }
+        // A heading with Advanced settings under it: shown while any of them is.
+        if (kind === 'group') return Array.prototype.some.call(el.querySelectorAll('.hsc-adv'), advInUse);
+        // A number field (a list cap in Settings): in use when it is not its default (empty = default).
+        if (kind === 'number') {
+            var num = el.querySelector('input[type="number"]');
+            return !!num && num.value.trim() !== '' && String(parseInt(num.value, 10)) !== (el.getAttribute('data-adv-def') || '');
+        }
         // The Missing tab's Export panel: in use when it writes a file or adds shows with gaps.
         if (kind === 'export') return !!el.querySelector('#chkMissingExportToFile:checked, #chkMissingIncludeGaps:checked');
         if (kind === 'tag-art') {
@@ -3370,7 +3439,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         <div style="display:flex; align-items:center; gap:12px; margin-top:15px; margin-bottom:15px;">
                             <label style="font-size:0.9em; white-space:nowrap; margin:0;">Max items</label>
                             <input is="emby-input" class="txtAiLimit" type="number" value="${aiLimit}" min="0" style="width:90px;" />
-                            <span style="font-size:0.8em; opacity:0.5;">0 = no limit. Injected into the prompt automatically.</span>
+                            <span class="ai-limit-note" style="font-size:0.8em; opacity:0.5;"></span>
                         </div>
 
                         <div style="display:flex; align-items:center; gap:12px; margin-top:0; margin-bottom:15px;">
@@ -3785,6 +3854,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         updateNextWatchWarning(newRow);
         updatePlaylistDescPlaceholder(newRow);
         refreshAdvanced(newRow);
+        refreshLimitNotes(newRow);
         // Auto-size any pre-filled growing textareas
         newRow.querySelectorAll('textarea.txtMiValue, textarea.txtTagBlacklist').forEach(function (ta) {
             ta.style.height = 'auto';
@@ -4120,6 +4190,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         // A changed Max items hides the "9 of 10" chip until the next run.
         row.addEventListener('input', e => {
             if (e.target.classList.contains('txtTagUrl')) updateMdblistFilterNote(e.target.closest('.url-row'));
+            if (/\b(txtTagUrl|txtUrlLimit|txtAiLimit)\b/.test(e.target.className)) refreshLimitNotes(row);
             if (/Limit$/.test(e.target.className.split(' ').filter(function (c) { return c.indexOf('txt') === 0; })[0] || '')) updateBadges(row);
         });
 
@@ -4359,6 +4430,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
         row.querySelector('.btnAddUrl').addEventListener('click', () => {
             row.querySelector('.url-list-container').insertAdjacentHTML('beforeend', getUrlRowHtml('', 0));
+            refreshLimitNotes(row);
         });
 
         row.querySelector('.btnAddExtraTag').addEventListener('click', () => {
@@ -6399,11 +6471,20 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var v = (view.querySelector(id) || {}).value || '';
             return forComparison ? v : (v.trim() ? v : def);
         }
+        // A list cap in Settings: 0 = no limit; an empty or invalid field is the default, 1000.
+        function listCapField(v, id) {
+            var n = parseInt(((v.querySelector(id) || {}).value || '').trim(), 10);
+            return n >= 0 ? n : 1000;
+        }
 
         return {
             TraktClientId: view.querySelector('#txtTraktClientId').value,
             MdblistApiKey: view.querySelector('#txtMdblistApiKey').value,
             TmdbApiKey: view.querySelector('#txtTmdbApiKey').value,
+            TraktMaxItems: listCapField(view, '#numTraktMaxItems'),
+            MdblistMaxItems: listCapField(view, '#numMdblistMaxItems'),
+            TmdbMaxItems: listCapField(view, '#numTmdbMaxItems'),
+            AiMaxItems: listCapField(view, '#numAiMaxItems'),
             OpenAiApiKey: (view.querySelector('#txtOpenAiApiKey') || {}).value || '',
             OpenAiModel: fieldOr('#txtOpenAiModel', 'gpt-4o-mini'),
             GeminiApiKey: (view.querySelector('#txtGeminiApiKey') || {}).value || '',
@@ -6615,6 +6696,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // Compares two getUiConfig(view, true) results (saved, current) and returns
     // { settings: [label], sources: [{ name, what }] } for the unsaved-changes popup.
     var _settingLabels = {
+        TraktMaxItems: 'Trakt: max entries per list', MdblistMaxItems: 'MDBList: max entries per list',
+        TmdbMaxItems: 'TMDb: max entries per list', AiMaxItems: 'Max titles per AI list',
         OpenAiModel: 'OpenAI model', GeminiModel: 'Gemini model', ClaudeModel: 'Claude model',
         OllamaBaseUrl: 'Ollama URL', OllamaModel: 'Ollama model', AiConnections: 'OpenAI-compatible connections', AiSystemPrompt: 'AI system prompt',
         ExtendedConsoleOutput: 'Extended log', LogMissingItems: 'Log missing movies and shows',
@@ -14048,6 +14131,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var clmElInit = view.querySelector('#txtClaudeModel'); if (clmElInit) clmElInit.value = config.ClaudeModel || 'claude-haiku-4-5-20251001';
                 var olElInit = view.querySelector('#txtOllamaBaseUrl'); if (olElInit) olElInit.value = config.OllamaBaseUrl || 'http://localhost:11434';
                 var omElInit = view.querySelector('#txtOllamaModel'); if (omElInit) omElInit.value = config.OllamaModel || '';
+                ['Trakt', 'Mdblist', 'Tmdb', 'Ai'].forEach(function (p) {
+                    var capEl = view.querySelector('#num' + p + 'MaxItems');
+                    if (capEl) capEl.value = config[p + 'MaxItems'] >= 0 ? config[p + 'MaxItems'] : 1000;
+                });
+                refreshLimitNotes(view);
+                if (!view._hscCapNotes) {
+                    view._hscCapNotes = true;
+                    view.addEventListener('input', function (e) { if (/^num\w+MaxItems$/.test(e.target.id || '')) refreshLimitNotes(view); });
+                }
                 renderAiConnections(view, config.AiConnections || []);
                 syncModelFields(view);
                 var spElInit = view.querySelector('#txtAiSystemPrompt'); if (spElInit) spElInit.value = config.AiSystemPrompt || ''; updateSystemPromptResetBtn(view);
