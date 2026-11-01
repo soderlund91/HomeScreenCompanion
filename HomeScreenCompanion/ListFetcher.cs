@@ -25,8 +25,22 @@ namespace HomeScreenCompanion
             _jsonSerializer = jsonSerializer;
         }
 
-        // At most this many list entries are read from a list.
-        internal const int MaxScan = 1000;
+        // At most this many list entries are read from a list, unless Settings set another number
+        // for its provider (TraktMaxItems, MdblistMaxItems, TmdbMaxItems; AiMaxItems for the AI).
+        internal const int DefaultMaxScan = 1000;
+
+        // The cap Settings give a provider: 0 = no cap (the whole list), below 0 = the default.
+        // A config saved before the setting gets the default from PluginConfiguration.
+        internal const int NoCap = int.MaxValue;
+        internal static int Cap(int configured) => configured > 0 ? configured : configured == 0 ? NoCap : DefaultMaxScan;
+
+        internal static int CapForUrl(string url, PluginConfiguration? config)
+        {
+            if (config == null) return DefaultMaxScan;
+            if (url.Contains("mdblist.com")) return Cap(config.MdblistMaxItems);
+            if (url.Contains("themoviedb.org")) return Cap(config.TmdbMaxItems);
+            return Cap(config.TraktMaxItems);
+        }
 
         /// <summary>Why the last fetch returned nothing (e.g. "HTTP 403 Forbidden"); null when it did not fail.</summary>
         public string? LastError { get; private set; }
@@ -68,22 +82,20 @@ namespace HomeScreenCompanion
         }
 
         // With countsTowardLimit, limit is a number of hits instead of list entries: the list is read
-        // (in order, up to MaxScan entries) until that many distinct IMDb ids count, and the entries up
-        // to and including the last hit are returned. Without it the first limit entries are returned.
+        // (in order, up to the provider's cap) until that many distinct IMDb ids count, and the entries
+        // up to and including the last hit are returned. Without it the first limit entries are returned.
         public async Task<List<ExternalItemDto>> FetchItems(string url, int limit, string traktClientId, string mdbApiKey, string tmdbApiKey, CancellationToken cancellationToken,
             Func<ExternalItemDto, bool>? countsTowardLimit = null)
         {
-            // Set a global maximum of 1000 items to prevent massive fetches, unless a specific smaller limit is requested
-            if (limit <= 0 || limit > MaxScan)
-            {
-                limit = MaxScan;
-            }
-
             LastError = null;
             if (string.IsNullOrWhiteSpace(url)) return new List<ExternalItemDto>();
 
-            var hits = countsTowardLimit != null && limit < MaxScan ? new HitCounter(limit, countsTowardLimit) : null;
-            int fetchLimit = hits != null ? MaxScan : limit;
+            // No more than the provider's cap is read, however high (or unset) Max items is.
+            int cap = CapForUrl(url, Plugin.Instance?.Configuration);
+            if (limit <= 0 || limit > cap) limit = cap;
+
+            var hits = countsTowardLimit != null && limit < cap ? new HitCounter(limit, countsTowardLimit) : null;
+            int fetchLimit = hits != null ? cap : limit;
 
             List<ExternalItemDto> all;
             if (url.Contains("mdblist.com"))
@@ -106,6 +118,8 @@ namespace HomeScreenCompanion
                 return new List<ExternalItemDto>();
             }
             all = Distinct(all);
+            // MDBList is read 1000 entries a page, so its last page can go past the cap.
+            if (all.Count > fetchLimit) all = all.Take(fetchLimit).ToList();
             return hits != null ? hits.Cut(all) : all;
         }
 
@@ -177,7 +191,7 @@ namespace HomeScreenCompanion
         private async Task<List<ExternalItemDto>> FetchMdblistApi(string listUrl, string apiKey, int limit, HitCounter? hits, CancellationToken cancellationToken)
         {
             var apiBaseUrl = BuildMdblistApiUrl(listUrl);
-            const int pageSize = 1000;
+            int pageSize = Math.Min(1000, Math.Max(1, limit));
             var all = new List<ExternalItemDto>();
             int offset = 0;
 
@@ -201,7 +215,7 @@ namespace HomeScreenCompanion
                         all.AddRange(page);
 
                         if (pageCount < pageSize) break;
-                        if (limit < 10000 && all.Count >= limit) break;
+                        if (all.Count >= limit) break;
                         if (hits != null && all.Any(hits.See)) break;
                         offset += pageSize;
                     }
@@ -221,7 +235,7 @@ namespace HomeScreenCompanion
             cleanUrl = cleanUrl.TrimEnd('/');
             if (!cleanUrl.EndsWith("/json")) cleanUrl += "/json";
 
-            const int pageSize = 1000;
+            int pageSize = Math.Min(1000, Math.Max(1, limit));
             var all = new List<ExternalItemDto>();
             int offset = 0;
 
@@ -241,7 +255,7 @@ namespace HomeScreenCompanion
                         all.AddRange(page);
 
                         if (result.Count < pageSize) break;
-                        if (limit < 10000 && all.Count >= limit) break;
+                        if (all.Count >= limit) break;
                         if (hits != null && all.Any(hits.See)) break;
                         offset += pageSize;
                     }
@@ -494,7 +508,9 @@ namespace HomeScreenCompanion
             if (!path.StartsWith("/")) path = "/" + path;
 
             var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            var options = new HttpRequestOptions { Url = $"https://api.trakt.tv{path}?limit={limit}&_={timestamp}", CancellationToken = cancellationToken };
+            // One request for the whole list; with no cap (Settings 0) a limit no list reaches.
+            int traktLimit = Math.Min(limit, 100000);
+            var options = new HttpRequestOptions { Url = $"https://api.trakt.tv{path}?limit={traktLimit}&_={timestamp}", CancellationToken = cancellationToken };
 
             options.RequestHeaders.Add("trakt-api-version", "2");
             options.RequestHeaders.Add("trakt-api-key", clientId);
@@ -719,7 +735,7 @@ namespace HomeScreenCompanion
         private async Task<string> CallClaude(string apiKey, string model, string systemPrompt, string userMessage, int count, CancellationToken cancellationToken)
         {
             // About 30 tokens per title in the JSON answer; a cut-off answer cannot be read at all.
-            int maxTokens = Math.Min(16000, 1024 + Math.Max(0, count) * 60);
+            int maxTokens = (int)Math.Min(16000L, 1024L + Math.Max(0, count) * 60L);
             var requestBody = $"{{" +
                 $"\"model\":{EscapeJsonString(model)}," +
                 $"\"max_tokens\":{maxTokens}," +

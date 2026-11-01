@@ -10,6 +10,12 @@ namespace HomeScreenCompanion
         public string TraktClientId { get; set; } = "";
         public string MdblistApiKey { get; set; } = "";
         public string TmdbApiKey { get; set; } = "";
+        // At most this many entries are read from one list / asked of the AI per source (0 = no limit, below 0 = the default, 1000).
+        // Local sources have no such cap.
+        public int TraktMaxItems { get; set; } = ListFetcher.DefaultMaxScan;
+        public int MdblistMaxItems { get; set; } = ListFetcher.DefaultMaxScan;
+        public int TmdbMaxItems { get; set; } = ListFetcher.DefaultMaxScan;
+        public int AiMaxItems { get; set; } = ListFetcher.DefaultMaxScan;
         public string OpenAiApiKey { get; set; } = "";
         public string OpenAiModel { get; set; } = "gpt-4o-mini";
         public string GeminiApiKey { get; set; } = "";
@@ -62,6 +68,9 @@ namespace HomeScreenCompanion
         public string SettingsLevel { get; set; } = "";
         // Settings > Features: the "Advanced" badges in the Advanced level (Basic always shows them).
         public bool ShowAdvancedBadges { get; set; } = true;
+        // The welcome tour has been shown (it opens by itself once, then only from its Tour button).
+        // Set by WelcomeTour/Seen; a Save from the page never clears it (see Plugin.UpdateConfiguration).
+        public bool WelcomeTourSeen { get; set; } = false;
         public List<TagConfig> Tags { get; set; } = new List<TagConfig>();
         public List<TopListHomeSection> TopLists { get; set; } = new List<TopListHomeSection>();
         public List<SavedMediaInfoFilter> SavedFilters { get; set; } = new List<SavedMediaInfoFilter>();

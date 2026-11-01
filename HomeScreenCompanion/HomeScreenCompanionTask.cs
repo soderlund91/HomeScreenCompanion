@@ -697,7 +697,7 @@ namespace HomeScreenCompanion
                     var groupTimer = System.Diagnostics.Stopwatch.StartNew();
                     try
                     {
-                        int effectiveLimit = tagConfig.Limit <= 0 ? 10000 : tagConfig.Limit;
+                        int effectiveLimit = tagConfig.Limit <= 0 ? NoLimit : tagConfig.Limit;
                         _log.Section($"[{gs.GroupIndex}/{gs.GroupTotal}] {displayName}");
                         _log.Debug("  " + DescribeSourceDetail(tagConfig, effectiveLimit));
                         var blacklist = new HashSet<string>(tagConfig.Blacklist ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
@@ -744,7 +744,7 @@ namespace HomeScreenCompanion
                                 (ListFetcher.IsFailure(fetchError) ? gs.Errors : gs.Warnings).Add(StandInMessage(tagConfig.Url!, fetchError, _lastGood.Value.SavedUtc));
                             }
                             gs.ListCount = items.Count;
-                            missingRun?.Record(tagConfig, items.Where(i => string.IsNullOrEmpty(i.Imdb) || !blacklist.Contains(i.Imdb)));
+                            missingRun?.Record(tagConfig, items, i => string.IsNullOrEmpty(i.Imdb) || !blacklist.Contains(i.Imdb));
                             int _extBlacklisted = 0, _extNoImdb = 0;
 
                             if (items.Count > 0)
@@ -867,7 +867,7 @@ namespace HomeScreenCompanion
                                     gs.Warnings.Add($"{DescribeSource(tagConfig)} '{tagConfig.LocalSourceId}' was not found in the library");
                                 }
 
-                                if (effectiveLimit < 10000 && matchedLocalItems.Count > effectiveLimit)
+                                if (effectiveLimit < NoLimit && matchedLocalItems.Count > effectiveLimit)
                                     matchedLocalItems = matchedLocalItems.Take(effectiveLimit).ToList();
                             }
                         }
@@ -936,7 +936,7 @@ namespace HomeScreenCompanion
                                 if (ItemMatchesMediaInfo(item, tagConfig, debug, seriesEpisodeCache, personCache, userDataCache, ci, preloadedUsers, seriesLastPlayedCache, collectionMembershipCache, seriesEpisodeNamesCache))
                                 {
                                     matchedLocalItems.Add(item);
-                                    if (PopularRuleDays(tagConfig) == null && effectiveLimit < 10000 && matchedLocalItems.Count >= effectiveLimit) break;
+                                    if (PopularRuleDays(tagConfig) == null && effectiveLimit < NoLimit && matchedLocalItems.Count >= effectiveLimit) break;
                                 }
                             }
                             OrderByPopularity(tagConfig, matchedLocalItems, effectiveLimit);
@@ -1008,7 +1008,7 @@ namespace HomeScreenCompanion
                                 config.AiConnections,
                                 config.AiSystemPrompt,
                                 recentlyWatchedContext,
-                                AiAskCount(effectiveLimit),
+                                AiAskCount(effectiveLimit, config),
                                 cancellationToken);
                             fetchTimer.Stop();
 
@@ -1019,7 +1019,7 @@ namespace HomeScreenCompanion
                             foreach (var aiItem in aiItems)
                             {
                                 // Asked for more than the limit (see AiAskCount): the first hits fill it.
-                                if (effectiveLimit < 10000 && TitleCount(matchedLocalItems) >= effectiveLimit) break;
+                                if (effectiveLimit < NoLimit && TitleCount(matchedLocalItems) >= effectiveLimit) break;
                                 _aiSeen++;
                                 if (string.IsNullOrWhiteSpace(aiItem.title)) continue;
                                 string _aiLabel = aiItem.year.HasValue ? $"{aiItem.title} ({aiItem.year})" : aiItem.title;
@@ -1082,8 +1082,8 @@ namespace HomeScreenCompanion
                             }
 
                             // Only the titles the AI's answer was read up to (the limit was filled after them).
-                            missingRun?.Record(tagConfig, aiItems.Take(_aiSeen).Where(a => !string.IsNullOrWhiteSpace(a.title)
-                                && (string.IsNullOrEmpty(a.imdb_id) || !blacklist.Contains(a.imdb_id!.Trim()))).Select(MissingTitles.FromAi));
+                            missingRun?.Record(tagConfig, aiItems.Take(_aiSeen).Select(MissingTitles.FromAi),
+                                i => string.IsNullOrEmpty(i.Imdb) || !blacklist.Contains(i.Imdb));
                             _log.Debug($"  AI ({AiConnection.Label(tagConfig.AiProvider)}) returned {gs.ListCount} items in {fetchTimer.ElapsedMilliseconds} ms  ·  {matchedLocalItems.Count} matched ({_aiTitleMatched} by title only)  ·  {gs.MissingItems.Count} not in library  ·  {_aiBlacklisted} blacklisted");
                             if (tagConfig.AiRefreshIntervalDays > 0 && aiItems.Count > 0)
                             {
@@ -2352,7 +2352,7 @@ namespace HomeScreenCompanion
             RecordImportedCollections(Plugin.Instance?.Configuration);
             string tagName = tagConfig.Tag.Trim();
             string cName = string.IsNullOrWhiteSpace(tagConfig.CollectionName) ? tagName : tagConfig.CollectionName.Trim();
-            int effectiveLimit = tagConfig.Limit <= 0 ? 10000 : tagConfig.Limit;
+            int effectiveLimit = tagConfig.Limit <= 0 ? NoLimit : tagConfig.Limit;
             var blacklist = new HashSet<string>(tagConfig.Blacklist ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
             var passesFilters = FilterConditionsCheck(tagConfig, seriesEpisodeCache, personCache, userDataCache, mediaInfoCache,
                 preloadedUsers, seriesLastPlayedCache, collectionMembershipCache, seriesEpisodeNamesCache);
@@ -2408,7 +2408,7 @@ namespace HomeScreenCompanion
                     foreach (var src in groupEntries)
                     {
                         if (string.IsNullOrWhiteSpace(src.Url)) continue;
-                        int srcLimit = src.Limit <= 0 ? 10000 : src.Limit;
+                        int srcLimit = src.Limit <= 0 ? NoLimit : src.Limit;
                         var fetchTimer = System.Diagnostics.Stopwatch.StartNew();
                         var items = await fetcher.FetchItems(src.Url, srcLimit, config.TraktClientId, config.MdblistApiKey, config.TmdbApiKey, cancellationToken,
                             CountsTowardLimit(imdbLookup, blacklist, passesFilters));
@@ -2421,7 +2421,7 @@ namespace HomeScreenCompanion
                             (ListFetcher.IsFailure(fetcher.LastError) ? gs.Errors : gs.Warnings).Add(StandInMessage(src.Url, fetcher.LastError, _lastGood.Value.SavedUtc));
                         }
                         _listCount += items.Count;
-                        missingRun?.Record(src, items.Where(i => string.IsNullOrEmpty(i.Imdb) || !blacklist.Contains(i.Imdb)));
+                        missingRun?.Record(src, items, i => string.IsNullOrEmpty(i.Imdb) || !blacklist.Contains(i.Imdb));
                         // One URL of several that does not exist (404): left out, as in the full sync.
                         if (items.Count == 0 && groupEntries.Count > 1 && ListFetcher.IsGone(fetcher.LastError))
                         {
@@ -2464,7 +2464,7 @@ namespace HomeScreenCompanion
                     foreach (var src in groupEntries)
                     {
                         if (string.IsNullOrEmpty(src.LocalSourceId)) continue;
-                        int srcLimit = src.Limit <= 0 ? 10000 : src.Limit;
+                        int srcLimit = src.Limit <= 0 ? NoLimit : src.Limit;
                         var localSourceFolder = allFolders.FirstOrDefault(i => string.Equals(i.Name, src.LocalSourceId, StringComparison.OrdinalIgnoreCase));
                         if (localSourceFolder == null)
                         {
@@ -2491,7 +2491,7 @@ namespace HomeScreenCompanion
                             if (passesFilters != null && !passesFilters(itemToTag)) continue;
                             if (!srcMatched.Contains(itemToTag)) srcMatched.Add(itemToTag);
                         }
-                        if (srcLimit < 10000 && srcMatched.Count > srcLimit)
+                        if (srcLimit < NoLimit && srcMatched.Count > srcLimit)
                             srcMatched = srcMatched.Take(srcLimit).ToList();
                         foreach (var m in srcMatched)
                             if (!matchedLocalItems.Contains(m)) matchedLocalItems.Add(m);
@@ -2512,7 +2512,7 @@ namespace HomeScreenCompanion
                 }
                 else if (tagConfig.SourceType == "Manual")
                 {
-                    matchedLocalItems = ManualItems(tagConfig, blacklist, tagConfig.Limit <= 0 ? 10000 : tagConfig.Limit, gs, passesFilters);
+                    matchedLocalItems = ManualItems(tagConfig, blacklist, tagConfig.Limit <= 0 ? NoLimit : tagConfig.Limit, gs, passesFilters);
                     _listCount = tagConfig.ManualItemIds?.Count ?? 0;
                     _log.Debug($"  {matchedLocalItems.Count} of {_listCount} hand-picked items found");
                 }
@@ -2560,7 +2560,7 @@ namespace HomeScreenCompanion
                         if (ItemMatchesMediaInfo(item, tagConfig, debug, seriesEpisodeCache, personCache, userDataCache, ci, preloadedUsers, seriesLastPlayedCache, collectionMembershipCache, seriesEpisodeNamesCache))
                         {
                             matchedLocalItems.Add(item);
-                            if (PopularRuleDays(tagConfig) == null && effectiveLimit < 10000 && matchedLocalItems.Count >= effectiveLimit) break;
+                            if (PopularRuleDays(tagConfig) == null && effectiveLimit < NoLimit && matchedLocalItems.Count >= effectiveLimit) break;
                         }
                     }
                     OrderByPopularity(tagConfig, matchedLocalItems, effectiveLimit);
@@ -2631,7 +2631,7 @@ namespace HomeScreenCompanion
                         config.AiConnections,
                         config.AiSystemPrompt,
                         recentlyWatchedContext,
-                        AiAskCount(effectiveLimit),
+                        AiAskCount(effectiveLimit, config),
                         cancellationToken);
                     fetchTimer.Stop();
 
@@ -2643,7 +2643,7 @@ namespace HomeScreenCompanion
                     foreach (var aiItem in aiItems)
                     {
                         // Asked for more than the limit (see AiAskCount): the first hits fill it.
-                        if (effectiveLimit < 10000 && TitleCount(matchedLocalItems) >= effectiveLimit) break;
+                        if (effectiveLimit < NoLimit && TitleCount(matchedLocalItems) >= effectiveLimit) break;
                         _aiSeen++;
                         if (string.IsNullOrWhiteSpace(aiItem.title)) continue;
                         string _aiLabel = aiItem.year.HasValue ? $"{aiItem.title} ({aiItem.year})" : aiItem.title;
@@ -2686,8 +2686,8 @@ namespace HomeScreenCompanion
                             }
                         }
                     }
-                    missingRun?.Record(tagConfig, aiItems.Take(_aiSeen).Where(a => !string.IsNullOrWhiteSpace(a.title)
-                        && (string.IsNullOrEmpty(a.imdb_id) || !blacklist.Contains(a.imdb_id!.Trim()))).Select(MissingTitles.FromAi));
+                    missingRun?.Record(tagConfig, aiItems.Take(_aiSeen).Select(MissingTitles.FromAi),
+                        i => string.IsNullOrEmpty(i.Imdb) || !blacklist.Contains(i.Imdb));
                     _log.Debug($"  AI ({AiConnection.Label(tagConfig.AiProvider)}) returned {_listCount} items in {fetchTimer.ElapsedMilliseconds} ms  ·  {matchedLocalItems.Count} matched ({_aiTitleMatched} by title only)  ·  {gs.MissingItems.Count} not in library  ·  {_aiBlacklisted} blacklisted");
 
                     if (_preview != null)
@@ -4125,7 +4125,7 @@ namespace HomeScreenCompanion
                 .ThenBy(i => i.SortName, StringComparer.OrdinalIgnoreCase)
                 .GroupBy(PopularityCounter.FilmKeys(_popularityScope))
                 .ToList();
-            if (limit < 10000 && films.Count > limit) films = films.Take(limit).ToList();
+            if (limit < NoLimit && films.Count > limit) films = films.Take(limit).ToList();
             matched.Clear();
             matched.AddRange(films.SelectMany(f => f));
             _log.Info($"  Most viewed first ({(days.Value > 0 ? $"last {days.Value} days" : "all time")}): {films.Count} kept"
@@ -4150,7 +4150,7 @@ namespace HomeScreenCompanion
                     .ThenBy(i => i.SortName, StringComparer.OrdinalIgnoreCase)
                     .GroupBy(PopularityCounter.FilmKeys(_popularityScope))
                     .ToList();
-                if (limit < 10000 && films.Count > limit) films = films.Take(limit).ToList();
+                if (limit < NoLimit && films.Count > limit) films = films.Take(limit).ToList();
                 var keys = films.SelectMany(f => f).Select(RankKey).Where(k => !string.IsNullOrEmpty(k)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                 if (!_weekAgoByTag.TryGetValue(tagName, out var list)) _weekAgoByTag[tagName] = keys;
                 else list.AddRange(keys.Where(k => !list.Contains(k, StringComparer.OrdinalIgnoreCase)));
@@ -4519,6 +4519,9 @@ namespace HomeScreenCompanion
             var anchoredTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             // A source's row is never looked up among the top-lists' rows (see the title fallback below).
             var topListLibraries = TopListSyncTask.TopListLibraryIds(config, _libraryManager);
+            // Ranked-collection libraries are in every row's excluded folders (TopListLibraryVisibility.Apply).
+            var rankedLibIds = RankedCollections.LibraryIds(_libraryManager);
+            var allLibIds = TopListLibraryVisibility.AllLibraryIds(_libraryManager);
 
             foreach (var tc in config.Tags)
             {
@@ -4651,6 +4654,9 @@ namespace HomeScreenCompanion
                         }
                     }
                 }
+
+                // Never saved: only the row gets the ranked-collection libraries.
+                TopListLibraryVisibility.AddRankedExclusions(settingsDict, tc.HomeSectionLibraryId, rankedLibIds, allLibIds, _jsonSerializer);
 
                 string? resolvedLibraryId = null;
                 if (sectionType == "boxset")
@@ -5839,8 +5845,18 @@ namespace HomeScreenCompanion
                     && imdbLookup.TryGetValue(e.Imdb, out var local) && (passesFilters == null || local.Any(passesFilters));
 
         // How many titles an AI source is asked for: more than its Limit, since some are not in the
-        // library; the first hits fill the Limit.
-        private static int AiAskCount(int limit) => limit >= 10000 ? limit : Math.Min(limit * 2, limit + 50);
+        // library; the first hits fill the Limit. Never more than the AI cap in Settings (AiMaxItems),
+        // and the cap itself when the source has no Limit. With no cap (AiMaxItems 0) and no Limit the
+        // AI is asked for 10000, a number it can read as "as many as you like".
+        private static int AiAskCount(int limit, PluginConfiguration config)
+        {
+            int cap = ListFetcher.Cap(config.AiMaxItems);
+            if (limit >= NoLimit) return cap == ListFetcher.NoCap ? 10000 : cap;
+            return (int)Math.Min(cap, Math.Min(limit * 2L, limit + 50L));
+        }
+
+        // Max items 0 on a source: no limit. A URL or AI source is still held to its provider's cap.
+        private const int NoLimit = int.MaxValue;
 
         // A "MovingDate" window: the anchor date (e.g. last Monday of May, or Easter Sunday) of last
         // year, this year and next year, each widened by DaysBefore/DaysAfter (0–60), so a window
@@ -6874,7 +6890,7 @@ namespace HomeScreenCompanion
             }
             if (tc.SourceType != "MediaInfo" && (tc.MediaInfoFilters?.Count > 0 || tc.MediaInfoConditions?.Count > 0))
                 parts.Add($"{GetAllCriteria(tc).Count()} extra filter conditions");
-            parts.Add(effectiveLimit >= 10000 ? "no limit" : $"limit {effectiveLimit}");
+            parts.Add(effectiveLimit >= NoLimit ? "no limit" : $"limit {effectiveLimit}");
             if ((tc.Blacklist?.Count ?? 0) > 0) parts.Add($"{tc.Blacklist!.Count} blacklisted");
             var features = new List<string>();
             if (tc.EnableTag && !tc.OnlyCollection) features.Add("tag");

@@ -40,6 +40,15 @@ namespace HomeScreenCompanion
             public string? imdb_id { get; set; }
             public int? tmdb_id { get; set; }
             public List<string> lists { get; set; } = new List<string>();
+            public List<ExportRank> ranks { get; set; } = new List<ExportRank>();
+        }
+
+        // The title's place on one of its lists: rank 3 of 20 (rank null = not known yet).
+        public sealed class ExportRank
+        {
+            public string list { get; set; } = "";
+            public int? rank { get; set; }
+            public int of { get; set; }
         }
 
         public sealed class ExportShow
@@ -53,6 +62,7 @@ namespace HomeScreenCompanion
             public int? aired_episodes { get; set; }
             public int? missing_episodes { get; set; }
             public List<string> lists { get; set; } = new List<string>();
+            public List<ExportRank> ranks { get; set; } = new List<ExportRank>();
             public List<ExportSeason>? seasons { get; set; }   // a show in the library: the episodes it lacks
         }
 
@@ -71,6 +81,10 @@ namespace HomeScreenCompanion
 
         private static int? Id(string? s) => int.TryParse(s, NumberStyles.None, CultureInfo.InvariantCulture, out var n) && n > 0 ? n : (int?)null;
         private static string? Text(string? s) => string.IsNullOrEmpty(s) ? null : s;
+        private static List<ExportRank> Ranks(List<MissingTitles.ListPlace> places) =>
+            places.Select(p => new ExportRank { list = p.List, rank = p.Rank, of = p.Of }).ToList();
+        private static string RanksText(List<MissingTitles.ListPlace> places) =>
+            string.Join("; ", places.Where(p => p.Rank != null).Select(p => $"{p.List} {p.Rank}/{p.Of}"));
 
         // The shows that go out: those not in the library, and with includeGaps the ones that are.
         private static IEnumerable<MissingTitles.MissingShow> Shows(MissingTitles.MissingTitlesResult r, bool includeGaps) =>
@@ -81,7 +95,7 @@ namespace HomeScreenCompanion
             var file = new ExportFile
             {
                 generated = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture),
-                movies = r.Movies.Select(m => new ExportMovie { title = m.Name, year = m.Year, imdb_id = Text(m.Imdb), tmdb_id = Id(m.Tmdb), lists = m.Lists }).ToList(),
+                movies = r.Movies.Select(m => new ExportMovie { title = m.Name, year = m.Year, imdb_id = Text(m.Imdb), tmdb_id = Id(m.Tmdb), lists = m.Lists, ranks = Ranks(m.Places) }).ToList(),
                 shows = Shows(r, includeGaps).Select(s => new ExportShow
                 {
                     title = s.Name, year = s.Year, imdb_id = Text(s.Imdb), tmdb_id = Id(s.Tmdb), tvdb_id = Id(s.Tvdb),
@@ -89,6 +103,7 @@ namespace HomeScreenCompanion
                     aired_episodes = s.EpisodesKnown ? s.AiredEpisodes : (int?)null,
                     missing_episodes = s.EpisodesKnown ? s.MissingEpisodes : (int?)null,
                     lists = s.Lists,
+                    ranks = Ranks(s.Places),
                     seasons = s.LibraryId.Length == 0 ? null : s.Seasons.Select(se => new ExportSeason
                     {
                         season = se.Number,
@@ -111,20 +126,20 @@ namespace HomeScreenCompanion
 
         internal static string MoviesCsv(MissingTitles.MissingTitlesResult r)
         {
-            var sb = new StringBuilder(Line("title", "year", "imdb_id", "tmdb_id", "lists"));
-            foreach (var m in r.Movies) sb.Append(Line(m.Name, m.Year, m.Imdb, m.Tmdb, string.Join("; ", m.Lists)));
+            var sb = new StringBuilder(Line("title", "year", "imdb_id", "tmdb_id", "lists", "ranks"));
+            foreach (var m in r.Movies) sb.Append(Line(m.Name, m.Year, m.Imdb, m.Tmdb, string.Join("; ", m.Lists), RanksText(m.Places)));
             return sb.ToString();
         }
 
         internal static string ShowsCsv(MissingTitles.MissingTitlesResult r, bool includeGaps)
         {
-            var sb = new StringBuilder(Line("title", "year", "imdb_id", "tmdb_id", "tvdb_id", "in_library", "aired_episodes", "missing_episodes", "missing", "lists"));
+            var sb = new StringBuilder(Line("title", "year", "imdb_id", "tmdb_id", "tvdb_id", "in_library", "aired_episodes", "missing_episodes", "missing", "lists", "ranks"));
             foreach (var s in Shows(r, includeGaps))
             {
                 // A show in the library lists the episodes it lacks (S01E03 S01E04 …); one that is not lacks them all.
                 var missing = s.LibraryId.Length == 0 ? "" : string.Join(" ", s.Seasons.SelectMany(se => se.Episodes.Select(e => $"S{se.Number:00}E{e.Number:00}")));
                 sb.Append(Line(s.Name, s.Year, s.Imdb, s.Tmdb, s.Tvdb, s.LibraryId.Length > 0 ? "yes" : "no",
-                    s.EpisodesKnown ? s.AiredEpisodes : (int?)null, s.EpisodesKnown ? s.MissingEpisodes : (int?)null, missing, string.Join("; ", s.Lists)));
+                    s.EpisodesKnown ? s.AiredEpisodes : (int?)null, s.EpisodesKnown ? s.MissingEpisodes : (int?)null, missing, string.Join("; ", s.Lists), RanksText(s.Places)));
             }
             return sb.ToString();
         }

@@ -331,7 +331,7 @@ namespace HomeScreenCompanion
                         var row = before.FirstOrDefault(s => managed.TopListRow(s) == tl);
                         if (row == null)
                         {
-                            _userManager.AddHomeSection(targetInternalId, managed.NewTopListRow(tl, _jsonSerializer), cancellationToken);
+                            _userManager.AddHomeSection(targetInternalId, managed.NewTopListRow(tl, _jsonSerializer, _libraryManager), cancellationToken);
                             row = (_userManager.GetHomeSections(targetInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>())
                                 .FirstOrDefault(s => !string.IsNullOrEmpty(s.Id) && !before.Any(b => b.Id == s.Id));
                             if (row == null) continue;
@@ -1189,7 +1189,7 @@ namespace HomeScreenCompanion
             private readonly Dictionary<TagConfig, string> _sourceTypes = new Dictionary<TagConfig, string>();
 
             // A new row for a list user without one, as the top-list's own setup makes it.
-            public ContentSection NewTopListRow(TopListHomeSection tl, IJsonSerializer json)
+            public ContentSection NewTopListRow(TopListHomeSection tl, IJsonSerializer json, ILibraryManager libraryManager)
             {
                 var settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 try
@@ -1199,7 +1199,7 @@ namespace HomeScreenCompanion
                 }
                 catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                 if (!settings.ContainsKey("SectionType")) settings["SectionType"] = "items";
-                return HomeScreenCompanionTask.BuildContentSection(json, settings, tl.HomeSectionLibraryId);
+                return HomeScreenCompanionTask.BuildContentSection(json, TopListLibraryVisibility.WithRankedExclusions(settings, tl.HomeSectionLibraryId, libraryManager, json), tl.HomeSectionLibraryId);
             }
         }
 
