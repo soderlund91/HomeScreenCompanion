@@ -10,12 +10,12 @@ namespace HomeScreenCompanion
         public string TraktClientId { get; set; } = "";
         public string MdblistApiKey { get; set; } = "";
         public string TmdbApiKey { get; set; } = "";
-        // At most this many entries are read from one list / asked of the AI per source (0 = no limit, below 0 = the default, 1000).
-        // Local sources have no such cap.
-        public int TraktMaxItems { get; set; } = ListFetcher.DefaultMaxScan;
-        public int MdblistMaxItems { get; set; } = ListFetcher.DefaultMaxScan;
-        public int TmdbMaxItems { get; set; } = ListFetcher.DefaultMaxScan;
-        public int AiMaxItems { get; set; } = ListFetcher.DefaultMaxScan;
+        // At most this many entries are read from one list / asked of the AI per source (0 = no limit,
+        // below 0 = the provider's default). Local sources have no such cap.
+        public int TraktMaxItems { get; set; } = ListFetcher.DefaultTraktMax;
+        public int MdblistMaxItems { get; set; } = ListFetcher.DefaultMdblistMax;
+        public int TmdbMaxItems { get; set; } = ListFetcher.DefaultTmdbMax;
+        public int AiMaxItems { get; set; } = ListFetcher.DefaultAiMax;
         public string OpenAiApiKey { get; set; } = "";
         public string OpenAiModel { get; set; } = "gpt-4o-mini";
         public string GeminiApiKey { get; set; } = "";

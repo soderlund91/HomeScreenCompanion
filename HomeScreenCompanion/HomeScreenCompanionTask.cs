@@ -5850,7 +5850,7 @@ namespace HomeScreenCompanion
         // AI is asked for 10000, a number it can read as "as many as you like".
         private static int AiAskCount(int limit, PluginConfiguration config)
         {
-            int cap = ListFetcher.Cap(config.AiMaxItems);
+            int cap = ListFetcher.Cap(config.AiMaxItems, ListFetcher.DefaultAiMax);
             if (limit >= NoLimit) return cap == ListFetcher.NoCap ? 10000 : cap;
             return (int)Math.Min(cap, Math.Min(limit * 2L, limit + 50L));
         }
@@ -6254,7 +6254,12 @@ namespace HomeScreenCompanion
             bool userDataRule = parts.Length == 4 && UserDataRuleProps.Contains(parts[0]);
             bool numericRule = parts.Length == 3 && double.TryParse(parts[2], System.Globalization.NumberStyles.Any,
                 System.Globalization.CultureInfo.InvariantCulture, out _);
-            if (parts.Length > 2 && !userDataRule && !numericRule) parts = SplitTextCriterion(c);
+            bool calendarDateRule = parts.Length == 3 &&
+                (parts[0] == "DateAdded" || parts[0] == "DateModified") &&
+                DateTime.TryParseExact(parts[2], "yyyy-MM-dd",
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out _);
+            if (parts.Length > 2 && !userDataRule && !numericRule && !calendarDateRule) parts = SplitTextCriterion(c);
             if (parts.Length == 2)
             {
                 var prop = parts[0]; var val = parts[1].Trim();
@@ -6426,6 +6431,21 @@ namespace HomeScreenCompanion
                     _ => false
                 };
             }
+            if (parts.Length == 3 &&
+                (parts[0] == "DateAdded" || parts[0] == "DateModified") &&
+                DateTime.TryParseExact(parts[2], "yyyy-MM-dd",
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var calendarDate))
+            {
+                // A calendar date (Date mode) is a day in server time, like the date rules in Schedule.
+                // Date modified comes from the same cached "days ago" as the Days-ago rule.
+                DateTime? itemUtc = parts[0] == "DateAdded"
+                    ? item.DateCreated.UtcDateTime
+                    : (cachedDateModifiedDays ?? TryGetDateModified(item)) is double modifiedDays
+                        ? DateTime.UtcNow.AddDays(-modifiedDays) : (DateTime?)null;
+                if (!itemUtc.HasValue) return false;
+                return ApplyDateOp(itemUtc.Value.ToLocalTime().Date, parts[1], calendarDate.Date);
+            }
             if (parts.Length == 3 && double.TryParse(parts[2],
                 System.Globalization.NumberStyles.Any,
                 System.Globalization.CultureInfo.InvariantCulture, out var num))
@@ -6531,9 +6551,10 @@ namespace HomeScreenCompanion
         // Criteria that read a file's video/audio details (ExtractMediaInfo): the bare flags
         // ("4K", "HEVC", "Atmos", "5.1", …) and these properties. Reading the details costs a
         // lookup per title (and per show), so it is skipped when no criterion needs them.
+        // DateModified is not one: it is a plain item field, read from the item (a show's own date).
         private static readonly HashSet<string> MediaDetailProperties = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "AudioLanguage", "DateModified", "FileSize", "BitRate", "SampleRate", "BitsPerSample", "TrackNumber", "DiscNumber"
+            "AudioLanguage", "FileSize", "BitRate", "SampleRate", "BitsPerSample", "TrackNumber", "DiscNumber"
         };
 
         private static bool NeedsMediaDetails(TagConfig tagConfig)
@@ -6827,9 +6848,27 @@ namespace HomeScreenCompanion
             _ => false
         };
 
+        private static bool ApplyDateOp(DateTime date, string op, DateTime target) => op switch
+        {
+            ">"  => date > target,
+            ">=" => date >= target,
+            "<"  => date < target,
+            "<=" => date <= target,
+            "="  => date == target,
+            _ => false
+        };
+
         private static double? TryGetDateModified(BaseItem item)
         {
-            try { dynamic d = item; DateTime dt = d.DateModified; return (DateTime.UtcNow - dt).TotalDays; }
+            // Emby's DateModified is a DateTimeOffset (a DateTime on older servers); reading it as a
+            // DateTime threw, so Date Modified rules matched nothing.
+            try
+            {
+                dynamic d = item;
+                object value = d.DateModified;
+                DateTime? utc = value is DateTimeOffset o ? o.UtcDateTime : value is DateTime t ? t.ToUniversalTime() : (DateTime?)null;
+                return utc.HasValue && utc.Value.Year > 1 ? (DateTime.UtcNow - utc.Value).TotalDays : (double?)null;
+            }
             catch { return null; }
         }
 
