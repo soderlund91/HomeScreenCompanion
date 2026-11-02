@@ -7989,8 +7989,23 @@ namespace HomeScreenCompanion
             }
 
             // A source's new top-list gets its library now that its files are there.
-            if (SourceTopLists.EnsureLibraries(config, _libraryManager, _userManager, _providerManager, _fileSystem, _log, onlyTag))
+            var newLibIds = SourceTopLists.EnsureLibraries(config, _libraryManager, _userManager, _providerManager, _fileSystem, _log, onlyTag);
+            if (newLibIds.Count > 0)
+            {
+                // Kept out of every other row and out of sight right away (Run Group syncs only the
+                // list's own rows, and a show list's run none), else the new list's titles show in
+                // Latest, the sources' rows and the other top-lists until the next full sync.
+                int keptOut = TopListSyncTask.KeepOutOfOtherRows(config, newLibIds, _libraryManager, _userManager, _jsonSerializer, CancellationToken.None);
+                if (keptOut > 0) _log.Info($"    New top-list {(newLibIds.Count == 1 ? "library" : "libraries")} kept out of {RunLog.Plural(keptOut, "other home row")}");
+                if (SourceTopLists.LibraryAdded)
+                {
+                    SourceTopLists.LibraryAdded = false;
+                    var hiddenFor = TopListSyncTask.HideLibraries(config, _userManager, _libraryManager, _logger, m => _log.Warn(m));
+                    if (hiddenFor > 0)
+                        _log.Info($"    HSC libraries {(config.HideTopListLibraries ? "hidden from" : "shown again in")} My Media and Latest for {RunLog.Plural(hiddenFor, "user")}");
+                }
                 Plugin.Instance.SaveConfiguration();
+            }
         }
 
         // Show top-lists are rebuilt on every sync, manual ones too: their series get new episodes,

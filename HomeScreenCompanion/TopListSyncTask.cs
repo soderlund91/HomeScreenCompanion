@@ -538,109 +538,19 @@ namespace HomeScreenCompanion
                 if (userStatus.SummaryLine() is string disabledOne) _log.Skip(disabledOne);
                 // Run Group on one top-list: the sweep over every other row below belongs to the full sync.
                 GrantTopListLibraryAccess(topLists.Where(t => string.Equals(t.TagName, onlyTag, StringComparison.OrdinalIgnoreCase)).ToList(), userManager, libraryManager, logger);
-                // A source's list got a new library from this Run Group (SourceTopLists.EnsureLibraries):
-                // hidden from My Media and Latest now, not only at the next full sync.
-                if (SourceTopLists.LibraryAdded)
-                {
-                    SourceTopLists.LibraryAdded = false;
-                    var hiddenForOne = HideLibraries(config, userManager, libraryManager, logger, m => _log.Warn(m));
-                    if (hiddenForOne > 0)
-                        _log.Info($"    HSC libraries {(config.HideTopListLibraries ? "hidden from" : "shown again in")} My Media and Latest for {RunLog.Plural(hiddenForOne, "user")}");
-                }
+                // A new library from this Run Group was kept out of the other rows and hidden when it
+                // was made (SyncTopListFolders, after SourceTopLists.EnsureLibraries).
                 Plugin.Instance?.SaveConfiguration();
                 return (totalUpdated, $"Updated {totalUpdated} section(s){(totalAdded > 0 ? $", added {totalAdded}" : "")} of top-list '{onlyTag}'.");
             }
 
-            // Ensure ALL top-list libraries are excluded from every TAG items-type section.
+            // Ensure ALL top-list libraries are excluded from every other row.
             // This makes the task a complete maintenance sweep, not just a top-list-section refresh.
             var allTopListLibIds = topLists
                 .Where(t => !string.IsNullOrEmpty(t.HomeSectionLibraryId) && t.HomeSectionLibraryId != "auto")
                 .Select(t => t.HomeSectionLibraryId.Trim().ToLowerInvariant())
                 .Distinct().ToList();
-
-            if (allTopListLibIds.Count > 0)
-            {
-                var rankedLibIds = RankedCollections.LibraryIds(libraryManager);
-                var allLibIds = TopListLibraryVisibility.AllLibraryIds(libraryManager);
-                foreach (var tc in config.Tags ?? new List<TagConfig>())
-                {
-                    if (!SourceTopLists.PlainRow(tc)) continue;
-
-                    var tcSettings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                    try
-                    {
-                        if (!string.IsNullOrEmpty(tc.HomeSectionSettings) && tc.HomeSectionSettings != "{}")
-                            tcSettings = jsonSerializer.DeserializeFromString<Dictionary<string, string>>(tc.HomeSectionSettings) ?? tcSettings;
-                    }
-                    catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
-
-                    if (!tcSettings.TryGetValue("SectionType", out var tcSt) || string.IsNullOrEmpty(tcSt))
-                        tcSt = HomeScreenCompanionTask.DefaultSectionType(tc);
-                    // Only items rows get the top-list exclusion (boxset and playlist rows show one item list).
-                    if (tcSt == "boxset" || tcSt == "playlist") continue;
-
-                    var existingExcluded = (tcSettings.TryGetValue("_queryExcludeViewIds", out var tcEv) ? tcEv : "")
-                        .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
-                        .Select(s => s.Trim().ToLowerInvariant()).Where(s => s.Length > 0).ToList();
-
-                    var missing = allTopListLibIds
-                        .Where(id => !existingExcluded.Contains(id, StringComparer.OrdinalIgnoreCase))
-                        .ToList();
-                    if (missing.Count == 0) continue;
-
-                    existingExcluded.AddRange(missing);
-                    existingExcluded = existingExcluded.Distinct().ToList();
-                    var tcExcStr = string.Join(",", existingExcluded);
-                    tcSettings["_queryExcludeViewIds"] = tcExcStr;
-                    tcSettings["ExcludedFolders"] = tcExcStr;
-                    tc.HomeSectionSettings = jsonSerializer.SerializeToString(tcSettings);
-                    HomeScreenCompanionTask.ApplyRowTitle(tcSettings, tc, jsonSerializer);
-
-                    if (!string.IsNullOrEmpty(tc.Tag))
-                    {
-                        try
-                        {
-                            var tagItem = libraryManager.GetItemList(new InternalItemsQuery
-                            {
-                                IncludeItemTypes = new[] { "Tag" },
-                                Name = tc.Tag,
-                                Recursive = true
-                            }, cancellationToken).FirstOrDefault();
-                            if (tagItem != null) tcSettings["_queryTagId"] = tagItem.InternalId.ToString();
-                        }
-                        catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
-                    }
-
-
-                    // Never saved: only the rows get the ranked-collection libraries.
-                    var rowSettings = new Dictionary<string, string>(tcSettings, StringComparer.OrdinalIgnoreCase);
-                    TopListLibraryVisibility.AddRankedExclusions(rowSettings, tc.HomeSectionLibraryId, rankedLibIds, allLibIds, jsonSerializer);
-
-                    var realTracked = (tc.HomeSectionTracked ?? new List<HomeSectionTracking>())
-                        .Where(t => !string.IsNullOrEmpty(t.SectionId) && !t.SectionId.StartsWith("hsc__"))
-                        .ToList();
-
-                    foreach (var tracking in realTracked)
-                    {
-                        try
-                        {
-                            var uid = userManager.GetInternalId(tracking.UserId);
-                            var secs = userManager.GetHomeSections(uid, cancellationToken)?.Sections ?? Array.Empty<ContentSection>();
-                            var owned = secs.FirstOrDefault(s => s.Id == tracking.SectionId);
-                            if (owned == null) continue;
-                            var updatedSec = HomeScreenCompanionTask.BuildContentSection(jsonSerializer, rowSettings, string.Empty, owned);
-                            typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSec, owned.Id);
-                            userManager.UpdateHomeSection(uid, updatedSec, cancellationToken);
-                            totalUpdated++;
-                        }
-                        catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
-                    }
-                }
-            }
-
-            // Aggressive: also keep all untracked, non-library-scoped sections up to date.
-            totalUpdated += HomeScreenCompanionTask.UpdateUntrackedSections(
-                jsonSerializer, userManager, config, allTopListLibIds, cancellationToken);
+            totalUpdated += KeepOutOfOtherRows(config, allTopListLibIds, libraryManager, userManager, jsonSerializer, cancellationToken);
 
             GrantTopListLibraryAccess(topLists, userManager, libraryManager, logger);
 
@@ -653,6 +563,150 @@ namespace HomeScreenCompanion
             var summary = $"Updated {totalUpdated} section(s){(totalAdded > 0 ? $", added {totalAdded}" : "")} across {topLists.Count} top-list(s).";
             _log.Info($"    {RunLog.Plural(totalUpdated, "section")} updated{(totalAdded > 0 ? $", {totalAdded} added" : "")} across {RunLog.Plural(topLists.Count, "top-list")}{(totalErrors > 0 ? $", {RunLog.Plural(totalErrors, "error")}" : "")}  ·  {RunLog.Elapsed(DateTime.Now - startTime)}");
             return (totalUpdated, summary);
+        }
+
+        /// <summary>
+        /// Puts top-list libraries (libIds, as stored on the lists) in the excluded folders of every
+        /// row that is not on them: the sources' plain rows, the other top-lists' rows (stored settings
+        /// and the rows in Emby) and the rows HSC does not track (Emby's own, made by hand). Without
+        /// it a new list's titles show in those rows (a new library is in no row's exclusions) until
+        /// the next full top-list sync. Rows that already exclude them are left alone. Returns the
+        /// number of rows changed.
+        /// </summary>
+        internal static int KeepOutOfOtherRows(PluginConfiguration config, List<string> libIds, ILibraryManager libraryManager,
+            IUserManager userManager, IJsonSerializer jsonSerializer, CancellationToken cancellationToken)
+        {
+            libIds = libIds.Select(id => (id ?? "").Trim().ToLowerInvariant()).Where(id => id.Length > 0 && id != "auto").Distinct().ToList();
+            if (libIds.Count == 0) return 0;
+            int totalUpdated = 0;
+            var rankedLibIds = RankedCollections.LibraryIds(libraryManager);
+            var allLibIds = TopListLibraryVisibility.AllLibraryIds(libraryManager);
+            foreach (var tc in config.Tags ?? new List<TagConfig>())
+            {
+                if (!SourceTopLists.PlainRow(tc)) continue;
+
+                var tcSettings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                try
+                {
+                    if (!string.IsNullOrEmpty(tc.HomeSectionSettings) && tc.HomeSectionSettings != "{}")
+                        tcSettings = jsonSerializer.DeserializeFromString<Dictionary<string, string>>(tc.HomeSectionSettings) ?? tcSettings;
+                }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+
+                if (!tcSettings.TryGetValue("SectionType", out var tcSt) || string.IsNullOrEmpty(tcSt))
+                    tcSt = HomeScreenCompanionTask.DefaultSectionType(tc);
+                // Only items rows get the top-list exclusion (boxset and playlist rows show one item list).
+                if (tcSt == "boxset" || tcSt == "playlist") continue;
+
+                var existingExcluded = (tcSettings.TryGetValue("_queryExcludeViewIds", out var tcEv) ? tcEv : "")
+                    .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(s => s.Trim().ToLowerInvariant()).Where(s => s.Length > 0).ToList();
+
+                var missing = libIds
+                    .Where(id => !existingExcluded.Contains(id, StringComparer.OrdinalIgnoreCase))
+                    .ToList();
+                if (missing.Count == 0) continue;
+
+                existingExcluded.AddRange(missing);
+                existingExcluded = existingExcluded.Distinct().ToList();
+                var tcExcStr = string.Join(",", existingExcluded);
+                tcSettings["_queryExcludeViewIds"] = tcExcStr;
+                tcSettings["ExcludedFolders"] = tcExcStr;
+                tc.HomeSectionSettings = jsonSerializer.SerializeToString(tcSettings);
+                HomeScreenCompanionTask.ApplyRowTitle(tcSettings, tc, jsonSerializer);
+
+                if (!string.IsNullOrEmpty(tc.Tag))
+                {
+                    try
+                    {
+                        var tagItem = libraryManager.GetItemList(new InternalItemsQuery
+                        {
+                            IncludeItemTypes = new[] { "Tag" },
+                            Name = tc.Tag,
+                            Recursive = true
+                        }, cancellationToken).FirstOrDefault();
+                        if (tagItem != null) tcSettings["_queryTagId"] = tagItem.InternalId.ToString();
+                    }
+                    catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                }
+
+
+                // Never saved: only the rows get the ranked-collection libraries.
+                var rowSettings = new Dictionary<string, string>(tcSettings, StringComparer.OrdinalIgnoreCase);
+                TopListLibraryVisibility.AddRankedExclusions(rowSettings, tc.HomeSectionLibraryId, rankedLibIds, allLibIds, jsonSerializer);
+
+                var realTracked = (tc.HomeSectionTracked ?? new List<HomeSectionTracking>())
+                    .Where(t => !string.IsNullOrEmpty(t.SectionId) && !t.SectionId.StartsWith("hsc__"))
+                    .ToList();
+
+                foreach (var tracking in realTracked)
+                {
+                    try
+                    {
+                        var uid = userManager.GetInternalId(tracking.UserId);
+                        var secs = userManager.GetHomeSections(uid, cancellationToken)?.Sections ?? Array.Empty<ContentSection>();
+                        var owned = secs.FirstOrDefault(s => s.Id == tracking.SectionId);
+                        if (owned == null) continue;
+                        var updatedSec = HomeScreenCompanionTask.BuildContentSection(jsonSerializer, rowSettings, string.Empty, owned);
+                        typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSec, owned.Id);
+                        userManager.UpdateHomeSection(uid, updatedSec, cancellationToken);
+                        totalUpdated++;
+                    }
+                    catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                }
+            }
+
+            // The other top-lists' rows: every library but the list's own.
+            foreach (var otherTl in config.TopLists ?? new List<TopListHomeSection>())
+            {
+                if (string.IsNullOrEmpty(otherTl.HomeSectionLibraryId) || otherTl.HomeSectionLibraryId == "auto") continue;
+                var otherOwn = OwnLibraryIds(otherTl.HomeSectionLibraryId, libraryManager);
+
+                var otherSettings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                try
+                {
+                    if (!string.IsNullOrEmpty(otherTl.HomeSectionSettings) && otherTl.HomeSectionSettings != "{}")
+                        otherSettings = jsonSerializer.DeserializeFromString<Dictionary<string, string>>(otherTl.HomeSectionSettings) ?? otherSettings;
+                }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+
+                var otherExisting = (otherSettings.TryGetValue("_queryExcludeViewIds", out var otherEv) ? otherEv : "")
+                    .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(s => s.Trim().ToLowerInvariant()).Where(s => s.Length > 0).ToList();
+                var otherMissing = libIds
+                    .Where(id => !otherOwn.Contains(id) && !otherExisting.Contains(id, StringComparer.OrdinalIgnoreCase))
+                    .ToList();
+                if (otherMissing.Count == 0) continue;
+
+                var otherExcStr = string.Join(",", otherExisting.Concat(otherMissing).Distinct());
+                otherSettings["_queryExcludeViewIds"] = otherExcStr;
+                otherSettings["ExcludedFolders"] = otherExcStr;
+                otherTl.HomeSectionSettings = jsonSerializer.SerializeToString(otherSettings);
+
+                var otherRowSettings = new Dictionary<string, string>(otherSettings, StringComparer.OrdinalIgnoreCase);
+                TopListLibraryVisibility.AddRankedExclusions(otherRowSettings, otherTl.HomeSectionLibraryId, rankedLibIds, allLibIds, jsonSerializer);
+                foreach (var tracking in (otherTl.HomeSectionTracked ?? new List<HomeSectionTracking>())
+                    .Where(t => !string.IsNullOrEmpty(t.SectionId) && !t.SectionId.StartsWith("hsc__")).ToList())
+                {
+                    try
+                    {
+                        var uid = userManager.GetInternalId(tracking.UserId);
+                        var secs = userManager.GetHomeSections(uid, cancellationToken)?.Sections ?? Array.Empty<ContentSection>();
+                        var owned = secs.FirstOrDefault(s => s.Id == tracking.SectionId);
+                        if (owned == null) continue;
+                        var updatedSec = HomeScreenCompanionTask.BuildContentSection(jsonSerializer, otherRowSettings, otherTl.HomeSectionLibraryId, owned);
+                        typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSec, owned.Id);
+                        userManager.UpdateHomeSection(uid, updatedSec, cancellationToken);
+                        totalUpdated++;
+                    }
+                    catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                }
+            }
+
+            // Aggressive: also keep all untracked, non-library-scoped sections up to date.
+            totalUpdated += HomeScreenCompanionTask.UpdateUntrackedSections(
+                jsonSerializer, userManager, config, libIds, cancellationToken);
+            return totalUpdated;
         }
 
         /// <summary>
