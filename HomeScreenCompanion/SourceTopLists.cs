@@ -570,13 +570,13 @@ namespace HomeScreenCompanion
         /// Run, after SyncTopListFolders wrote the files: a source's list without a library gets
         /// one (made like the Top-Lists tab makes it: Emby may switch every user to "all libraries"
         /// when a library is added, so each user's access is put back) and the library is scanned.
-        /// Rows and access then come from TopListSyncTask as for every list. True when a library id
-        /// was set (the config needs saving).
+        /// Rows and access then come from TopListSyncTask as for every list. Returns the library ids
+        /// that were set (not empty: the config needs saving).
         /// </summary>
-        internal static bool EnsureLibraries(PluginConfiguration config, ILibraryManager libraryManager, IUserManager userManager,
+        internal static List<string> EnsureLibraries(PluginConfiguration config, ILibraryManager libraryManager, IUserManager userManager,
             IProviderManager providerManager, IFileSystem fileSystem, RunLog log, string? onlyTag = null)
         {
-            bool changed = false;
+            var setIds = new List<string>();
             var root = Path.Combine(Plugin.Instance!.DataFolderPath, "toplists");
             foreach (var tl in (config.TopLists ?? new List<TopListHomeSection>()).Where(t => t.FromSource))
             {
@@ -602,7 +602,7 @@ namespace HomeScreenCompanion
                     LibraryAdded = true;
                 }
                 tl.HomeSectionLibraryId = lib.ItemId;
-                changed = true;
+                setIds.Add(lib.ItemId);
                 if (created && long.TryParse(lib.ItemId, out var libInternalId))
                 {
                     // Only this library (never a full scan): the files were written before it existed.
@@ -618,7 +618,7 @@ namespace HomeScreenCompanion
                     catch (Exception ex) { log.Warn($"Top-list library '{lib.Name}' could not be scanned: {ex.Message}"); }
                 }
             }
-            return changed;
+            return setIds;
         }
 
         private static string TitleOf(TopListHomeSection tl)
