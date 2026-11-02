@@ -13,6 +13,8 @@ namespace HomeScreenCompanion
     /// Runs the Tag &amp; Collection Sync when a scheduled source starts or stops being active, so
     /// time-of-day schedules (e.g. a 20:00 Spotlight) switch on time instead of at the 04:00 sync.
     /// It only checks the schedules; the sync itself does the switching (overrides, cleanup).
+    /// A rotating row (RotatingRow) moving on to its next collection (at midnight, server time)
+    /// runs the sync the same way.
     /// </summary>
     public class ScheduleSwitchTask : IScheduledTask, IConfigurableScheduledTask
     {
@@ -63,32 +65,52 @@ namespace HomeScreenCompanion
             var was = ParseState(previous);
             var now = ParseState(state);
             var changed = now.Where(kv => !was.TryGetValue(kv.Key, out var w) || w != kv.Value)
-                .Select(kv => $"{kv.Key} {(kv.Value ? "started" : "ended")}")
-                .Concat(was.Keys.Where(k => !now.ContainsKey(k)).Select(k => $"{k} removed")).ToList();
-            _logger.Info("Schedule changed ({0}); running the Tag & Collection Sync", string.Join(", ", changed));
+                .Select(kv => kv.Key.StartsWith(RotationKey, StringComparison.Ordinal)
+                    ? $"{kv.Key.Substring(RotationKey.Length)}: next collection"
+                    : $"{kv.Key} {(kv.Value == "1" ? "started" : "ended")}")
+                .Concat(was.Keys.Where(k => !now.ContainsKey(k)).Select(k => k.StartsWith(RotationKey, StringComparison.Ordinal) ? $"{k.Substring(RotationKey.Length)}: rotation stopped" : $"{k} removed")).ToList();
+            // Only rotating rows moved on: just those groups run (Run Group), not the full sync.
+            var rotated = now.Where(kv => kv.Key.StartsWith(RotationKey, StringComparison.Ordinal) && (!was.TryGetValue(kv.Key, out var w) || w != kv.Value))
+                .Select(kv => kv.Key.Substring(RotationKey.Length)).ToList();
+            bool onlyRotation = rotated.Count > 0 && rotated.Count == changed.Count && HomeScreenCompanionTask.Instance != null;
+            _logger.Info("Schedule changed ({0}); running {1}", string.Join(", ", changed),
+                onlyRotation ? string.Join(", ", rotated.Select(n => $"Run Group '{n}'")) : "the Tag & Collection Sync");
             Save(statePath, state);
-            _taskManager.QueueScheduledTask<HomeScreenCompanionTask>();
+            if (onlyRotation)
+            {
+                var task = HomeScreenCompanionTask.Instance!;
+                foreach (var name in rotated)
+                    _ = Task.Run(() => task.RunSingleEntryAsync(name, CancellationToken.None));
+            }
+            else _taskManager.QueueScheduledTask<HomeScreenCompanionTask>();
             return Task.CompletedTask;
         }
 
-        // One line per scheduled source: "<name>\t1" when in schedule, "\t0" when not.
+        private const string RotationKey = "rotation\u001F";
+
+        // One line per scheduled source: "<name>\t1" when in schedule, "\t0" when not; and one per
+        // rotating source in schedule: "rotation\u001F<name>\t<period number>" (see RotatingRow).
         internal static string CurrentState(PluginConfiguration config, DateTime now)
         {
+            var today = RotatingRow.Today();
             var lines = config.Tags
                 .Where(t => t.Active && t.ActiveIntervals != null && t.ActiveIntervals.Count > 0 && !string.IsNullOrWhiteSpace(t.Tag))
                 .Select(t => $"{(string.IsNullOrWhiteSpace(t.Name) ? t.Tag.Trim() : t.Name.Trim())}\t{(HomeScreenCompanionTask.IsScheduleActive(t.ActiveIntervals, now) ? 1 : 0)}")
+                .Concat(config.Tags
+                    .Where(t => t.Active && RotatingRow.Is(t) && !string.IsNullOrWhiteSpace(t.Tag) && HomeScreenCompanionTask.IsScheduleActive(t.ActiveIntervals, now))
+                    .Select(t => $"{RotationKey}{(string.IsNullOrWhiteSpace(t.Name) ? t.Tag.Trim() : t.Name.Trim())}\t{RotatingRow.Period(t, today)}"))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(l => l, StringComparer.OrdinalIgnoreCase);
             return string.Join("\n", lines);
         }
 
-        private static Dictionary<string, bool> ParseState(string state)
+        private static Dictionary<string, string> ParseState(string state)
         {
-            var result = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var line in state.Split('\n'))
             {
                 var parts = line.Split('\t');
-                if (parts.Length == 2) result[parts[0]] = parts[1] == "1";
+                if (parts.Length == 2) result[parts[0]] = parts[1];
             }
             return result;
         }

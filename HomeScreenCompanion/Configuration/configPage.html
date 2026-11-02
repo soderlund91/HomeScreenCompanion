@@ -2390,8 +2390,23 @@
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">recommend</i> Personal: Your Next Watch</div>
                         Personal recommendations, worked out on your server (no AI, no internet): every ticked user gets their own playlist of unwatched titles most like what they have been watching, refreshed on every sync. See <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-sec-2b').scrollIntoView({behavior:'smooth'});return false;"><em>Your Next Watch</em> below</a> for how it picks and how to set it up.
                     </div>
+                    <div class="src-card">
+                        <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">autorenew</i> Rotating collection</div>
+                        One home row that shows a different collection each day or week, picked from a pool of your collections — like a <em>Now Showing</em> row. <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-more-rotating').scrollIntoView({behavior:'smooth'});return false;">More below</a>.
+                    </div>
                 </div>
                 <div class="hsc-eyebrow" style="margin:14px 0 8px;">More about the source types</div>
+                <div id="help-more-rotating" class="help-feature-row">
+                    <i class="md-icon help-feat-icon">autorenew</i>
+                    <div><strong>Rotating collection</strong> — the source's home row (<em>Single Collection</em>) shows one collection of the <strong>Pool</strong>:
+                        <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
+                            <li><strong>Pool</strong> — <em>Chosen collections</em> (tick them in the list), <em>All collections HSC manages</em> (every collection a source makes), <em>All collections</em>, or <em>Collections with tag</em>.</li>
+                            <li><strong>Change every</strong> — <em>Day</em> or <em>Week</em> (weeks start on Monday). The row moves on at midnight, server time (within 15 minutes).</li>
+                            <li><strong>Order</strong> — <em>Shuffle</em>: a random order that shows every collection once before any comes back; <em>In order</em>: A–Z.</li>
+                            <li><strong>Title</strong> — the collection's name. A <em>Custom Title</em> on the Home Screen tab with <code>{name}</code> adds to it, e.g. <code>Now Showing: {name}</code>; one without <code>{name}</code> stays as it is.</li>
+                        </ul>
+                        It is one row, the same collection for every user on a given day. The row stays in its place: only the collection it shows changes. A collection that is empty, or that one of the row's users cannot see, is skipped that day; with nothing to show, the row is hidden until there is. The Schedule tab works as for any source (e.g. only in December). Apply Tag, Create Collection and Create Playlist use the titles of the day's collection.</div>
+                </div>
                 <div id="help-more-external" class="help-feature-row">
                     <i class="md-icon help-feat-icon">public</i>
                     <div><strong>External</strong> — paste a list URL from <strong>Trakt</strong>, <strong>MDBList</strong> or <strong>TMDb</strong>. The plugin downloads the list and tags every matching title it finds in your library.
@@ -2870,7 +2885,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">copy_all</i>
-                    <div><strong>Copy &amp; Sync</strong> — Copies the complete home screen layout from one user to one or more other users. Handy when you want all profiles to look the same. Every row is copied, in the same order — including source rows, whatever that row's own target users are. Two exceptions: a <strong>top-list row</strong> only goes to that list's own target users (a top-list has its own library, and only its users are given access to it) — add the users to the top-list in the Top-Lists tab to give them the row; and a per-user playlist row (such as <em>Your Next Watch</em>) is copied in the same place but shows each user's own playlist, and users without one from that source don't get the row. Old copies pointing at someone else's playlist are re-pointed or removed, and old copies of a top-list row for users who are not its target users are removed. This runs separately from the tag and collection sync.
+                    <div><strong>Copy &amp; Sync</strong> — Copies the complete home screen layout from one user to one or more other users. Handy when you want all profiles to look the same. Every row is copied, in the same order — including source rows, whatever that row's own target users are. Two exceptions: a <strong>top-list row</strong> only goes to that list's own target users (a top-list has its own library, and only its users are given access to it) — add the users to the top-list in the Top-Lists tab to give them the row; and a per-user playlist row (such as <em>Your Next Watch</em>) is copied in the same place but shows each user's own playlist, and users without one from that source don't get the row. A <em>Rotating collection</em> row only goes to that source's own target users (with <em>Also add users to the sources and top-lists of copied rows</em>, every target user is put on it). Old copies pointing at someone else's playlist are re-pointed or removed, and old copies of a top-list row for users who are not its target users are removed. This runs separately from the tag and collection sync.
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li>Tick <em>Enable Home Screen sync</em>, pick the <strong>Source User</strong> whose layout is the model, and tick the users to copy to. Set the source user's home screen up in Emby first, then run it.</li>
                             <li>The target users' own rows are <strong>replaced</strong>, so changes they made themselves are lost on the next run.</li>

@@ -2237,6 +2237,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     function clearDefaultCustomName(hseSettings, hseTab) {
         var orig = '';
         try { orig = decodeURIComponent((hseTab && hseTab.dataset.hseOrigName) || ''); } catch (ex) {}
+        if (isRotatingRow(hseTab && hseTab.closest('.tag-row'))) orig = '{name}';
         var cn = (hseSettings.CustomName || '').trim();
         if (!cn || (orig && cn === orig)) delete hseSettings.CustomName;
     }
@@ -2394,7 +2395,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             NextWatchSeedDays: readNwSeedDays(row), NextWatchUseTaste: readNwUseTaste(row),
             MediaInfoTargetEpisode: false, MediaInfoTargetSeason: false, MediaInfoTargetSeries: false,
             MediaInfoTargetType: '', MediaInfoSeasonMode: false,
-        }, readTopListTab(row));
+        }, readTopListTab(row), readRotation(row));
     }
 
     var _formAc = null;
@@ -3209,6 +3210,106 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         if (note) note.textContent = isNw ? 'Leave empty to use the text shown in the box.' : 'Leave empty for no description.';
     }
 
+    // ---- Rotating collection source (RotatingRow.cs) ----
+    function isRotatingRow(row) {
+        return !!row && (row.querySelector('.selSourceType') || {}).value === 'RotatingCollection';
+    }
+
+    // The Custom Title placeholder: the row's default title.
+    function hseTitlePlaceholder(row) {
+        if (isRotatingRow(row)) return '{name}';
+        return row.querySelector('.txtEntryLabel').value || row.querySelector('.txtTagName').value || '';
+    }
+
+    function sortRotationNames(names) {
+        return (names || []).filter(function (n) { return (n || '').trim(); })
+            .slice().sort(function (a, b) { return a.toLowerCase() < b.toLowerCase() ? -1 : a.toLowerCase() > b.toLowerCase() ? 1 : 0; });
+    }
+
+    function rotatingSettingsHtml(t) {
+        var pool = t.RotationPool || 'Selected', every = t.RotationEvery || 'Day', order = t.RotationOrder || 'Shuffle';
+        var tag = t.RotationTag || '';
+        var picked = {};
+        (t.RotationCollections || []).forEach(function (n) { picked[(n || '').trim().toLowerCase()] = n; });
+        function opt(v, label, cur) { return '<option value="' + escapeHtml(v) + '"' + (v === cur ? ' selected' : '') + '>' + escapeHtml(label) + '</option>'; }
+        var names = (cachedCollections || []).map(function (c) { return c.Name || ''; }).filter(function (n) { return n.trim(); });
+        var seen = {};
+        names.forEach(function (n) { seen[n.trim().toLowerCase()] = 1; });
+        // Picked collections that are not on the server (any more) stay ticked, so a save keeps them.
+        Object.keys(picked).forEach(function (k) { if (!seen[k]) names.push(picked[k]); });
+        var rows = names.map(function (n) {
+            var on = picked.hasOwnProperty(n.trim().toLowerCase());
+            return '<label class="rot-coll-row" data-name="' + escapeHtml(n.toLowerCase()) + '" style="display:flex;align-items:center;gap:10px;padding:6px 4px;border-bottom:1px solid var(--line-color);cursor:pointer;">' +
+                '<input type="checkbox" class="chkRotColl" value="' + escapeHtml(n) + '"' + (on ? ' checked' : '') + ' />' +
+                '<span style="flex:1;min-width:0;font-size:0.93em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(n) + '</span></label>';
+        }).join('');
+        var tags = (cachedTags || []).slice();
+        if (tag && tags.indexOf(tag) < 0) tags.unshift(tag);
+        var nPicked = names.filter(function (n) { return picked.hasOwnProperty(n.trim().toLowerCase()); }).length;
+        return '' +
+            '<div style="margin:10px 0 15px;"><label class="selectLabel">Pool</label>' +
+            '<select is="emby-select" class="selRotPool" style="width:100%;">' +
+                opt('Selected', 'Chosen collections', pool) + opt('Managed', 'All collections HSC manages', pool) +
+                opt('All', 'All collections', pool) + opt('Tag', 'Collections with tag', pool) +
+            '</select></div>' +
+            '<div class="rot-pick" style="display:' + (pool === 'Selected' ? 'block' : 'none') + ';margin-bottom:15px;">' +
+                '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">' +
+                    '<input type="search" class="txtRotSearch emby-input" placeholder="Search collections…" autocomplete="off" style="flex:1;min-width:0;box-sizing:border-box;padding:8px;font-size:0.9em;" />' +
+                    '<span class="rot-coll-count" style="font-size:0.85em;opacity:0.7;white-space:nowrap;">' + nPicked + ' selected</span>' +
+                '</div>' +
+                '<div class="rot-coll-list" style="max-height:280px;overflow-y:auto;border:1px solid var(--line-color);border-radius:6px;padding:0 8px;">' +
+                    (rows || '<div style="padding:10px 4px;opacity:0.6;font-size:0.9em;">No collections</div>') +
+                    '<div class="rot-coll-none" style="display:none;padding:10px 4px;opacity:0.6;font-size:0.9em;">No collection matches</div>' +
+                '</div>' +
+            '</div>' +
+            '<div class="rot-tag" style="display:' + (pool === 'Tag' ? 'block' : 'none') + ';margin-bottom:15px;"><label class="selectLabel">Tag</label>' +
+                '<select is="emby-select" class="selRotTag" style="width:100%;">' + opt('', '', tag) +
+                tags.map(function (x) { return opt(x, x, tag); }).join('') + '</select></div>' +
+            '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:15px;">' +
+                '<div style="flex:1 1 180px;"><label class="selectLabel">Change every</label><select is="emby-select" class="selRotEvery" style="width:100%;">' +
+                    opt('Day', 'Day', every) + opt('Week', 'Week', every) + '</select></div>' +
+                '<div style="flex:1 1 180px;"><label class="selectLabel">Order</label><select is="emby-select" class="selRotOrder" style="width:100%;">' +
+                    opt('Shuffle', 'Shuffle', order) + opt('InOrder', 'In order', order) + '</select></div>' +
+            '</div>';
+    }
+
+    function wireRotating(row) {
+        var c = row.querySelector('.source-rotating-container');
+        if (!c) return;
+        var pool = c.querySelector('.selRotPool');
+        pool.addEventListener('change', function () {
+            c.querySelector('.rot-pick').style.display = pool.value === 'Selected' ? 'block' : 'none';
+            c.querySelector('.rot-tag').style.display = pool.value === 'Tag' ? 'block' : 'none';
+        });
+        var count = c.querySelector('.rot-coll-count');
+        c.querySelectorAll('.chkRotColl').forEach(function (chk) {
+            chk.addEventListener('change', function () { count.textContent = c.querySelectorAll('.chkRotColl:checked').length + ' selected'; });
+        });
+        var search = c.querySelector('.txtRotSearch');
+        search.addEventListener('input', function () {
+            var q = search.value.trim().toLowerCase(), shown = 0;
+            c.querySelectorAll('.rot-coll-row').forEach(function (r) {
+                var on = !q || r.dataset.name.indexOf(q) >= 0;
+                r.style.display = on ? 'flex' : 'none';
+                if (on) shown++;
+            });
+            c.querySelector('.rot-coll-none').style.display = shown ? 'none' : 'block';
+        });
+        search.addEventListener('keydown', function (e) { if (e.key === 'Enter') e.preventDefault(); });
+    }
+
+    function readRotation(row) {
+        var c = row.querySelector('.source-rotating-container');
+        if (!c) return {};
+        return {
+            RotationPool: (c.querySelector('.selRotPool') || {}).value || 'Selected',
+            RotationCollections: sortRotationNames(Array.from(c.querySelectorAll('.chkRotColl:checked')).map(function (x) { return x.value; })),
+            RotationTag: (c.querySelector('.selRotTag') || {}).value || '',
+            RotationEvery: (c.querySelector('.selRotEvery') || {}).value || 'Day',
+            RotationOrder: (c.querySelector('.selRotOrder') || {}).value || 'Shuffle'
+        };
+    }
+
     function getSourceBadgeHtml(st) {
         var map = {
             'External':          { icon: 'language',        title: 'External List' },
@@ -3216,6 +3317,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             'LocalPlaylist':     { icon: 'playlist_play',   title: 'Local Playlist' },
             'Manual':            { icon: 'format_list_numbered', title: 'Manual List' },
             'NextWatch':         { icon: 'recommend',       title: 'Personal: Your Next Watch' },
+            'RotatingCollection': { icon: 'autorenew',      title: 'Rotating collection' },
             'MediaInfo':         { icon: 'tune',            title: 'Smart Playlist' },
                 'AI':              { icon: 'auto_awesome',   title: 'AI created lists' }
         };
@@ -3282,7 +3384,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         // The name the row's title defaults to (see clearDefaultCustomName).
         var homeSectionOrigNameEnc = encodeURIComponent((tagConfig.Name || tagConfig.Tag || '').trim());
         var homeSectionTrackedEnc = encodeURIComponent(JSON.stringify(tagConfig.HomeSectionTracked || []));
-        var hsDefaultSectionType = tagConfig.EnableCollection ? 'boxset' : (tagConfig.EnableTag !== false ? 'items' : (tagConfig.EnablePlaylist ? 'playlist' : 'boxset'));
+        var hsDefaultSectionType = sourceType === 'RotatingCollection' || tagConfig.EnableCollection ? 'boxset' : (tagConfig.EnableTag !== false ? 'items' : (tagConfig.EnablePlaylist ? 'playlist' : 'boxset'));
         var topListOn = !!tagConfig.EnableTopList;
 
         var mediaFilters = (tagConfig.MediaInfoFilters && tagConfig.MediaInfoFilters.length > 0)
@@ -3383,6 +3485,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <option value="LocalPlaylist" ${sourceType === 'LocalPlaylist' ? 'selected' : ''}>Local Playlist</option>
                             <option value="Manual" ${sourceType === 'Manual' ? 'selected' : ''}>Manual List (pick movies and shows)</option>
                             <option value="NextWatch" ${sourceType === 'NextWatch' ? 'selected' : ''}>Personal: Your Next Watch</option>
+                            <option value="RotatingCollection" ${sourceType === 'RotatingCollection' ? 'selected' : ''}>Rotating collection</option>
                         </select>
                         <p class="source-type-hint" style="margin:6px 0 0 0; font-size:1em; opacity:0.8; line-height:1.4;">${(function(st) {
                             if (st === 'External')         return 'Use an external list to tag, or create a collection, from the items that match your library.';
@@ -3425,6 +3528,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         </div>
                         <div class="manualItemList" style="max-height:420px;overflow-y:auto;border:1px solid var(--line-color);border-radius:6px;padding:4px 8px;min-height:44px;"></div>
                     </div>
+
+                    <div class="source-rotating-container" style="display: ${sourceType === 'RotatingCollection' ? 'block' : 'none'};">${rotatingSettingsHtml(tagConfig)}</div>
 
                     <div class="source-ai-container" style="display: ${sourceType === 'AI' ? 'block' : 'none'};">
                         <div style="margin-bottom: 15px;">
@@ -3842,7 +3947,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     </div>
                 </div>
 
-                <div class="tab-content homescreen-tab${topListOn ? ' tl-mode' : ''}${tagConfig.EnableTag === false && !tagConfig.EnableCollection && !tagConfig.EnablePlaylist && !topListOn ? ' hse-empty' : ''}" style="display:none;"
+                <div class="tab-content homescreen-tab${topListOn ? ' tl-mode' : ''}${tagConfig.EnableTag === false && !tagConfig.EnableCollection && !tagConfig.EnablePlaylist && !topListOn && sourceType !== 'RotatingCollection' ? ' hse-empty' : ''}" style="display:none;"
                     data-hse-libraryid="${homeSectionLibraryId}"
                     data-hse-userids="${homeSectionUserIdsEnc}"
                     data-hse-settings="${homeSectionSettingsEnc}"
@@ -3856,7 +3961,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <span>Add as home screen section</span>
                         </label>
                         <div class="fieldDescription">A home screen section will be managed for selected users each time sync runs.</div>
-                        <div class="hse-disabled-hint" style="font-size:0.9em; color:var(--hsc-danger-text); margin-top:4px; display:${(enableHomeSection && tagConfig.EnableTag === false && !tagConfig.EnableCollection && !tagConfig.EnablePlaylist && !tagConfig.EnableTopList) ? 'block' : 'none'};">A plain row needs <strong>Apply Tag</strong>, <strong>Create Collection</strong> or <strong>Create Playlist</strong>, or tick <strong>Create as top-list</strong> below. Untick <em>Add as home screen section</em> if you do not want a row.</div>
+                        <div class="hse-disabled-hint" style="font-size:0.9em; color:var(--hsc-danger-text); margin-top:4px; display:${(enableHomeSection && tagConfig.EnableTag === false && !tagConfig.EnableCollection && !tagConfig.EnablePlaylist && !tagConfig.EnableTopList && sourceType !== 'RotatingCollection') ? 'block' : 'none'};">A plain row needs <strong>Apply Tag</strong>, <strong>Create Collection</strong> or <strong>Create Playlist</strong>, or tick <strong>Create as top-list</strong> below. Untick <em>Add as home screen section</em> if you do not want a row.</div>
                     </div>
                     <div class="hse-details" style="display:${enableHomeSection ? 'block' : 'none'}; margin-top:15px;">
                         ${buildTopListTabHtml(tagConfig)}
@@ -4123,6 +4228,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
 
     function setupRowEvents(row) {
+        wireRotating(row);
         function updateBadges(row) {
             var container = row.querySelector('.badge-container');
             if (!container) return;
@@ -4248,6 +4354,18 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 row.querySelector('.source-mediainfo-container').style.display = (type && type !== '') ? 'block' : 'none';
                 row.querySelector('.source-ai-container').style.display = type === 'AI' ? 'block' : 'none';
                 row.querySelector('.source-manual-container').style.display = type === 'Manual' ? 'block' : 'none';
+                row.querySelector('.source-rotating-container').style.display = type === 'RotatingCollection' ? 'block' : 'none';
+                if (type === 'RotatingCollection') {
+                    // Default for a Rotating collection source (can be changed): its home row is the
+                    // point, and a tag on the day's titles is not.
+                    var _hsChk = row.querySelector('.chkEnableHomeSection');
+                    if (_hsChk && !_hsChk.checked) { _hsChk.checked = true; _hsChk.dispatchEvent(new Event('change', { bubbles: true })); }
+                    var _tagChk = row.querySelector('.chkEnableTag');
+                    if (_tagChk && _tagChk.checked) { _tagChk.checked = false; _tagChk.dispatchEvent(new Event('change', { bubbles: true })); }
+                }
+                updateHseSectionAvailability(row);
+                var _ctEl = row.querySelector('.homescreen-tab [data-field="CustomName"]');
+                if (_ctEl) _ctEl.setAttribute('placeholder', hseTitlePlaceholder(row));
 
                 var _hint = row.querySelector('.source-type-hint');
                 if (_hint) {
@@ -4791,7 +4909,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             row.querySelector('.txtTagName').setAttribute('placeholder', lbl);
             row.querySelector('.txtCollectionName').setAttribute('placeholder', lbl);
             var hseCustomTitle = row.querySelector('[data-field="CustomName"]');
-            if (hseCustomTitle) hseCustomTitle.setAttribute('placeholder', lbl);
+            if (hseCustomTitle) hseCustomTitle.setAttribute('placeholder', hseTitlePlaceholder(row));
             updateBadges(row);
         }
         row.querySelector('.txtEntryLabel').addEventListener('input', function() {
@@ -6116,6 +6234,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                                     : ''
                 };
 
+                // A rotating row's live title is the day's collection, not the Custom Title.
+                if (isRotatingRow(tab.closest('.tag-row'))) delete fieldMap.CustomName;
                 Object.keys(fieldMap).forEach(function(field) {
                     var el = tab.querySelector('[data-field="' + field + '"]');
                     if (!el) return;
@@ -6214,9 +6334,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 wireUserMultiSelect(tab.querySelector('.hse-user-list-inner'));
 
                 // Structured section settings form
-                var defaultTagName = row.querySelector('.txtEntryLabel').value || row.querySelector('.txtTagName').value || '';
+                var defaultTagName = hseTitlePlaceholder(row);
                 var tagEnabled  = !!(row.querySelector('.chkEnableTag') || {}).checked;
-                var collEnabled = !!(row.querySelector('.chkEnableCollection') || {}).checked;
+                var collEnabled = !!(row.querySelector('.chkEnableCollection') || {}).checked || isRotatingRow(row);
 
                 // Check dirty state BEFORE rendering — so we know if user had unsaved changes already
                 var _hseView = row.closest('#HomeScreenCompanionConfigPage') || activeView();
@@ -6253,7 +6373,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
     function updateHseSectionAvailability(row) {
         var tagEnabled  = !!(row.querySelector('.chkEnableTag') || {}).checked;
-        var collEnabled = !!(row.querySelector('.chkEnableCollection') || {}).checked;
+        // A rotating row is a Single Collection row (today's collection), with or without Create Collection.
+        var collEnabled = !!(row.querySelector('.chkEnableCollection') || {}).checked || isRotatingRow(row);
         var hseCbx = row.querySelector('.chkEnableHomeSection');
         if (!hseCbx) return;
         var plEnabled = !!(row.querySelector('.chkEnablePlaylist') || {}).checked;
@@ -6278,6 +6399,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
     // The home screen section has something to show: a tag, collection or playlist, or its top-list.
     function hseAllowed(row) {
+        if (isRotatingRow(row)) return true;
         var nw = (row.querySelector('.selSourceType') || {}).value === 'NextWatch';
         return ['.chkEnableTag', '.chkEnableCollection', '.chkEnablePlaylist'].concat(nw ? [] : ['.chkEnableTopList'])
             .some(function (c) { return !!(row.querySelector(c) || {}).checked; });
@@ -6440,7 +6562,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 NextWatchUsersMigrated: row.dataset.nwMigrated === '1',
                 NextWatchSeedDays: readNwSeedDays(row), NextWatchUseTaste: readNwUseTaste(row)
             };
-            Object.assign(baseTag, readTopListTab(row));
+            Object.assign(baseTag, readTopListTab(row), readRotation(row));
 
             if (st === 'External') {
                 var pushedExternal = false;
@@ -7133,6 +7255,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     EnableTopList: !!t.EnableTopList, TopListContentType: (t.TopListContentType === 'Shows' || t.TopListContentType === 'Movies') ? t.TopListContentType : 'Auto',
                     TopListMaxItems: t.TopListMaxItems || 0, TopListBadgeStyle: t.TopListBadgeStyle || 'neutral',
                     TopListBadgeOptions: t.TopListBadgeOptions || '', TopListRealPoster: t.TopListRealPoster || '',
+                    RotationPool: t.RotationPool || 'Selected', RotationCollections: sortRotationNames(t.RotationCollections || []),
+                    RotationTag: t.RotationTag || '', RotationEvery: t.RotationEvery || 'Day', RotationOrder: t.RotationOrder || 'Shuffle',
                     LastRuns: [],
                 };
             }
@@ -12842,7 +12966,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<li><strong>Local Media Information</strong>: filters on your own library (a smart playlist).</li>' +
                 '<li><strong>Manual List</strong>: titles you pick by hand.</li>' +
                 '<li><strong>AI created lists</strong>: describe the list and an AI builds it.</li>' +
-                '<li><strong>Your Next Watch</strong>: picks for each user from what they watch.</li></ul>' },
+                '<li><strong>Your Next Watch</strong>: picks for each user from what they watch.</li>' +
+                '<li><strong>Rotating collection</strong>: one row that shows a different collection each day or week.</li></ul>' },
         { page: 'TagCollection', demo: 'general', target: tourInDemo('.source-external-container'), icon: 'link', title: 'Source tab: the list',
           html: '<p>For an External List, paste the list\'s address here, e.g. a Trakt list or an MDBList top-list. <strong>Add another URL</strong> merges more lists into this source.</p>' +
                 '<p>The number next to a URL caps how many titles are taken from it (0 = all). Only titles that are in your library are used.</p>' +

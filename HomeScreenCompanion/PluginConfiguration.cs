@@ -190,6 +190,14 @@ namespace HomeScreenCompanion
         public List<string> LocalSources { get; set; } = new List<string>();
         // "Manual" source: Emby item ids (movies and series), in list order.
         public List<string> ManualItemIds { get; set; } = new List<string>();
+        // "Rotating collection" source (see RotatingRow): the pool — "Selected" (RotationCollections,
+        // by name), "Managed" (every collection HSC makes), "All" or "Tag" (collections with RotationTag) —
+        // how often the row moves on ("Day" / "Week") and in what order ("Shuffle" / "InOrder").
+        public string RotationPool { get; set; } = "Selected";
+        public List<string> RotationCollections { get; set; } = new List<string>();
+        public string RotationTag { get; set; } = "";
+        public string RotationEvery { get; set; } = "Day";
+        public string RotationOrder { get; set; } = "Shuffle";
         public List<string> MediaInfoConditions { get; set; } = new List<string>();
         public List<MediaInfoFilter> MediaInfoFilters { get; set; } = new List<MediaInfoFilter>();
 
