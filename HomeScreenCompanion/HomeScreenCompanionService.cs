@@ -750,6 +750,7 @@ namespace HomeScreenCompanion
         // Null in backups made before the settings level: the current level is kept.
         public string? SettingsLevel { get; set; }
         public bool? ShowAdvancedBadges { get; set; }
+        public List<string>? SourceFolders { get; set; }
         // Null in backups made before it was backed up: the current setting is kept.
         public bool? HideTopListLibraries { get; set; }
         // Null in backups made before the per-provider caps: the current caps are kept.
@@ -3947,6 +3948,7 @@ public class HomeScreenCompanionService : IService
                     MissingExportCsv          = config.MissingExportCsv,
                     SettingsLevel             = config.SettingsLevel ?? "",
                     ShowAdvancedBadges        = config.ShowAdvancedBadges,
+                    SourceFolders              = config.SourceFolders,
                     HideTopListLibraries      = config.HideTopListLibraries,
                     TraktMaxItems             = config.TraktMaxItems,
                     MdblistMaxItems           = config.MdblistMaxItems,
@@ -4097,6 +4099,7 @@ public class HomeScreenCompanionService : IService
                     config.RankedCollectionsEnabled  = s.RankedCollectionsEnabled;
                     if (s.SettingsLevel != null) config.SettingsLevel = s.SettingsLevel;
                     if (s.ShowAdvancedBadges != null) config.ShowAdvancedBadges = s.ShowAdvancedBadges.Value;
+                    if (s.SourceFolders != null) config.SourceFolders = s.SourceFolders;
                     if (s.HideTopListLibraries != null) config.HideTopListLibraries = s.HideTopListLibraries.Value;
                     if (s.TraktMaxItems != null) config.TraktMaxItems = s.TraktMaxItems.Value;
                     if (s.MdblistMaxItems != null) config.MdblistMaxItems = s.MdblistMaxItems.Value;
@@ -4458,6 +4461,7 @@ public class HomeScreenCompanionService : IService
             t.HomeSectionUserIds  ??= new List<string>();
             t.HomeSectionTracked  ??= new List<HomeSectionTracking>();
             t.RotationItems       ??= new List<RotationItem>();
+            t.ListFolder           ??= "";
             t.RotationStartDay    ??= "";
             t.RotationOrder       ??= "List";
             t.PlaylistUserIds     ??= new List<string>();

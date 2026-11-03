@@ -74,6 +74,8 @@ namespace HomeScreenCompanion
         public List<TagConfig> Tags { get; set; } = new List<TagConfig>();
         public List<TopListHomeSection> TopLists { get; set; } = new List<TopListHomeSection>();
         public List<SavedMediaInfoFilter> SavedFilters { get; set; } = new List<SavedMediaInfoFilter>();
+        // The folders of the settings page's source list, in their order (see TagConfig.ListFolder).
+        public List<string> SourceFolders { get; set; } = new List<string>();
 
         public bool HomeSyncEnabled { get; set; } = false;
         // Copy & Sync profiles: each copies one source user's home screen to its own target users.
@@ -186,6 +188,9 @@ namespace HomeScreenCompanion
         public int Limit { get; set; } = 50;
 
         public string SourceType { get; set; } = "External";
+        // The folder this source is in on the settings page's list ("" = none). Only how the list
+        // looks: no sync reads it.
+        public string ListFolder { get; set; } = "";
         public string LocalSourceId { get; set; } = "";
         public List<string> LocalSources { get; set; } = new List<string>();
         // "Manual" source: Emby item ids (movies and series), in list order.

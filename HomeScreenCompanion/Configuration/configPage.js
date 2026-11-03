@@ -1216,6 +1216,19 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
             return document.scrollingElement || document.documentElement;
         }
+        // The rows between a and b that stay with what is moved (those in a closed source folder).
+        function goingAlong(a, b) {
+            var out = [];
+            if (opts.movesAlong) for (var el = a.nextElementSibling; el && el !== b; el = el.nextElementSibling) if (opts.movesAlong(el)) out.push(el);
+            return out;
+        }
+        function moveUpPast(list, prev) {
+            var at = row.nextElementSibling;
+            [prev].concat(goingAlong(prev, row)).forEach(function (el) { list.insertBefore(el, at); });
+        }
+        function moveDownPast(list, next) {
+            goingAlong(row, next).concat([next]).forEach(function (el) { list.insertBefore(el, row); });
+        }
         function finishMove(changed) {
             row.classList.add('just-moved');
             setTimeout(function () { row.classList.remove('just-moved'); }, 2000);
@@ -1250,8 +1263,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             function place() {
                 for (var guard = 0; guard < 500; guard++) {
                     var prev = neighbour(-1), next = neighbour(1);
-                    if (prev && pointerY < mid(prev)) list.insertBefore(prev, row.nextElementSibling);
-                    else if (next && pointerY > mid(next)) list.insertBefore(next, row);
+                    if (prev && pointerY < mid(prev)) moveUpPast(list, prev);
+                    else if (next && pointerY > mid(next)) moveDownPast(list, next);
                     else break;
                 }
             }
@@ -1319,8 +1332,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var rows = visibleRows(list);
             var i = rows.indexOf(row);
             // Move the neighbour, not the row: the focused handle stays in place in the DOM.
-            if (e.key === 'ArrowUp' && i > 0) list.insertBefore(rows[i - 1], row.nextElementSibling);
-            else if (e.key === 'ArrowDown' && i >= 0 && i < rows.length - 1) list.insertBefore(rows[i + 1], row);
+            if (e.key === 'ArrowUp' && i > 0) moveUpPast(list, rows[i - 1]);
+            else if (e.key === 'ArrowDown' && i >= 0 && i < rows.length - 1) moveDownPast(list, rows[i + 1]);
             else return;
             row.scrollIntoView({ block: 'nearest' });
             finishMove(true);
@@ -2397,7 +2410,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             NextWatchSeedDays: readNwSeedDays(row), NextWatchUseTaste: readNwUseTaste(row),
             MediaInfoTargetEpisode: false, MediaInfoTargetSeason: false, MediaInfoTargetSeries: false,
             MediaInfoTargetType: '', MediaInfoSeasonMode: false,
-        }, readTopListTab(row), readRotation(row));
+        }, readTopListTab(row), readRotation(row), { ListFolder: folderOfRow(row) });
     }
 
     var _formAc = null;
@@ -3450,7 +3463,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var newClass = isNew ? "just-added" : "";
 
         var html = `
-        <div class="tag-row ${inactiveClass} ${newClass}${sourceType === 'RotatingExisting' ? ' hsc-rotating' : ''}" data-index="${idx}" data-tag="${tagName.toLowerCase()}" data-last-modified="${lastMod}" data-nw-migrated="${tagConfig.NextWatchUsersMigrated ? '1' : '0'}" data-coll-imported="${tagConfig.CollectionImported ? '1' : '0'}" data-imported-st="${tagConfig.CollectionImported ? (tagConfig.SourceType || '') : ''}" data-poster-replaced="${tagConfig.CollectionPosterReplaced ? '1' : '0'}" data-bg-replaced="${tagConfig.CollectionBackgroundReplaced ? '1' : '0'}" data-thumb-replaced="${tagConfig.CollectionThumbReplaced ? '1' : '0'}" data-banner-replaced="${tagConfig.CollectionBannerReplaced ? '1' : '0'}" data-last-runs="${encodeURIComponent(JSON.stringify(tagConfig.LastRuns || []))}" data-group-key="${encodeURIComponent(groupIssueKey(tagConfig.Name, tagConfig.Tag))}" data-tl-saved="${topListOn && !isNew ? '1' : '0'}" data-tl-saved-tag="${escapeHtml((tagConfig.Tag || '').trim().toLowerCase())}" data-dirty="false">
+        <div class="tag-row ${inactiveClass} ${newClass}${sourceType === 'RotatingExisting' ? ' hsc-rotating' : ''}" data-list-folder="${escapeHtml(tagConfig.ListFolder || '')}" data-index="${idx}" data-tag="${tagName.toLowerCase()}" data-last-modified="${lastMod}" data-nw-migrated="${tagConfig.NextWatchUsersMigrated ? '1' : '0'}" data-coll-imported="${tagConfig.CollectionImported ? '1' : '0'}" data-imported-st="${tagConfig.CollectionImported ? (tagConfig.SourceType || '') : ''}" data-poster-replaced="${tagConfig.CollectionPosterReplaced ? '1' : '0'}" data-bg-replaced="${tagConfig.CollectionBackgroundReplaced ? '1' : '0'}" data-thumb-replaced="${tagConfig.CollectionThumbReplaced ? '1' : '0'}" data-banner-replaced="${tagConfig.CollectionBannerReplaced ? '1' : '0'}" data-last-runs="${encodeURIComponent(JSON.stringify(tagConfig.LastRuns || []))}" data-group-key="${encodeURIComponent(groupIssueKey(tagConfig.Name, tagConfig.Tag))}" data-tl-saved="${topListOn && !isNew ? '1' : '0'}" data-tl-saved-tag="${escapeHtml((tagConfig.Tag || '').trim().toLowerCase())}" data-dirty="false">
             <div class="tag-header">
                 <div style="display:flex; align-items:center; min-width:0;">
                     <div class="header-actions" style="margin-right:12px; display:flex; align-items:center;" onclick="event.stopPropagation()">
@@ -3490,6 +3503,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 
                 <div class="tab-content general-tab">
                     <div class="inputContainer" style="flex-grow:1;"><input is="emby-input" class="txtEntryLabel" type="text" label="Display Name" value="${labelName}" /></div>
+                    <div style="margin-bottom: 15px;">
+                        <label class="selectLabel">Folder</label>
+                        <select is="emby-select" class="selSourceFolder" style="width:100%;"><option value="">No folder</option></select>
+                        <div class="fieldDescription">Only sorts this list. It changes nothing the source does.</div>
+                    </div>
                     
                     <div style="margin-bottom: 15px;">
                         <label class="selectLabel">Source Type</label>
@@ -4947,19 +4965,29 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         // Manual order: drag the handle (mouse, touch or pen) or use its arrow keys.
         makeRowSortable(row, row.querySelector('.drag-handle'), {
             list: function () { return row.parentElement; },
-            rowSelector: '.tag-row',
+            rowSelector: '.tag-row, .src-folder-head',
+            movesAlong: function (el) { return el.classList.contains('hsc-folder-hidden'); },
             canDrag: function () { return !!row.parentElement && !row.parentElement.classList.contains('sort-hidden'); },
             onStart: function () {
                 // Closed rows are easier to move past each other.
                 row.parentElement.querySelectorAll('.tag-body').forEach(function (b) { b.style.display = 'none'; });
                 row.parentElement.querySelectorAll('.expand-icon').forEach(function (i) { i.innerText = 'expand_more'; });
             },
-            onMoved: function () { setTimeout(checkFormState, 0); }
+            onMoved: function () {
+                var movedView = row.closest('#HomeScreenCompanionConfigPage') || activeView();
+                refreshSourceFolders(movedView);
+                setTimeout(checkFormState, 0);
+            }
+        });
+
+        row.querySelector('.drag-handle').addEventListener('blur', function () {
+            refreshSourceFolders(row.closest('#HomeScreenCompanionConfigPage') || activeView());
         });
 
         row.querySelector('.btnDuplicateRow').addEventListener('click', () => {
             var config = markAsCopy(readRowAsConfig(row));
-            renderTagGroup(config, row.closest('#tagListContainer'), true, undefined, true);
+            // A copy of a source in a folder stays in that folder.
+            renderTagGroup(config, row.closest('#tagListContainer'), true, undefined, true, folderOfRow(row) ? row : undefined);
             applyFilters(row.closest('#HomeScreenCompanionConfigPage') || activeView());
             setTimeout(checkFormState, 0);
         });
@@ -5574,6 +5602,218 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         return rows;
     }
 
+    // ---- Source folders (Tag & Collection tab) ----
+    // Only how the list looks: nothing in a sync reads them. A folder is a header in the list and the
+    // rows under it are in it (rows above the first header are in none), so every other piece of
+    // code still sees one flat list, and dragging a row past a header moves it into that folder.
+    // Saved as TagConfig.ListFolder and SourceFolders; which ones are closed is this browser's own.
+    var FOLDER_CLOSED_KEY = 'HomeScreenCompanion_ClosedFolders';
+
+    function closedFolders() {
+        try { return JSON.parse(localStorage.getItem(FOLDER_CLOSED_KEY) || '[]') || []; } catch (e) { return []; }
+    }
+    function setFolderClosed(name, closed) {
+        var list = closedFolders().filter(function (n) { return n !== name; });
+        if (closed) list.push(name);
+        try { localStorage.setItem(FOLDER_CLOSED_KEY, JSON.stringify(list)); } catch (e) { }
+    }
+    function folderHeads(container) {
+        return Array.prototype.filter.call(container.children, function (el) { return el.classList.contains('src-folder-head'); });
+    }
+    function folderOfRow(row) {
+        for (var el = row.previousElementSibling; el; el = el.previousElementSibling)
+            if (el.classList.contains('src-folder-head')) return el.dataset.folder;
+        return '';
+    }
+    function folderRows(head) {
+        var rows = [];
+        for (var el = head.nextElementSibling; el && !el.classList.contains('src-folder-head'); el = el.nextElementSibling) rows.push(el);
+        return rows;
+    }
+    function uniqueFolderName(container, wanted, except) {
+        var names = folderHeads(container).filter(function (h) { return h !== except; }).map(function (h) { return h.dataset.folder.toLowerCase(); });
+        var name = wanted, n = 2;
+        while (names.indexOf(name.toLowerCase()) >= 0) name = wanted + ' ' + (n++);
+        return name;
+    }
+    function folderHeadHtml(name) {
+        function btn(cls, icon, title) { return '<button type="button" class="' + cls + '" title="' + title + '" aria-label="' + title + '"><i class="md-icon">' + icon + '</i></button>'; }
+        return '<div class="src-folder-head" data-folder="' + escapeHtml(name) + '">' +
+            '<i class="md-icon src-folder-chevron">expand_more</i>' +
+            '<i class="md-icon src-folder-icon">folder</i>' +
+            '<span class="src-folder-name">' + escapeHtml(name) + '</span>' +
+            '<span class="src-folder-count"></span>' +
+            '<i class="md-icon src-folder-issue" title="A source in this folder has an issue from its last run" style="display:none;">warning</i>' +
+            '<span class="src-folder-actions">' +
+                btn('btnFolderUp', 'arrow_upward', 'Move folder up') + btn('btnFolderDown', 'arrow_downward', 'Move folder down') +
+                btn('btnFolderRename', 'edit', 'Rename folder') + btn('btnFolderRemove', 'close', 'Remove folder (its sources stay)') +
+            '</span></div>';
+    }
+
+    // Classes, counts and the sources' Folder lists, from what the list looks like now.
+    function refreshSourceFolders(view) {
+        var container = view.querySelector('#tagListContainer');
+        if (!container) return;
+        var closed = closedFolders(), filtering = container.classList.contains('hsc-folder-filtering');
+        var heads = folderHeads(container), names = heads.map(function (h) { return h.dataset.folder; });
+        var inFolder = false, isClosed = false;
+        // The row being moved with its handle stays in view, also inside a closed folder.
+        var focused = document.activeElement && document.activeElement.classList.contains('drag-handle') ? document.activeElement.closest('.tag-row') : null;
+        Array.prototype.forEach.call(container.children, function (el) {
+            if (el.classList.contains('src-folder-head')) { inFolder = true; isClosed = closed.indexOf(el.dataset.folder) >= 0; return; }
+            el.classList.toggle('hsc-in-folder', inFolder);
+            el.classList.toggle('hsc-folder-hidden', inFolder && isClosed && el !== focused);
+        });
+        heads.forEach(function (h) {
+            var rows = folderRows(h);
+            var shown = rows.filter(function (r) { return r.style.display !== 'none'; }).length;
+            var open = closed.indexOf(h.dataset.folder) < 0;
+            h.classList.toggle('closed', !open && !filtering);
+            h.style.display = filtering && shown === 0 ? 'none' : '';
+            h.querySelector('.src-folder-count').textContent = filtering ? shown + ' of ' + rows.length
+                : rows.length === 0 ? 'Empty: drag a source here, or pick this folder on the source' : rows.length === 1 ? '1 source' : rows.length + ' sources';
+            h.querySelector('.src-folder-issue').style.display = rows.some(function (r) {
+                return !!_groupIssues[decodeURIComponent(r.dataset.groupKey || '')];
+            }) ? '' : 'none';
+        });
+        var optionsKey = JSON.stringify(names);
+        container.querySelectorAll('.selSourceFolder').forEach(function (sel) {
+            if (sel.dataset.optionsKey !== optionsKey) {
+                sel.innerHTML = '<option value="">No folder</option>' + names.map(function (n) {
+                    return '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>';
+                }).join('') + '<option value="__new__">+ New folder…</option>';
+                sel.dataset.optionsKey = optionsKey;
+            }
+            sel.value = folderOfRow(sel.closest('.tag-row'));
+        });
+    }
+
+    // After the rows are drawn: the saved folders, each with its rows, under the rows in no folder.
+    function layoutSourceFolders(view, config) {
+        var container = view.querySelector('#tagListContainer');
+        var rows = Array.prototype.slice.call(container.querySelectorAll(':scope > .tag-row'));
+        var names = [];
+        function add(n) { if (n && !names.some(function (x) { return x.toLowerCase() === n.toLowerCase(); })) names.push(n); }
+        (config.SourceFolders || []).forEach(add);
+        rows.forEach(function (r) { add(r.dataset.listFolder); });
+        names.forEach(function (name) {
+            container.insertAdjacentHTML('beforeend', folderHeadHtml(name));
+            rows.filter(function (r) { return (r.dataset.listFolder || '').toLowerCase() === name.toLowerCase(); })
+                .forEach(function (r) { container.appendChild(r); });
+        });
+    }
+
+    function addSourceFolder(view, wanted) {
+        var container = view.querySelector('#tagListContainer');
+        var name = uniqueFolderName(container, wanted);
+        container.insertAdjacentHTML('beforeend', folderHeadHtml(name));
+        return container.lastElementChild;
+    }
+
+    function moveRowToFolder(view, row, name) {
+        var container = view.querySelector('#tagListContainer');
+        var heads = folderHeads(container);
+        if (!name) { container.insertBefore(row, heads[0] || null); return; }
+        var at = heads.findIndex(function (h) { return h.dataset.folder === name; });
+        if (at < 0) return;
+        setFolderClosed(name, false);
+        container.insertBefore(row, heads[at + 1] || null);
+    }
+
+    // A source that something wants to show: its folder opens.
+    function revealSourceRow(view, row) {
+        var name = folderOfRow(row);
+        if (!name || closedFolders().indexOf(name) < 0) return;
+        setFolderClosed(name, false);
+        refreshSourceFolders(view);
+    }
+
+    function startFolderRename(view, head) {
+        var span = head.querySelector('.src-folder-name');
+        if (!span || head.querySelector('.txtFolderName')) return;
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'txtFolderName emby-input';
+        input.value = head.dataset.folder;
+        span.style.display = 'none';
+        span.parentNode.insertBefore(input, span);
+        var finished = false;
+        function finish(keep) {
+            if (finished) return;
+            finished = true;
+            var container = view.querySelector('#tagListContainer');
+            var wanted = input.value.trim();
+            input.remove();
+            span.style.display = '';
+            if (!keep || !wanted || wanted === head.dataset.folder) return;
+            var name = uniqueFolderName(container, wanted, head);
+            var wasClosed = closedFolders().indexOf(head.dataset.folder) >= 0;
+            setFolderClosed(head.dataset.folder, false);
+            head.dataset.folder = name;
+            span.textContent = name;
+            if (wasClosed) setFolderClosed(name, true);
+            refreshSourceFolders(view);
+            setTimeout(checkFormState, 0);
+        }
+        input.addEventListener('keydown', function (e) {
+            e.stopPropagation();
+            if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+            else if (e.key === 'Escape') finish(false);
+        });
+        input.addEventListener('blur', function () { finish(true); });
+        input.addEventListener('click', function (e) { e.stopPropagation(); });
+        input.focus();
+        input.select();
+    }
+
+    function wireSourceFolders(view) {
+        var container = view.querySelector('#tagListContainer');
+        function changed() { refreshSourceFolders(view); setTimeout(checkFormState, 0); }
+        var addFolder = view.querySelector('#btnAddFolder');
+        addFolder.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); addFolder.click(); } });
+        addFolder.addEventListener('click', function () {
+            var head = addSourceFolder(view, 'New folder');
+            changed();
+            head.scrollIntoView({ block: 'center' });
+            startFolderRename(view, head);
+        });
+        container.addEventListener('click', function (e) {
+            var head = e.target.closest('.src-folder-head');
+            if (!head || head.parentElement !== container) return;
+            var heads = folderHeads(container), at = heads.indexOf(head), block = [head].concat(folderRows(head));
+            if (e.target.closest('.btnFolderUp')) {
+                if (at > 0) block.forEach(function (el) { container.insertBefore(el, heads[at - 1]); });
+                changed();
+            } else if (e.target.closest('.btnFolderDown')) {
+                if (at < heads.length - 1) block.forEach(function (el) { container.insertBefore(el, heads[at + 2] || null); });
+                changed();
+            } else if (e.target.closest('.btnFolderRename')) {
+                startFolderRename(view, head);
+            } else if (e.target.closest('.btnFolderRemove')) {
+                folderRows(head).forEach(function (r) { container.insertBefore(r, heads[0]); });
+                setFolderClosed(head.dataset.folder, false);
+                head.remove();
+                changed();
+            } else if (!e.target.closest('.txtFolderName')) {
+                setFolderClosed(head.dataset.folder, closedFolders().indexOf(head.dataset.folder) < 0);
+                refreshSourceFolders(view);
+            }
+        });
+        container.addEventListener('change', function (e) {
+            if (!e.target.classList.contains('selSourceFolder')) return;
+            var row = e.target.closest('.tag-row');
+            if (e.target.value === '__new__') {
+                var head = addSourceFolder(view, 'New folder');
+                moveRowToFolder(view, row, head.dataset.folder);
+                changed();
+                startFolderRename(view, head);
+                return;
+            }
+            moveRowToFolder(view, row, e.target.value);
+            changed();
+        });
+    }
+
     function sortRows(container, criteria) {
         var rows = Array.from(container.querySelectorAll('.tag-row'));
         // While the list is in manual order its DOM order is the user's order (moved and new rows
@@ -5599,7 +5839,19 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             return manualRank(a) - manualRank(b);
         });
 
-        rows.forEach(row => container.appendChild(row));
+        // Each row stays in its folder: sorted within it, the folders in their order.
+        var parts = [{ head: null, rows: [] }];
+        Array.prototype.forEach.call(container.children, function (el) {
+            if (el.classList.contains('src-folder-head')) parts.push({ head: el, rows: [] });
+        });
+        rows.forEach(function (row) {
+            var name = folderOfRow(row);
+            (parts.filter(function (p) { return p.head && p.head.dataset.folder === name; })[0] || parts[0]).rows.push(row);
+        });
+        parts.forEach(function (p) {
+            if (p.head) container.appendChild(p.head);
+            p.rows.forEach(function (row) { container.appendChild(row); });
+        });
 
         if (criteria !== 'Manual') container.classList.add('sort-hidden');
         else container.classList.remove('sort-hidden');
@@ -6594,7 +6846,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 NextWatchUsersMigrated: row.dataset.nwMigrated === '1',
                 NextWatchSeedDays: readNwSeedDays(row), NextWatchUseTaste: readNwUseTaste(row)
             };
-            Object.assign(baseTag, readTopListTab(row), readRotation(row));
+            Object.assign(baseTag, readTopListTab(row), readRotation(row), { ListFolder: folderOfRow(row) });
 
             if (st === 'External') {
                 var pushedExternal = false;
@@ -6711,6 +6963,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             ShowAdvancedBadges: view.querySelector('#chkShowAdvancedBadges').checked,
             Tags: flatTags,
             SavedFilters: savedFilters,
+            SourceFolders: folderHeads(view.querySelector('#tagListContainer')).map(function (h) { return h.dataset.folder; }),
             HomeSyncEnabled: hscEnabled ? hscEnabled.checked : (lastHscConfig.HomeSyncEnabled || false),
             HomeSyncProfiles: hscEnabled ? readHscProfiles(view) : (lastHscConfig.HomeSyncProfiles || []),
             // Replaced by HomeSyncProfiles (see effectiveHscProfiles): cleared on save.
@@ -6902,7 +7155,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         ShowCopyPasteButtons: 'Copy & paste sources', ShowImportCollectionButton: 'Import collection', ShowMissingTitles: 'Show missing titles',
         MissingIncludeGaps: 'Missing: include shows that lack episodes', MissingExportToFile: 'Missing: keep the list in a file',
         MissingExportFolder: 'Missing: file folder', MissingExportJson: 'Missing: JSON file', MissingExportCsv: 'Missing: CSV files',
-        RankedCollectionsEnabled: 'Ranked collections', ShowAdvancedBadges: 'Show Advanced badges', SavedFilters: 'Saved filters',
+        RankedCollectionsEnabled: 'Ranked collections', ShowAdvancedBadges: 'Show Advanced badges', SourceFolders: 'Source folders', SavedFilters: 'Saved filters',
         HomeSyncEnabled: 'Home Screen sync: on/off', HomeSyncProfiles: 'Home Screen sync: profiles',
         ContinueWatchingBumpEnabled: 'Continue Watching bump: on/off', ContinueWatchingBumpMode: 'Continue Watching bump: mode',
         ContinueWatchingBumpAllUsers: 'Continue Watching bump: all users', ContinueWatchingBumpUserIds: 'Continue Watching bump: users',
@@ -7107,6 +7360,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
             row.style.display = (matchesSearch && matchesFeature && matchesSrc && matchesStatus && matchesIssues) ? 'block' : 'none';
         });
+        // Searching or filtering looks inside closed folders too.
+        container.classList.toggle('hsc-folder-filtering', !!(searchTerm || anyFeature || anySrc || anyStatus || fIssues));
+        refreshSourceFolders(view);
         // Recount here too: rows are rendered, added and reloaded after the issues arrive.
         updateIssueCounter(view);
         var counter = view.querySelector('#btnIssueCounter');
@@ -7260,7 +7516,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     EnableHomeSection: t.EnableHomeSection || false, HomeSectionLibraryId: t.HomeSectionLibraryId || 'auto',
                     HomeSectionUserIds: t.HomeSectionUserIds || [], HomeSectionSettings: t.HomeSectionSettings || '{}',
                     HomeSectionTracked: t.HomeSectionTracked || [],
-                    RotationItems: t.RotationItems || [], RotationEveryDays: t.RotationEveryDays || 7,
+                    ListFolder: t.ListFolder || '', RotationItems: t.RotationItems || [], RotationEveryDays: t.RotationEveryDays || 7,
                     RotationStartDay: t.RotationStartDay || '', RotationOrder: t.RotationOrder || 'List',
                     AiProvider: t.AiProvider || 'OpenAI',
                     AiPrompt: t.AiPrompt || '',
@@ -10673,6 +10929,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }
         var tab = row.querySelector('.tag-tab[data-tab="' + tabName + '"]');
         if (tab) tab.click();
+        revealSourceRow(view, row);
         setTimeout(function () { try { row.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { row.scrollIntoView(); } }, 50);
     }
 
@@ -13580,6 +13837,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                         <button type="button" id="btnIssueCounter" class="hsc-issue-counter" style="display:none;" title="Show only these groups"></button>
 
+                        <div class="filter-dropdown-btn" id="btnAddFolder" role="button" tabindex="0" style="margin-left:auto; flex-shrink:0;" title="A folder only sorts this list. It changes nothing the sources do.">
+                            <i class="md-icon" style="font-size:1.1em;">create_new_folder</i>
+                            <span>New folder</span>
+                        </div>
+
                     </div>`;
 
                     headerAction.insertAdjacentHTML('afterend', controlRowHtml);
@@ -13635,6 +13897,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     });
                 }
 
+                wireSourceFolders(view);
                 view.querySelector('#btnAddTag').addEventListener('click', () => {
                     renderTagGroup({ Tag: '', Urls: [{ url: '', limit: 0 }], Active: true }, view.querySelector('#tagListContainer'), true, undefined, true);
                     applyFilters(view);
@@ -14385,6 +14648,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var srcEmptyHint = view.querySelector('#srcEmptyHint');
                 if (srcEmptyHint) srcEmptyHint.style.display = keys.length === 0 ? '' : 'none';
 
+                layoutSourceFolders(view, config);
                 var savedSort = localStorage.getItem('HomeScreenCompanion_SortBy') || 'Manual';
                 sortRows(container, savedSort);
                 applyFilters(view);

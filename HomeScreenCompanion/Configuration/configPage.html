@@ -887,6 +887,26 @@
         .homescreen-tab.tl-mode .hse-tl-hide { display: none !important; }
         .homescreen-tab .hse-st-single { display: none !important; }
         .homescreen-tab.hse-empty .hse-details > :not(.toplist-tab) { display: none !important; }
+        /* Source folders (Tag & Collection tab): a header in the list, with the rows under it. */
+        .src-folder-head {
+            display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 12px; margin: 14px 0 8px;
+            background: rgba(128,128,128,0.1); border: 1px solid var(--hsc-hairline); border-radius: 8px;
+            cursor: pointer; user-select: none;
+        }
+        .src-folder-head:hover { background: rgba(128,128,128,0.16); }
+        .src-folder-head .md-icon { font-size: 1.25em; color: var(--theme-text-secondary); }
+        .src-folder-chevron { transition: transform 0.15s ease; }
+        .src-folder-head.closed .src-folder-chevron { transform: rotate(-90deg); }
+        .src-folder-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .src-folder-count { font-size: 0.85em; color: var(--theme-text-secondary); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .src-folder-head .src-folder-issue { color: var(--hsc-warning-text); }
+        .src-folder-actions { display: flex; gap: 2px; flex-shrink: 0; opacity: 0.55; }
+        .src-folder-head:hover .src-folder-actions, .src-folder-actions:focus-within { opacity: 1; }
+        .src-folder-actions button { border: none; background: transparent; color: inherit; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+        .src-folder-actions button:hover { background: rgba(128,128,128,0.2); }
+        .txtFolderName { font-weight: 600; font-size: 0.95em; padding: 3px 6px; min-width: 200px; box-sizing: border-box; }
+        .tag-row.hsc-in-folder { margin-left: 18px; }
+        #tagListContainer:not(.hsc-folder-filtering) > .tag-row.hsc-folder-hidden { display: none !important; }
         /* Rotating from existing: it only makes its home row, of the type of what it rotates. */
         .hsc-rot-only { display: none; }
         .tag-row.hsc-rotating .hsc-rot-only { display: block; }
@@ -2401,6 +2421,10 @@
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">autorenew</i> Rotating from existing</div>
                         One home row that shows one of your collections, tags or playlists, and the next one every few days, like a <em>Now Showing</em> row. <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-more-rotating').scrollIntoView({behavior:'smooth'});return false;">More below</a>.
                     </div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">folder</i>
+                    <div><strong>Folders</strong> — sort a long list of sources into folders that open and close. A folder only changes how the list looks; nothing a source does depends on it. <em>New folder</em> makes one. Drag a source past a folder's header to move it in or out, or pick the folder under <em>Folder</em> on the source's Source tab. On a folder's header you can move it, rename it, or remove it (its sources stay). Searching and filtering also look inside closed folders, and sorting by name sorts within each folder. Which folders are open is remembered in your browser. Click <strong>Save</strong> to keep your folders.</div>
                 </div>
                 <div class="hsc-eyebrow" style="margin:14px 0 8px;">More about the source types</div>
                 <div id="help-more-rotating" class="help-feature-row">
