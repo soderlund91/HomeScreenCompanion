@@ -532,9 +532,11 @@ namespace HomeScreenCompanion
 
                 // Process OverrideWhenActive entries first so they can remove themselves from
                 // activeTagOverrides before non-override entries for the same tag are evaluated.
+                // A rotating source reads and writes no titles: ManageHomeSections does its row.
                 var orderedTags = config.Tags
                     .Where(t => t.OverrideWhenActive)
                     .Concat(config.Tags.Where(t => !t.OverrideWhenActive))
+                    .Where(t => !RotatingRow.Is(t))
                     .ToList();
 
                 // A group with several URLs is stored as one flat entry per URL. Its fetch lines wait
@@ -2058,6 +2060,16 @@ namespace HomeScreenCompanion
             bool logMissing = config.LogMissingItems;
             var startTime = DateTime.Now;
             _log = _preview != null ? new RunLog(new List<string>(), null, "", false) : new RunLog(ExecutionLog, _logger, "", config.ExtendedConsoleOutput, Progress);
+            if (_preview == null && RotatingRow.Is(tagConfig))
+            {
+                _log.Rule();
+                _log.Info($"Home Screen Companion v{Plugin.Instance?.Version}  ·  {startTime:yyyy-MM-dd HH:mm}  ·  Single group: {_displayName}");
+                if (dryRun) _log.Skip("Dry run: the rotating row is not changed");
+                else ManageHomeSections(config, cancellationToken, debug, null, tagConfig.Tag.Trim());
+                _log.Rule();
+                LastRunStatus = $"Completed ({DateTime.Now:HH:mm})";
+                return (true, "Rotating row synced");
+            }
             if (_preview == null && tagConfig.SourceType == "AI" && tagConfig.AiRefreshIntervalDays > 0 &&
                 tagConfig.Active && IsScheduleActive(tagConfig.ActiveIntervals) &&
                 tagConfig.AiLastRunDate > DateTime.MinValue &&
@@ -3515,6 +3527,7 @@ namespace HomeScreenCompanion
                 var newKeys = new HashSet<string>(newConfig.Tags.Select(GroupKey), StringComparer.OrdinalIgnoreCase);
                 var deleted = oldConfig.Tags.Where(t => !newKeys.Contains(GroupKey(t))).ToList();
                 if (deleted.Count == 0) return;
+                RotatingRow.Forget(deleted);
 
                 var newTags = new HashSet<string>(newConfig.Tags.Where(t => !string.IsNullOrWhiteSpace(t.Tag)).SelectMany(t => t.AllTags()), StringComparer.OrdinalIgnoreCase);
                 var newCollections = new HashSet<string>(newConfig.Tags.Where(t => t.EnableCollection).Select(CollectionNameOf), StringComparer.OrdinalIgnoreCase);
@@ -3566,8 +3579,9 @@ namespace HomeScreenCompanion
                                 UserId = r.UserId,
                                 SectionId = r.SectionId,
                                 SectionMarker = SectionMarker(t),
-                                HomeSectionSettings = t.HomeSectionSettings ?? "{}",
-                                DefaultTitle = DefaultRowTitle(t)
+                                // A rotating row goes by its id only: a row of the user's own can have its title.
+                                HomeSectionSettings = RotatingRow.Is(t) ? "{}" : t.HomeSectionSettings ?? "{}",
+                                DefaultTitle = RotatingRow.Is(t) ? "" : DefaultRowTitle(t)
                             });
                             queueChanged = true;
                         }
@@ -4529,6 +4543,12 @@ namespace HomeScreenCompanion
                 if (filterTagName != null && !string.Equals(tc.Tag?.Trim(), filterTagName, StringComparison.OrdinalIgnoreCase))
                     continue;
 
+                if (RotatingRow.Is(tc))
+                {
+                    if (processedHsKeys.Add(GroupKey(tc)) && SyncRotatingRow(tc, config, statsList, cancellationToken)) configChanged = true;
+                    continue;
+                }
+
                 bool isActive = tc.Active && IsScheduleActive(tc.ActiveIntervals);
                 if (NormalizeNextWatch(tc)) configChanged = true;
                 _log.Step($"Home sections — {(string.IsNullOrWhiteSpace(tc.Name) ? tc.Tag : tc.Name)}");
@@ -4629,31 +4649,7 @@ namespace HomeScreenCompanion
 
                 settingsDict.TryGetValue("SectionType", out var sectionType);
 
-                // For items-type sections, dynamically ensure all top-list libraries are excluded
-                if (sectionType == "items")
-                {
-                    var topListLibIds = (config.TopLists ?? new System.Collections.Generic.List<TopListHomeSection>())
-                        .Where(t => !string.IsNullOrEmpty(t.HomeSectionLibraryId) && t.HomeSectionLibraryId != "auto")
-                        .Select(t => t.HomeSectionLibraryId)
-                        .ToList();
-                    if (topListLibIds.Count > 0)
-                    {
-                        var current = (settingsDict.TryGetValue("_queryExcludeViewIds", out var ev) ? ev : "")
-                            .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
-                            .Select(s => s.Trim())
-                            .ToList();
-                        bool excChanged = false;
-                        foreach (var id in topListLibIds)
-                            if (!current.Contains(id, StringComparer.OrdinalIgnoreCase))
-                            { current.Add(id); excChanged = true; }
-                        if (excChanged)
-                        {
-                            var excStr = string.Join(",", current);
-                            settingsDict["_queryExcludeViewIds"] = excStr;
-                            settingsDict["ExcludedFolders"] = excStr;
-                        }
-                    }
-                }
+                if (sectionType == "items") AddTopListExclusions(settingsDict, config);
 
                 // Never saved: only the row gets the ranked-collection libraries.
                 TopListLibraryVisibility.AddRankedExclusions(settingsDict, tc.HomeSectionLibraryId, rankedLibIds, allLibIds, _jsonSerializer);
@@ -4867,7 +4863,170 @@ namespace HomeScreenCompanion
                 TagAnchor.Prune(_libraryManager, _jsonSerializer, anchoredTags, m => _log.Warn(m));
 
             if (configChanged)
+            {
+                RotatingRow.CarryTracking(config);
                 Plugin.Instance.SaveConfiguration();
+            }
+        }
+
+        // For items-type sections: every top-list library is excluded.
+        internal static void AddTopListExclusions(Dictionary<string, string> settings, PluginConfiguration config)
+        {
+            var topListLibIds = (config.TopLists ?? new System.Collections.Generic.List<TopListHomeSection>())
+                .Where(t => !string.IsNullOrEmpty(t.HomeSectionLibraryId) && t.HomeSectionLibraryId != "auto")
+                .Select(t => t.HomeSectionLibraryId)
+                .ToList();
+            if (topListLibIds.Count == 0) return;
+            var current = (settings.TryGetValue("_queryExcludeViewIds", out var ev) ? ev : "")
+                .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(s => s.Trim())
+                .ToList();
+            bool excChanged = false;
+            foreach (var id in topListLibIds)
+                if (!current.Contains(id, StringComparer.OrdinalIgnoreCase))
+                { current.Add(id); excChanged = true; }
+            if (excChanged)
+            {
+                var excStr = string.Join(",", current);
+                settings["_queryExcludeViewIds"] = excStr;
+                settings["ExcludedFolders"] = excStr;
+            }
+        }
+
+        // A rotating source's row for each of its users (see RotatingRow): updated in place with what
+        // that user may see from the turn on; no row while there is nothing, back at the same place
+        // after. Only rows tracked for the source are touched. True when the tracking changed.
+        private bool SyncRotatingRow(TagConfig tc, PluginConfiguration config, List<GroupRunStats>? statsList, CancellationToken cancellationToken)
+        {
+            bool changed = false;
+            tc.HomeSectionTracked ??= new List<HomeSectionTracking>();
+            tc.HomeSectionUserIds ??= new List<string>();
+            var hsKey = GroupKey(tc);
+            string tagName = (tc.Tag ?? "").Trim();
+            string display = !string.IsNullOrWhiteSpace(tc.Name) ? tc.Name.Trim() : tagName;
+            _log.Step($"Home sections — {display}");
+
+            // Removes the user's row. remember: it comes back at the same place.
+            bool RemoveRow(HomeSectionTracking t, bool remember)
+            {
+                var uid = _userManager.GetInternalId(t.UserId);
+                var row = RotatingRow.FindRow(_userManager.GetHomeSections(uid, cancellationToken)?.Sections ?? Array.Empty<ContentSection>(), t);
+                if (row == null) return false;
+                if (remember) RememberRowPosition(hsKey, t.UserId, uid, row.Id, cancellationToken);
+                _userManager.DeleteHomeSections(uid, new[] { row.Id }, cancellationToken);
+                return true;
+            }
+
+            bool inSchedule = tc.Active && IsScheduleActive(tc.ActiveIntervals);
+            var items = RotatingRow.Items(tc);
+            if (!inSchedule || !tc.EnableHomeSection || items.Count == 0)
+            {
+                int removed = 0;
+                foreach (var t in tc.HomeSectionTracked.ToList())
+                {
+                    if (SkipDisabled(t.UserId)) continue;
+                    try { if (RemoveRow(t, tc.EnableHomeSection)) removed++; }
+                    catch (Exception ex) { _log.Warn($"{display}: home section could not be removed: {ex.Message}"); continue; }
+                    tc.HomeSectionTracked.Remove(t);
+                    changed = true;
+                }
+                if (removed > 0) _log.Skip($"{display}: home section removed for {RunLog.Plural(removed, "user")} ({(items.Count == 0 ? "no items in its list" : tc.EnableHomeSection ? "inactive or not in schedule" : "no longer set to show a home section")})");
+                else if (items.Count == 0 && inSchedule && tc.EnableHomeSection) _log.Skip($"{display}: skipped — no items in its list yet");
+                return changed;
+            }
+            if (!StillWanted(tc))
+            {
+                _log.Skip($"{display}: home section not synced — the group was deleted or switched off while this run was busy");
+                return changed;
+            }
+
+            // Users taken off the source.
+            foreach (var t in tc.HomeSectionTracked.Where(t => !tc.HomeSectionUserIds.Any(u => HomeSectionSyncTask.NormId(u) == HomeSectionSyncTask.NormId(t.UserId))).ToList())
+            {
+                try { RemoveRow(t, false); }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                tc.HomeSectionTracked.Remove(t);
+                changed = true;
+            }
+
+            if (tc.HomeSectionUserIds.Count == 0)
+            {
+                HsWarn(statsList, tagName, display, "home section enabled but no users are selected");
+                return changed;
+            }
+
+            var sequence = RotatingRow.Turn(tc, _userManager, _libraryManager, _jsonSerializer);
+            var settingsNow = RowPlacement.PositionIn(tc.HomeSectionSettings);
+            var posKey = RowPlacement.SourceKey(tc);
+            bool posMove = RowPlacement.ShouldMove(posKey, settingsNow, false);
+            int synced = 0, hidden = 0;
+            var shown = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            _log.Section($"Home section: {display}");
+            foreach (var userId in tc.HomeSectionUserIds)
+            {
+                if (SkipDisabled(userId)) { _log.Debug($"  {UserName(userId)}: skipped — disabled in Emby (the row is kept)"); continue; }
+                try
+                {
+                    var uid = _userManager.GetInternalId(userId);
+                    var tracked = tc.HomeSectionTracked.FirstOrDefault(t => HomeSectionSyncTask.NormId(t.UserId) == HomeSectionSyncTask.NormId(userId));
+                    var pick = RotatingRow.PickFor(tc, userId, sequence, _userManager, _libraryManager, _jsonSerializer);
+                    if (pick == null)
+                    {
+                        if (tracked != null)
+                        {
+                            RemoveRow(tracked, true);
+                            tc.HomeSectionTracked.Remove(tracked);
+                            changed = true;
+                        }
+                        hidden++;
+                        _log.Debug($"  {UserName(userId)}: no row — nothing in the list they may see");
+                        continue;
+                    }
+                    var sections = _userManager.GetHomeSections(uid, cancellationToken)?.Sections ?? Array.Empty<ContentSection>();
+                    var owned = RotatingRow.FindRow(sections, tracked);
+                    if (owned != null && SectionOwnedElsewhere(config, hsKey, userId, owned.Id)) owned = null;
+                    ContentSection written;
+                    string sectionId;
+                    if (owned != null)
+                    {
+                        written = RotatingRow.Build(tc, pick, config, _libraryManager, _jsonSerializer, owned);
+                        typeof(ContentSection).GetProperty("Id")?.SetValue(written, owned.Id);
+                        _userManager.UpdateHomeSection(uid, written, cancellationToken);
+                        sectionId = owned.Id;
+                        if (posMove) MoveToPosition(_userManager, uid, sectionId, settingsNow, cancellationToken, tc.HomeSectionUserIds.Where(u => u != userId), written.CustomName);
+                    }
+                    else
+                    {
+                        written = RotatingRow.Build(tc, pick, config, _libraryManager, _jsonSerializer, null);
+                        _userManager.AddHomeSection(uid, written, cancellationToken);
+                        sectionId = (_userManager.GetHomeSections(uid, cancellationToken)?.Sections ?? Array.Empty<ContentSection>())
+                            .Where(s => !string.IsNullOrEmpty(s.Id) && !sections.Any(b => b.Id == s.Id)).Select(s => s.Id).FirstOrDefault() ?? "";
+                        if (sectionId.Length > 0 && !RestoreRowPosition(hsKey, userId, uid, sectionId, cancellationToken))
+                            PlaceNewRow(_userManager, uid, sectionId, settingsNow, cancellationToken, tc.HomeSectionUserIds.Where(u => u != userId), written.CustomName);
+                    }
+                    if (sectionId.Length > 0)
+                    {
+                        RotatingRow.Track(tc, userId, sectionId, written);
+                        changed = true;
+                    }
+                    synced++;
+                    shown[pick.Name] = shown.TryGetValue(pick.Name, out var n) ? n + 1 : 1;
+                    _log.Debug($"  {UserName(userId)}: '{written.CustomName}' (section id {sectionId})");
+                }
+                catch (Exception ex)
+                {
+                    HsWarn(statsList, tagName, display, $"home section failed for {UserName(userId)}: {ex.Message}");
+                }
+            }
+            if (posMove) RowPlacement.MarkApplied(posKey, settingsNow);
+            if (synced > 0)
+            {
+                var gs = statsList?.FirstOrDefault(s => s.TagName != null && string.Equals(s.TagName, tagName, StringComparison.OrdinalIgnoreCase));
+                if (gs != null) { gs.HomeSectionSynced = true; gs.HomeSectionUserCount = synced; }
+                _log.Ok($"{display}: home section synced for {RunLog.Plural(synced, "user")}  ·  now showing {string.Join(", ", shown.Select(kv => shown.Count > 1 ? $"{kv.Key} ({kv.Value})" : kv.Key))}");
+            }
+            if (hidden > 0) _log.Skip($"{display}: no row for {RunLog.Plural(hidden, "user")} — nothing in the list they may see");
+            return changed;
         }
 
         // Is the group still in the saved settings, switched on? A run works on the settings object it

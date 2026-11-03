@@ -887,6 +887,13 @@
         .homescreen-tab.tl-mode .hse-tl-hide { display: none !important; }
         .homescreen-tab .hse-st-single { display: none !important; }
         .homescreen-tab.hse-empty .hse-details > :not(.toplist-tab) { display: none !important; }
+        /* Rotating from existing: it only makes its home row, of the type of what it rotates. */
+        .hsc-rot-only { display: none; }
+        .tag-row.hsc-rotating .hsc-rot-only { display: block; }
+        .tag-row.hsc-rotating .tag-tab[data-tab="tag"], .tag-row.hsc-rotating .tag-tab[data-tab="collection"],
+        .tag-row.hsc-rotating .tag-tab[data-tab="playlist"], .tag-row.hsc-rotating .tag-tab[data-tab="advanced"],
+        .tag-row.hsc-rotating .source-mediainfo-container, .tag-row.hsc-rotating .toplist-tab,
+        .tag-row.hsc-rotating .hse-st-field { display: none !important; }
         .hsc-callout.danger > .md-icon { color: var(--hsc-danger-text); }
         .hsc-callout.success { background: rgba(82,181,75,0.08); border-color: rgba(82,181,75,0.3); }
         .hsc-callout.success > .md-icon { color: var(--hsc-primary-text); }
@@ -2390,8 +2397,23 @@
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">recommend</i> Personal: Your Next Watch</div>
                         Personal recommendations, worked out on your server (no AI, no internet): every ticked user gets their own playlist of unwatched titles most like what they have been watching, refreshed on every sync. See <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-sec-2b').scrollIntoView({behavior:'smooth'});return false;"><em>Your Next Watch</em> below</a> for how it picks and how to set it up.
                     </div>
+                    <div class="src-card">
+                        <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">autorenew</i> Rotating from existing</div>
+                        One home row that shows one of your collections, tags or playlists, and the next one every few days, like a <em>Now Showing</em> row. <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-more-rotating').scrollIntoView({behavior:'smooth'});return false;">More below</a>.
+                    </div>
                 </div>
                 <div class="hsc-eyebrow" style="margin:14px 0 8px;">More about the source types</div>
+                <div id="help-more-rotating" class="help-feature-row">
+                    <i class="md-icon help-feat-icon">autorenew</i>
+                    <div><strong>Rotating from existing</strong> — makes one home row from things you already have. It only makes that row: it tags nothing and creates nothing, so the Tag, Collection, Playlist and Blacklist tabs are hidden.
+                        <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
+                            <li><strong>The list</strong> — each line is a <em>Collection</em>, <em>Tag</em> or <em>Playlist</em> (they can be mixed), which one, and an optional <strong>name</strong>: what <code>{name}</code> becomes in the row's title (empty uses its own name). Add as many as you like, and use the arrows to set the order.</li>
+                            <li><strong>Rotate every (days)</strong> and <strong>Start on</strong> — with a day, the first change is on that weekday and it runs every X days from there: every 7 days from Friday gives something new before each weekend. With <em>No set day</em> it counts from the day you save. Changing either starts the count again. The row changes at midnight, server time (within 15 minutes).</li>
+                            <li><strong>Order</strong> — <em>In list order</em>, or <em>Shuffle</em>: a random order that shows every one once before any comes back. A changed list does not make it jump: it goes on from where it is.</li>
+                            <li><strong>Title</strong> — <em>Custom Title</em> on the Home Screen tab: <code>Now Showing: {name}</code> gives for example <em>Now Showing: Marvel</em>. Empty gives just the name.</li>
+                        </ul>
+                        The row stays in its place; only what it shows changes. The Home Screen tab's <em>Media Type</em> and sorting apply when it shows a tag. <strong>Each user sees what they may see:</strong> one who may not see the one whose turn it is (or for whom it is empty) gets the next one they may see, so users can see different things on the same day and a child's account limits nobody else. With nothing to show, a user has no row until there is something, and it comes back in the same place. A playlist only counts for those it is shared with. The Schedule tab works as for any source.</div>
+                </div>
                 <div id="help-more-external" class="help-feature-row">
                     <i class="md-icon help-feat-icon">public</i>
                     <div><strong>External</strong> — paste a list URL from <strong>Trakt</strong>, <strong>MDBList</strong> or <strong>TMDb</strong>. The plugin downloads the list and tags every matching title it finds in your library.
@@ -2870,7 +2892,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">copy_all</i>
-                    <div><strong>Copy &amp; Sync</strong> — Copies the complete home screen layout from one user to one or more other users. Handy when you want all profiles to look the same. Every row is copied, in the same order — including source rows, whatever that row's own target users are. Two exceptions: a <strong>top-list row</strong> only goes to that list's own target users (a top-list has its own library, and only its users are given access to it) — add the users to the top-list in the Top-Lists tab to give them the row; and a per-user playlist row (such as <em>Your Next Watch</em>) is copied in the same place but shows each user's own playlist, and users without one from that source don't get the row. Old copies pointing at someone else's playlist are re-pointed or removed, and old copies of a top-list row for users who are not its target users are removed. This runs separately from the tag and collection sync.
+                    <div><strong>Copy &amp; Sync</strong> — Copies the complete home screen layout from one user to one or more other users. Handy when you want all profiles to look the same. Every row is copied, in the same order — including source rows, whatever that row's own target users are. Two exceptions: a <strong>top-list row</strong> only goes to that list's own target users (a top-list has its own library, and only its users are given access to it) — add the users to the top-list in the Top-Lists tab to give them the row; and a per-user playlist row (such as <em>Your Next Watch</em>) is copied in the same place but shows each user's own playlist, and users without one from that source don't get the row. A <em>Rotating from existing</em> row only goes to that source's own target users, each with what they may see (with <em>Also add users to the sources and top-lists of copied rows</em>, every target user is put on the source). Old copies pointing at someone else's playlist are re-pointed or removed, and old copies of a top-list row for users who are not its target users are removed. This runs separately from the tag and collection sync.
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li>Tick <em>Enable Home Screen sync</em>, pick the <strong>Source User</strong> whose layout is the model, and tick the users to copy to. Set the source user's home screen up in Emby first, then run it.</li>
                             <li>The target users' own rows are <strong>replaced</strong>, so changes they made themselves are lost on the next run.</li>

@@ -1,4 +1,5 @@
 using MediaBrowser.Model.Logging;
+using MediaBrowser.Model.Serialization;
 using MediaBrowser.Model.Tasks;
 using System;
 using System.Collections.Generic;
@@ -13,15 +14,19 @@ namespace HomeScreenCompanion
     /// Runs the Tag &amp; Collection Sync when a scheduled source starts or stops being active, so
     /// time-of-day schedules (e.g. a 20:00 Spotlight) switch on time instead of at the 04:00 sync.
     /// It only checks the schedules; the sync itself does the switching (overrides, cleanup).
+    /// A rotating row (RotatingRow) that is due runs its own Run Group, also when that failed
+    /// or was missed before: being due is not lost.
     /// </summary>
     public class ScheduleSwitchTask : IScheduledTask, IConfigurableScheduledTask
     {
         private readonly ITaskManager _taskManager;
         private readonly PluginLogger _logger;
+        private readonly IJsonSerializer _json;
 
-        public ScheduleSwitchTask(ITaskManager taskManager, ILogManager logManager)
+        public ScheduleSwitchTask(ITaskManager taskManager, ILogManager logManager, IJsonSerializer json)
         {
             _taskManager = taskManager;
+            _json = json;
             _logger = PluginLog.Wrap(logManager.GetLogger("HomeScreenCompanion_Schedule"), "Schedule");
         }
 
@@ -54,8 +59,8 @@ namespace HomeScreenCompanion
             try { if (File.Exists(statePath)) previous = File.ReadAllText(statePath); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
 
             // First run: remember the state; the daily sync already matches it.
-            if (previous == null) { Save(statePath, state); return Task.CompletedTask; }
-            if (previous == state) return Task.CompletedTask;
+            if (previous == null) { Save(statePath, state); RunDueRotations(config); return Task.CompletedTask; }
+            if (previous == state) { RunDueRotations(config); return Task.CompletedTask; }
 
             // Try again on the next check rather than lose the switch.
             if (HomeScreenCompanionTask.IsRunning) return Task.CompletedTask;
@@ -69,6 +74,21 @@ namespace HomeScreenCompanion
             Save(statePath, state);
             _taskManager.QueueScheduledTask<HomeScreenCompanionTask>();
             return Task.CompletedTask;
+        }
+
+        // Rotating rows on their way to the next item, or new or changed: only their Run Groups run.
+        private void RunDueRotations(PluginConfiguration config)
+        {
+            var task = HomeScreenCompanionTask.Instance;
+            if (task == null || config.DryRunMode || HomeScreenCompanionTask.IsRunning) return;
+            var due = config.Tags.Where(t => RotatingRow.Is(t) && t.Active && t.EnableHomeSection && !string.IsNullOrWhiteSpace(t.Tag)
+                    && (t.HomeSectionUserIds?.Count ?? 0) > 0 && RotatingRow.Items(t).Count > 0
+                    && HomeScreenCompanionTask.IsScheduleActive(t.ActiveIntervals, DateTime.Now) && RotatingRow.Due(t, _json))
+                .Select(t => string.IsNullOrWhiteSpace(t.Name) ? t.Tag : t.Name).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (due.Count == 0) return;
+            _logger.Info("Rotating row due; running {0}", string.Join(", ", due.Select(n => $"Run Group '{n}'")));
+            foreach (var name in due)
+                _ = Task.Run(() => task.RunSingleEntryAsync(name, CancellationToken.None));
         }
 
         // One line per scheduled source: "<name>\t1" when in schedule, "\t0" when not.

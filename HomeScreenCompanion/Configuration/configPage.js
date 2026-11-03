@@ -206,6 +206,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     var cachedCollections = [];
     var cachedPlaylists = [];
     var cachedTags = [];
+    var cachedTagNames = [];   // every tag on the server (a rotating source's list)
     var lastHscConfig = {};
     var currentManageSections = [];
     var savedFilters = [];
@@ -2238,6 +2239,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     function clearDefaultCustomName(hseSettings, hseTab) {
         var orig = '';
         try { orig = decodeURIComponent((hseTab && hseTab.dataset.hseOrigName) || ''); } catch (ex) {}
+        if (isRotatingRow(hseTab && hseTab.closest('.tag-row'))) orig = '{name}';
         var cn = (hseSettings.CustomName || '').trim();
         if (!cn || (orig && cn === orig)) delete hseSettings.CustomName;
     }
@@ -2395,7 +2397,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             NextWatchSeedDays: readNwSeedDays(row), NextWatchUseTaste: readNwUseTaste(row),
             MediaInfoTargetEpisode: false, MediaInfoTargetSeason: false, MediaInfoTargetSeries: false,
             MediaInfoTargetType: '', MediaInfoSeasonMode: false,
-        }, readTopListTab(row));
+        }, readTopListTab(row), readRotation(row));
     }
 
     var _formAc = null;
@@ -3210,6 +3212,121 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         if (note) note.textContent = isNw ? 'Leave empty to use the text shown in the box.' : 'Leave empty for no description.';
     }
 
+    // ---- Rotating from existing source (RotatingRow.cs) ----
+    var ROTATING_HINT = 'One home row that shows one of your collections, tags or playlists, and the next one every few days. It only makes that row: it tags nothing and creates nothing.';
+
+    function isRotatingRow(row) {
+        return !!row && (row.querySelector('.selSourceType') || {}).value === 'RotatingExisting';
+    }
+
+    // The Home Screen tab's fields for a mixed list: those of a tag row when it has a tag (they
+    // only apply to tags), else of its playlists or collections. Each item's row gets its own type.
+    function rotationSectionType(kinds) {
+        return kinds.indexOf('Tag') >= 0 ? 'items' : kinds.indexOf('Playlist') >= 0 ? 'playlist' : 'boxset';
+    }
+
+    function rotationKindsOf(row) {
+        return Array.from(row.querySelectorAll('.source-rotating-container .rot-item')).filter(function (i) {
+            return !!i.querySelector('.selRotItem').value;
+        }).map(function (i) { return i.querySelector('.selRotKind').value; });
+    }
+
+    // Custom Title's placeholder: the row's default title.
+    function hseTitlePlaceholder(row) {
+        return isRotatingRow(row) ? '{name}' : (row.querySelector('.txtEntryLabel').value || row.querySelector('.txtTagName').value || '');
+    }
+
+    function rotationNames(kind) {
+        if (kind === 'Tag') return (cachedTagNames || []).slice();
+        var names = (kind === 'Playlist' ? cachedPlaylists : cachedCollections || []).map(function (o) { return o.Name || ''; });
+        return names.filter(function (n, i) { return n && names.indexOf(n) === i; });
+    }
+
+    function rotationItemOptionsHtml(kind, value) {
+        var names = rotationNames(kind);
+        // One no longer on the server stays selected, so a Save keeps it.
+        if (value && names.indexOf(value) < 0) names.unshift(value);
+        return '<option value="">-- Select --</option>' + names.map(function (n) {
+            return '<option value="' + escapeHtml(n) + '"' + (n === value ? ' selected' : '') + '>' + escapeHtml(n) + '</option>';
+        }).join('');
+    }
+
+    // One line: what kind, which one, its name, the arrows and remove.
+    function rotationItemHtml(kind, value, name) {
+        function opt(v) { return '<option value="' + v + '"' + (v === kind ? ' selected' : '') + '>' + v + '</option>'; }
+        var arrow = 'cursor:pointer;border:none;background:transparent;color:inherit;padding:2px 4px;';
+        return '<div class="rot-item" style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">' +
+            '<div style="flex:0 0 120px;"><select is="emby-select" class="selRotKind" style="width:100%;">' + opt('Collection') + opt('Tag') + opt('Playlist') + '</select></div>' +
+            '<div style="flex:1 1 50%; min-width:0;"><select is="emby-select" class="selRotItem" style="width:100%;">' + rotationItemOptionsHtml(kind, value) + '</select></div>' +
+            '<div style="flex:1 1 50%; min-width:0;"><input type="text" class="txtRotName emby-input" placeholder="Name (optional)" value="' + escapeHtml(name || '') + '" style="width:100%;box-sizing:border-box;" /></div>' +
+            '<button type="button" class="btnRotUp" title="Move up" style="' + arrow + '"><i class="md-icon">arrow_upward</i></button>' +
+            '<button type="button" class="btnRotDown" title="Move down" style="' + arrow + '"><i class="md-icon">arrow_downward</i></button>' +
+            '<button type="button" is="emby-button" class="raised btnRotRemove btn-row-remove" title="Remove"><i class="md-icon">remove_circle_outline</i></button>' +
+            '</div>';
+    }
+
+    function rotatingSettingsHtml(t) {
+        var every = t.RotationEveryDays > 0 ? t.RotationEveryDays : 7;
+        var startDay = t.RotationStartDay || '', order = t.RotationOrder || 'List';
+        function opt(v, label, cur) { return '<option value="' + v + '"' + (v === cur ? ' selected' : '') + '>' + label + '</option>'; }
+        var items = (t.RotationItems || []).length ? t.RotationItems : [{ Kind: 'Collection', Value: '', Name: '' }];
+        return '<div class="rot-item-list" style="margin-top:10px;">' + items.map(function (i) { return rotationItemHtml(i.Kind || 'Collection', i.Value, i.Name); }).join('') + '</div>' +
+            '<div class="fieldDescription" style="margin-bottom:10px;">The name is what <code>{name}</code> becomes in the row\'s title. Leave it empty to use the item\'s own name.</div>' +
+            '<div style="margin-bottom:15px;"><button is="emby-button" type="button" class="raised btnRotAdd hsc-btn-dashed" style="width:100%;"><i class="md-icon" style="margin-right:5px;">add</i>Add another</button></div>' +
+            '<div style="display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap; margin-bottom:6px;">' +
+                '<div style="flex:0 0 150px;"><input is="emby-input" type="number" class="txtRotEvery" label="Rotate every (days)" min="1" value="' + every + '" /></div>' +
+                '<div style="flex:1 1 180px;"><label class="selectLabel">Start on</label><select is="emby-select" class="selRotStart" style="width:100%;">' +
+                    opt('', 'No set day', startDay) +
+                    ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map(function (d) { return opt(d, d, startDay); }).join('') +
+                '</select></div>' +
+                '<div style="flex:1 1 180px;"><label class="selectLabel">Order</label><select is="emby-select" class="selRotOrder" style="width:100%;">' +
+                    opt('List', 'In list order', order) + opt('Shuffle', 'Shuffle', order) + '</select></div>' +
+            '</div>' +
+            '<div class="fieldDescription" style="margin-bottom:15px;">Set a day to change on the same weekday, e.g. every 7 days from Friday for something new before each weekend. With no set day it counts from the day you save. The row changes at midnight, server time (within 15 minutes).</div>';
+    }
+
+    function wireRotating(row) {
+        var box = row.querySelector('.source-rotating-container');
+        if (!box) return;
+        box.addEventListener('change', function (e) {
+            if (e.target.classList.contains('selRotKind')) e.target.closest('.rot-item').querySelector('.selRotItem').innerHTML = rotationItemOptionsHtml(e.target.value, '');
+            if (e.target.classList.contains('selRotKind') || e.target.classList.contains('selRotItem')) updateHseSectionAvailability(row);
+        });
+        box.addEventListener('click', function (e) {
+            var list = box.querySelector('.rot-item-list');
+            var btn = e.target.closest('.btnRotAdd, .btnRotRemove, .btnRotUp, .btnRotDown');
+            if (!btn) return;
+            var item = btn.closest('.rot-item');
+            // A new line starts as the kind of the line above it.
+            var kinds = list.querySelectorAll('.selRotKind');
+            if (btn.classList.contains('btnRotAdd')) list.insertAdjacentHTML('beforeend', rotationItemHtml(kinds.length ? kinds[kinds.length - 1].value : 'Collection', '', ''));
+            else if (btn.classList.contains('btnRotRemove')) {
+                item.remove();
+                if (!list.querySelector('.rot-item')) list.innerHTML = rotationItemHtml('Collection', '', '');
+                updateHseSectionAvailability(row);
+            }
+            else if (btn.classList.contains('btnRotUp') && item.previousElementSibling) list.insertBefore(item, item.previousElementSibling);
+            else if (btn.classList.contains('btnRotDown') && item.nextElementSibling) list.insertBefore(item.nextElementSibling, item);
+        });
+    }
+
+    // A rotating source's settings for its saved config; it only makes its row, so the rest is off.
+    function readRotation(row) {
+        if (!isRotatingRow(row)) return {};
+        var box = row.querySelector('.source-rotating-container');
+        var items = [];
+        box.querySelectorAll('.rot-item').forEach(function (i) {
+            var value = i.querySelector('.selRotItem').value;
+            if (value) items.push({ Kind: i.querySelector('.selRotKind').value, Value: value, Name: i.querySelector('.txtRotName').value.trim() });
+        });
+        return {
+            RotationItems: items,
+            RotationEveryDays: Math.max(1, parseInt(box.querySelector('.txtRotEvery').value, 10) || 1),
+            RotationStartDay: box.querySelector('.selRotStart').value, RotationOrder: box.querySelector('.selRotOrder').value,
+            EnableTag: false, EnableCollection: false, EnablePlaylist: false, EnableTopList: false
+        };
+    }
+
     function getSourceBadgeHtml(st) {
         var map = {
             'External':          { icon: 'language',        title: 'External List' },
@@ -3217,6 +3334,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             'LocalPlaylist':     { icon: 'playlist_play',   title: 'Local Playlist' },
             'Manual':            { icon: 'format_list_numbered', title: 'Manual List' },
             'NextWatch':         { icon: 'recommend',       title: 'Personal: Your Next Watch' },
+            'RotatingExisting':  { icon: 'autorenew',       title: 'Rotating from existing' },
             'MediaInfo':         { icon: 'tune',            title: 'Smart Playlist' },
                 'AI':              { icon: 'auto_awesome',   title: 'AI created lists' }
         };
@@ -3283,7 +3401,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         // The name the row's title defaults to (see clearDefaultCustomName).
         var homeSectionOrigNameEnc = encodeURIComponent((tagConfig.Name || tagConfig.Tag || '').trim());
         var homeSectionTrackedEnc = encodeURIComponent(JSON.stringify(tagConfig.HomeSectionTracked || []));
-        var hsDefaultSectionType = tagConfig.EnableCollection ? 'boxset' : (tagConfig.EnableTag !== false ? 'items' : (tagConfig.EnablePlaylist ? 'playlist' : 'boxset'));
+        var hsDefaultSectionType = sourceType === 'RotatingExisting' ? rotationSectionType((tagConfig.RotationItems || []).map(function (i) { return i.Kind; })) : tagConfig.EnableCollection ? 'boxset' : (tagConfig.EnableTag !== false ? 'items' : (tagConfig.EnablePlaylist ? 'playlist' : 'boxset'));
         var topListOn = !!tagConfig.EnableTopList;
 
         var mediaFilters = (tagConfig.MediaInfoFilters && tagConfig.MediaInfoFilters.length > 0)
@@ -3332,7 +3450,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var newClass = isNew ? "just-added" : "";
 
         var html = `
-        <div class="tag-row ${inactiveClass} ${newClass}" data-index="${idx}" data-tag="${tagName.toLowerCase()}" data-last-modified="${lastMod}" data-nw-migrated="${tagConfig.NextWatchUsersMigrated ? '1' : '0'}" data-coll-imported="${tagConfig.CollectionImported ? '1' : '0'}" data-imported-st="${tagConfig.CollectionImported ? (tagConfig.SourceType || '') : ''}" data-poster-replaced="${tagConfig.CollectionPosterReplaced ? '1' : '0'}" data-bg-replaced="${tagConfig.CollectionBackgroundReplaced ? '1' : '0'}" data-thumb-replaced="${tagConfig.CollectionThumbReplaced ? '1' : '0'}" data-banner-replaced="${tagConfig.CollectionBannerReplaced ? '1' : '0'}" data-last-runs="${encodeURIComponent(JSON.stringify(tagConfig.LastRuns || []))}" data-group-key="${encodeURIComponent(groupIssueKey(tagConfig.Name, tagConfig.Tag))}" data-tl-saved="${topListOn && !isNew ? '1' : '0'}" data-tl-saved-tag="${escapeHtml((tagConfig.Tag || '').trim().toLowerCase())}" data-dirty="false">
+        <div class="tag-row ${inactiveClass} ${newClass}${sourceType === 'RotatingExisting' ? ' hsc-rotating' : ''}" data-index="${idx}" data-tag="${tagName.toLowerCase()}" data-last-modified="${lastMod}" data-nw-migrated="${tagConfig.NextWatchUsersMigrated ? '1' : '0'}" data-coll-imported="${tagConfig.CollectionImported ? '1' : '0'}" data-imported-st="${tagConfig.CollectionImported ? (tagConfig.SourceType || '') : ''}" data-poster-replaced="${tagConfig.CollectionPosterReplaced ? '1' : '0'}" data-bg-replaced="${tagConfig.CollectionBackgroundReplaced ? '1' : '0'}" data-thumb-replaced="${tagConfig.CollectionThumbReplaced ? '1' : '0'}" data-banner-replaced="${tagConfig.CollectionBannerReplaced ? '1' : '0'}" data-last-runs="${encodeURIComponent(JSON.stringify(tagConfig.LastRuns || []))}" data-group-key="${encodeURIComponent(groupIssueKey(tagConfig.Name, tagConfig.Tag))}" data-tl-saved="${topListOn && !isNew ? '1' : '0'}" data-tl-saved-tag="${escapeHtml((tagConfig.Tag || '').trim().toLowerCase())}" data-dirty="false">
             <div class="tag-header">
                 <div style="display:flex; align-items:center; min-width:0;">
                     <div class="header-actions" style="margin-right:12px; display:flex; align-items:center;" onclick="event.stopPropagation()">
@@ -3384,6 +3502,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <option value="LocalPlaylist" ${sourceType === 'LocalPlaylist' ? 'selected' : ''}>Local Playlist</option>
                             <option value="Manual" ${sourceType === 'Manual' ? 'selected' : ''}>Manual List (pick movies and shows)</option>
                             <option value="NextWatch" ${sourceType === 'NextWatch' ? 'selected' : ''}>Personal: Your Next Watch</option>
+                            <option value="RotatingExisting" ${sourceType === 'RotatingExisting' ? 'selected' : ''}>Rotating from existing</option>
                         </select>
                         <p class="source-type-hint" style="margin:6px 0 0 0; font-size:1em; opacity:0.8; line-height:1.4;">${(function(st) {
                             if (st === 'External')         return 'Use an external list to tag, or create a collection, from the items that match your library.';
@@ -3393,6 +3512,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             if (st === 'MediaInfo')       return 'Filter your own library to select which movies or shows to tag or create a collection of. This is also known as a Smart Playlist.';
                             if (st === 'AI')              return 'Use AI to create a list. Write your prompt and the AI will build a list based on it.';
                             if (st === 'NextWatch')       return NEXT_WATCH_HINT;
+                            if (st === 'RotatingExisting') return ROTATING_HINT;
                             return '';
                         })(sourceType)}</p>
                     </div>
@@ -3426,6 +3546,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         </div>
                         <div class="manualItemList" style="max-height:420px;overflow-y:auto;border:1px solid var(--line-color);border-radius:6px;padding:4px 8px;min-height:44px;"></div>
                     </div>
+
+                    <div class="source-rotating-container" style="display: ${sourceType === 'RotatingExisting' ? 'block' : 'none'};">${rotatingSettingsHtml(tagConfig)}</div>
 
                     <div class="source-ai-container" style="display: ${sourceType === 'AI' ? 'block' : 'none'};">
                         <div style="margin-bottom: 15px;">
@@ -3843,7 +3965,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     </div>
                 </div>
 
-                <div class="tab-content homescreen-tab${topListOn ? ' tl-mode' : ''}${tagConfig.EnableTag === false && !tagConfig.EnableCollection && !tagConfig.EnablePlaylist && !topListOn ? ' hse-empty' : ''}" style="display:none;"
+                <div class="tab-content homescreen-tab${topListOn ? ' tl-mode' : ''}${tagConfig.EnableTag === false && !tagConfig.EnableCollection && !tagConfig.EnablePlaylist && !topListOn && sourceType !== 'RotatingExisting' ? ' hse-empty' : ''}" style="display:none;"
                     data-hse-libraryid="${homeSectionLibraryId}"
                     data-hse-userids="${homeSectionUserIdsEnc}"
                     data-hse-settings="${homeSectionSettingsEnc}"
@@ -3857,7 +3979,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <span>Add as home screen section</span>
                         </label>
                         <div class="fieldDescription">A home screen section will be managed for selected users each time sync runs.</div>
-                        <div class="hse-disabled-hint" style="font-size:0.9em; color:var(--hsc-danger-text); margin-top:4px; display:${(enableHomeSection && tagConfig.EnableTag === false && !tagConfig.EnableCollection && !tagConfig.EnablePlaylist && !tagConfig.EnableTopList) ? 'block' : 'none'};">A plain row needs <strong>Apply Tag</strong>, <strong>Create Collection</strong> or <strong>Create Playlist</strong>, or tick <strong>Create as top-list</strong> below. Untick <em>Add as home screen section</em> if you do not want a row.</div>
+                        <div class="hse-disabled-hint" style="font-size:0.9em; color:var(--hsc-danger-text); margin-top:4px; display:${(enableHomeSection && tagConfig.EnableTag === false && !tagConfig.EnableCollection && !tagConfig.EnablePlaylist && !tagConfig.EnableTopList && sourceType !== 'RotatingExisting') ? 'block' : 'none'};">A plain row needs <strong>Apply Tag</strong>, <strong>Create Collection</strong> or <strong>Create Playlist</strong>, or tick <strong>Create as top-list</strong> below. Untick <em>Add as home screen section</em> if you do not want a row.</div>
                     </div>
                     <div class="hse-details" style="display:${enableHomeSection ? 'block' : 'none'}; margin-top:15px;">
                         ${buildTopListTabHtml(tagConfig)}
@@ -4124,6 +4246,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
 
     function setupRowEvents(row) {
+        wireRotating(row);
         function updateBadges(row) {
             var container = row.querySelector('.badge-container');
             if (!container) return;
@@ -4249,6 +4372,26 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 row.querySelector('.source-mediainfo-container').style.display = (type && type !== '') ? 'block' : 'none';
                 row.querySelector('.source-ai-container').style.display = type === 'AI' ? 'block' : 'none';
                 row.querySelector('.source-manual-container').style.display = type === 'Manual' ? 'block' : 'none';
+                row.querySelector('.source-rotating-container').style.display = type === 'RotatingExisting' ? 'block' : 'none';
+                var _wasRotating = row.classList.contains('hsc-rotating');
+                row.classList.toggle('hsc-rotating', type === 'RotatingExisting');
+                if (type === 'RotatingExisting') {
+                    // It only makes its home row: that goes on, and what it does not do goes off (their tabs are hidden).
+                    var _rotHs = row.querySelector('.chkEnableHomeSection');
+                    if (_rotHs && !_rotHs.checked) { _rotHs.checked = true; _rotHs.dispatchEvent(new Event('change', { bubbles: true })); }
+                    ['.chkEnableTag', '.chkEnableCollection', '.chkEnablePlaylist', '.chkEnableTopList'].forEach(function (sel) {
+                        var _c = row.querySelector(sel);
+                        if (_c && _c.checked) { _c.checked = false; _c.dispatchEvent(new Event('change', { bubbles: true })); }
+                    });
+                    var _rotOpenTab = row.querySelector('.tag-tab.active');
+                    if (_rotOpenTab && /^(tag|collection|playlist|advanced)$/.test(_rotOpenTab.dataset.tab)) row.querySelector('.tag-tab[data-tab="general"]').click();
+                } else if (_wasRotating) {
+                    var _tagBack = row.querySelector('.chkEnableTag');
+                    if (_tagBack && !_tagBack.checked) { _tagBack.checked = true; _tagBack.dispatchEvent(new Event('change', { bubbles: true })); }
+                }
+                updateHseSectionAvailability(row);
+                var _rotTitle = row.querySelector('.homescreen-tab [data-field="CustomName"]');
+                if (_rotTitle) _rotTitle.setAttribute('placeholder', hseTitlePlaceholder(row));
 
                 var _hint = row.querySelector('.source-type-hint');
                 if (_hint) {
@@ -4259,7 +4402,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         'Manual':           'Pick movies and shows by hand. Search to add them, use the arrows to set the order, and remove them with ✕.',
                         'MediaInfo':        'Filter your own library to select which movies or shows to tag or create a collection of. This is also known as a Smart Playlist.',
                         'AI':               'Use AI to create a list. Write your prompt and the AI will build a list based on it.',
-                        'NextWatch':        NEXT_WATCH_HINT
+                        'NextWatch':        NEXT_WATCH_HINT,
+                        'RotatingExisting': ROTATING_HINT
                     };
                     _hint.textContent = _hints[type] || '';
                 }
@@ -4792,7 +4936,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             row.querySelector('.txtTagName').setAttribute('placeholder', lbl);
             row.querySelector('.txtCollectionName').setAttribute('placeholder', lbl);
             var hseCustomTitle = row.querySelector('[data-field="CustomName"]');
-            if (hseCustomTitle) hseCustomTitle.setAttribute('placeholder', lbl);
+            if (hseCustomTitle) hseCustomTitle.setAttribute('placeholder', hseTitlePlaceholder(row));
             updateBadges(row);
         }
         row.querySelector('.txtEntryLabel').addEventListener('input', function() {
@@ -5903,7 +6047,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
         var customName = ((s.CustomName || '').trim() === (defaultName || '').trim() ? '' : (s.CustomName || '')).replace(/"/g, '&quot;');
         var customNamePlaceholder = (defaultName || '').replace(/"/g, '&quot;');
-        html += '<div style="margin-bottom:12px;"><input is="emby-input" type="text" class="hse-field-str" data-field="CustomName" label="Custom Title" value="' + customName + '" placeholder="' + customNamePlaceholder + '"/></div>';
+        html += '<div style="margin-bottom:12px;"><input is="emby-input" type="text" class="hse-field-str" data-field="CustomName" label="Custom Title" value="' + customName + '" placeholder="' + customNamePlaceholder + '"/><div class="fieldDescription hsc-rot-only"><code>{name}</code> becomes the name of what the row shows, e.g. <code>Now Showing: {name}</code>. Leave it empty for just the name.</div></div>';
 
         // Where the row goes. The Row list is the first selected user's rows (filled in by
         // fillPositionRows); the saved choice is shown until that list has loaded.
@@ -6117,6 +6261,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                                     : ''
                 };
 
+                // A rotating row's live title and type come from its turn, not from the form.
+                if (isRotatingRow(tab.closest('.tag-row'))) { delete fieldMap.CustomName; delete fieldMap.SectionType; }
                 Object.keys(fieldMap).forEach(function(field) {
                     var el = tab.querySelector('[data-field="' + field + '"]');
                     if (!el) return;
@@ -6215,16 +6361,19 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 wireUserMultiSelect(tab.querySelector('.hse-user-list-inner'));
 
                 // Structured section settings form
-                var defaultTagName = row.querySelector('.txtEntryLabel').value || row.querySelector('.txtTagName').value || '';
-                var tagEnabled  = !!(row.querySelector('.chkEnableTag') || {}).checked;
-                var collEnabled = !!(row.querySelector('.chkEnableCollection') || {}).checked;
+                var defaultTagName = hseTitlePlaceholder(row);
+                var rotating = isRotatingRow(row);
+                var rotType = rotating ? rotationSectionType(rotationKindsOf(row)) : '';
+                var tagEnabled  = rotating ? rotType === 'items' : !!(row.querySelector('.chkEnableTag') || {}).checked;
+                var collEnabled = rotating ? rotType === 'boxset' : !!(row.querySelector('.chkEnableCollection') || {}).checked;
+                if (rotating) savedSettings.SectionType = rotType;
 
                 // Check dirty state BEFORE rendering — so we know if user had unsaved changes already
                 var _hseView = row.closest('#HomeScreenCompanionConfigPage') || activeView();
                 var _wasAlreadyDirty = _hseView && originalConfigState &&
                     JSON.stringify(getUiConfig(_hseView, true)) !== originalConfigState;
 
-                var plEnabled = !!(row.querySelector('.chkEnablePlaylist') || {}).checked;
+                var plEnabled = rotating ? rotType === 'playlist' : !!(row.querySelector('.chkEnablePlaylist') || {}).checked;
                 tab.querySelector('.hse-fields-inner').innerHTML = buildHomeSectionFormHtml(savedSettings, defaultSectionType, defaultTagName, tagEnabled, collEnabled, libraryOptions, savedLibraryId, allLibraries, plEnabled);
                 wireHomeSectionTypeChange(tab);
                 wirePositionField(tab);
@@ -6253,11 +6402,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             });
     }
     function updateHseSectionAvailability(row) {
-        var tagEnabled  = !!(row.querySelector('.chkEnableTag') || {}).checked;
-        var collEnabled = !!(row.querySelector('.chkEnableCollection') || {}).checked;
+        // A rotating row's fields follow what is in its list.
+        var rotating = isRotatingRow(row);
+        var rotType = rotating ? rotationSectionType(rotationKindsOf(row)) : '';
+        var tagEnabled  = rotating ? rotType === 'items' : !!(row.querySelector('.chkEnableTag') || {}).checked;
+        var collEnabled = rotating ? rotType === 'boxset' : !!(row.querySelector('.chkEnableCollection') || {}).checked;
         var hseCbx = row.querySelector('.chkEnableHomeSection');
         if (!hseCbx) return;
-        var plEnabled = !!(row.querySelector('.chkEnablePlaylist') || {}).checked;
+        var plEnabled = rotating ? rotType === 'playlist' : !!(row.querySelector('.chkEnablePlaylist') || {}).checked;
         // A top-list row needs none of them: its titles come from the source's run.
         var tlEnabled = !!(row.querySelector('.chkEnableTopList') || {}).checked && (row.querySelector('.selSourceType') || {}).value !== 'NextWatch';
 
@@ -6279,6 +6431,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
     // The home screen section has something to show: a tag, collection or playlist, or its top-list.
     function hseAllowed(row) {
+        if (isRotatingRow(row)) return true;
         var nw = (row.querySelector('.selSourceType') || {}).value === 'NextWatch';
         return ['.chkEnableTag', '.chkEnableCollection', '.chkEnablePlaylist'].concat(nw ? [] : ['.chkEnableTopList'])
             .some(function (c) { return !!(row.querySelector(c) || {}).checked; });
@@ -6441,7 +6594,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 NextWatchUsersMigrated: row.dataset.nwMigrated === '1',
                 NextWatchSeedDays: readNwSeedDays(row), NextWatchUseTaste: readNwUseTaste(row)
             };
-            Object.assign(baseTag, readTopListTab(row));
+            Object.assign(baseTag, readTopListTab(row), readRotation(row));
 
             if (st === 'External') {
                 var pushedExternal = false;
@@ -7107,6 +7260,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     EnableHomeSection: t.EnableHomeSection || false, HomeSectionLibraryId: t.HomeSectionLibraryId || 'auto',
                     HomeSectionUserIds: t.HomeSectionUserIds || [], HomeSectionSettings: t.HomeSectionSettings || '{}',
                     HomeSectionTracked: t.HomeSectionTracked || [],
+                    RotationItems: t.RotationItems || [], RotationEveryDays: t.RotationEveryDays || 7,
+                    RotationStartDay: t.RotationStartDay || '', RotationOrder: t.RotationOrder || 'List',
                     AiProvider: t.AiProvider || 'OpenAI',
                     AiPrompt: t.AiPrompt || '',
                     AiIncludeRecentlyWatched: t.AiIncludeRecentlyWatched || false,
@@ -12843,7 +12998,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<li><strong>Local Media Information</strong>: filters on your own library (a smart playlist).</li>' +
                 '<li><strong>Manual List</strong>: titles you pick by hand.</li>' +
                 '<li><strong>AI created lists</strong>: describe the list and an AI builds it.</li>' +
-                '<li><strong>Your Next Watch</strong>: picks for each user from what they watch.</li></ul>' },
+                '<li><strong>Your Next Watch</strong>: picks for each user from what they watch.</li>' +
+                '<li><strong>Rotating from existing</strong>: one row that shows the next collection, tag or playlist every few days.</li></ul>' },
         { page: 'TagCollection', demo: 'general', target: tourInDemo('.source-external-container'), icon: 'link', title: 'Source tab: the list',
           html: '<p>For an External List, paste the list\'s address here, e.g. a Trakt list or an MDBList top-list. <strong>Add another URL</strong> merges more lists into this source.</p>' +
                 '<p>The number next to a URL caps how many titles are taken from it (0 = all). Only titles that are in your library are used.</p>' +
@@ -13187,7 +13343,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             form.addEventListener('click', (e) => {
                 var dayBtn = e.target.closest('.day-toggle');
                 if (dayBtn) dayBtn.classList.toggle('active');
-                if (e.target.closest('.btnRemoveUrl, .btnAddUrl, .btnRemoveExtraTag, .btnAddExtraTag, .btnAddOutTag, .btnRemoveLocal, .btnAddLocal, .btnRemoveDate, .btnAddDate, .btnRemoveFilterGroup, .btnAddMediaInfoFilter, .btnClearAllFilters, .btnGroupOpChoice, .btnGroupInnerOpChoice, .btnAddMiRule, .btnRemoveMiRule, .btnRemoveGroup, .day-toggle, .btnRemovePoster, .btnApplyMiPreset, .btnApplySchedulePreset')) {
+                if (e.target.closest('.btnRemoveUrl, .btnAddUrl, .btnRemoveExtraTag, .btnAddExtraTag, .btnAddOutTag, .btnRemoveLocal, .btnAddLocal, .btnRotAdd, .btnRotRemove, .btnRotUp, .btnRotDown, .btnRemoveDate, .btnAddDate, .btnRemoveFilterGroup, .btnAddMediaInfoFilter, .btnClearAllFilters, .btnGroupOpChoice, .btnGroupInnerOpChoice, .btnAddMiRule, .btnRemoveMiRule, .btnRemoveGroup, .day-toggle, .btnRemovePoster, .btnApplyMiPreset, .btnApplySchedulePreset')) {
                     changeHandler();
                 }
             }, { signal: _signal });
@@ -13544,8 +13700,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             Promise.all([
                 window.ApiClient.getJSON(window.ApiClient.getUrl("Users/" + window.ApiClient.getCurrentUserId() + "/Items", { IncludeItemTypes: "BoxSet", Recursive: true })).catch(function () { return { Items: [] }; }),
                 window.ApiClient.getJSON(window.ApiClient.getUrl("Items", { IncludeItemTypes: "Playlist", Recursive: true })).catch(function () { return { Items: [] }; }),
-                window.ApiClient.getJSON(window.ApiClient.getUrl("Items/Filters2", { UserId: window.ApiClient.getCurrentUserId(), Recursive: true })).catch(function () { return { Tags: [] }; })
+                window.ApiClient.getJSON(window.ApiClient.getUrl("Items/Filters2", { UserId: window.ApiClient.getCurrentUserId(), Recursive: true })).catch(function () { return { Tags: [] }; }),
+                window.ApiClient.getJSON(window.ApiClient.getUrl("Tags", { Recursive: true })).catch(function () { return { Items: [] }; })
             ]).then(responses => {
+                cachedTagNames = ((responses[3] && responses[3].Items) || []).map(function (t) { return t.Name; }).filter(Boolean).sort(natCmp);
                 cachedCollections = (responses[0].Items || []).slice().sort(byName);
                 cachedPlaylists = (responses[1].Items || []).slice().sort(byName);
                 cachedTags = ((responses[2] && responses[2].Tags) || []).slice().sort(natCmp);
@@ -13962,7 +14120,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var hasTracked = (tc.HomeSectionTracked || []).some(function(t) {
                         return t.SectionId && !t.SectionId.startsWith('hsc__');
                     });
-                    if (!hasTracked) return;
+                    // (A rotating source's rows are made from its turn: also its first ones, and only when due.)
+                    if (!hasTracked && tc.SourceType !== 'RotatingExisting') return;
                     var applyUrl = window.ApiClient.getUrl('HomeScreenCompanion/Hsc/ApplyTagHomeSections');
                     var tok = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
                     fetch(applyUrl, {

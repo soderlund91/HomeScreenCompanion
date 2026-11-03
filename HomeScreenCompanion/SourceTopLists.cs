@@ -47,8 +47,8 @@ namespace HomeScreenCompanion
         /// <summary>The source has its own plain home row (not when its row is a top-list).</summary>
         internal static bool PlainRow(TagConfig tc) => tc.EnableHomeSection && !IsOn(tc);
 
-        /// <summary>Create as top-list is on (never for Your Next Watch: its row is each user's own playlist).</summary>
-        internal static bool IsOn(TagConfig tc) => tc.EnableTopList && !string.Equals(tc.SourceType, "NextWatch", StringComparison.OrdinalIgnoreCase);
+        /// <summary>Create as top-list is on (never for Your Next Watch: its row is each user's own playlist; nor for a rotating source: it only makes its row).</summary>
+        internal static bool IsOn(TagConfig tc) => tc.EnableTopList && !string.Equals(tc.SourceType, "NextWatch", StringComparison.OrdinalIgnoreCase) && !RotatingRow.Is(tc);
 
         /// <summary>Content is Auto (also anything that is not Movies or TV Shows).</summary>
         internal static bool IsAuto(TagConfig tc) =>

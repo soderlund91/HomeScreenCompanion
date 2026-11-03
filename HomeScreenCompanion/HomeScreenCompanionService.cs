@@ -2022,6 +2022,17 @@ public class HomeScreenCompanionService : IService
                 if (!SourceTopLists.PlainRow(tc))
                     return new HscApplyTagHomeSectionsResponse { Success = true, Message = "Home section not enabled for this tag." };
 
+                // A rotating row is written per user from its turn: its own Run Group does that (it
+                // waits if another run is busy), and makes the rows of a new source right away.
+                if (RotatingRow.Is(tc))
+                {
+                    var rotTask = HomeScreenCompanionTask.Instance;
+                    if (rotTask == null || config.DryRunMode || !RotatingRow.Due(tc, _jsonSerializer)) return new HscApplyTagHomeSectionsResponse { Success = true, Message = "Nothing to apply now." };
+                    var rotName = !string.IsNullOrWhiteSpace(tc.Name) ? tc.Name : tc.Tag;
+                    _ = System.Threading.Tasks.Task.Run(() => rotTask.RunSingleEntryAsync(rotName, CancellationToken.None));
+                    return new HscApplyTagHomeSectionsResponse { Success = true, Message = "Rotating row: Run Group started." };
+                }
+
                 var realTracked = (tc.HomeSectionTracked ?? new System.Collections.Generic.List<HomeSectionTracking>())
                     .Where(t => !string.IsNullOrEmpty(t.SectionId) && !t.SectionId.StartsWith("hsc__"))
                     .ToList();
@@ -4446,6 +4457,9 @@ public class HomeScreenCompanionService : IService
             t.ActiveIntervals     ??= new List<DateInterval>();
             t.HomeSectionUserIds  ??= new List<string>();
             t.HomeSectionTracked  ??= new List<HomeSectionTracking>();
+            t.RotationItems       ??= new List<RotationItem>();
+            t.RotationStartDay    ??= "";
+            t.RotationOrder       ??= "List";
             t.PlaylistUserIds     ??= new List<string>();
             t.PlaylistMappings    ??= new List<PlaylistMapping>();
             t.CollectionPosterStyle     ??= "";

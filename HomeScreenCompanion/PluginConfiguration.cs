@@ -190,6 +190,12 @@ namespace HomeScreenCompanion
         public List<string> LocalSources { get; set; } = new List<string>();
         // "Manual" source: Emby item ids (movies and series), in list order.
         public List<string> ManualItemIds { get; set; } = new List<string>();
+        // "Rotating from existing" source (see RotatingRow): its items, every how many days it moves
+        // on, the weekday it starts on ("" = the day it was saved) and its order ("List" or "Shuffle").
+        public List<RotationItem> RotationItems { get; set; } = new List<RotationItem>();
+        public int RotationEveryDays { get; set; } = 7;
+        public string RotationStartDay { get; set; } = "";
+        public string RotationOrder { get; set; } = "List";
         public List<string> MediaInfoConditions { get; set; } = new List<string>();
         public List<MediaInfoFilter> MediaInfoFilters { get; set; } = new List<MediaInfoFilter>();
 
@@ -211,8 +217,9 @@ namespace HomeScreenCompanion
         // row, tag art, top-list and priority override; these are just written and cleaned up with it.
         public List<string> ExtraTags { get; set; } = new List<string>();
 
-        // Tag followed by ExtraTags: trimmed, without empties or repeats.
-        public List<string> AllTags() => Distinct(new[] { Tag }.Concat(ExtraTags ?? new List<string>()));
+        // Tag followed by ExtraTags: trimmed, without empties or repeats. A rotating source tags
+        // nothing: its Tag is only a name, and a real tag of that name is not its to clean up.
+        public List<string> AllTags() => RotatingRow.Is(this) ? new List<string>() : Distinct(new[] { Tag }.Concat(ExtraTags ?? new List<string>()));
 
         private static List<string> Distinct(IEnumerable<string?> tags)
         {
@@ -398,6 +405,18 @@ namespace HomeScreenCompanion
     {
         public string UserId { get; set; } = "";
         public string SectionId { get; set; } = "";
+        // A rotating row (RotatingRow): the title and content it last got.
+        public string RowTitle { get; set; } = "";
+        public string RowShows { get; set; } = "";
+    }
+
+    // One item of a "Rotating from existing" source: a "Collection", "Tag" or "Playlist" (by name),
+    // and the name that goes in the row's title ("" = its own name).
+    public class RotationItem
+    {
+        public string Kind { get; set; } = "Collection";
+        public string Value { get; set; } = "";
+        public string Name { get; set; } = "";
     }
 
     // What groups deleted on the settings page left behind, waiting for the next full run to

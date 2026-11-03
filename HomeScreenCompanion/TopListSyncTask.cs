@@ -593,6 +593,9 @@ namespace HomeScreenCompanion
                 }
                 catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
 
+                // A rotating row's type, tag and title are per user and turn: its tag rows are found below.
+                bool rotating = RotatingRow.Is(tc);
+                if (rotating) { if (!RotatingRow.HasTagItem(tc)) continue; tcSettings["SectionType"] = "items"; }
                 if (!tcSettings.TryGetValue("SectionType", out var tcSt) || string.IsNullOrEmpty(tcSt))
                     tcSt = HomeScreenCompanionTask.DefaultSectionType(tc);
                 // Only items rows get the top-list exclusion (boxset and playlist rows show one item list).
@@ -613,9 +616,10 @@ namespace HomeScreenCompanion
                 tcSettings["_queryExcludeViewIds"] = tcExcStr;
                 tcSettings["ExcludedFolders"] = tcExcStr;
                 tc.HomeSectionSettings = jsonSerializer.SerializeToString(tcSettings);
-                HomeScreenCompanionTask.ApplyRowTitle(tcSettings, tc, jsonSerializer);
+                if (rotating) tcSettings.Remove("CustomName");
+                else HomeScreenCompanionTask.ApplyRowTitle(tcSettings, tc, jsonSerializer);
 
-                if (!string.IsNullOrEmpty(tc.Tag))
+                if (!rotating && !string.IsNullOrEmpty(tc.Tag))
                 {
                     try
                     {
@@ -647,6 +651,9 @@ namespace HomeScreenCompanion
                         var secs = userManager.GetHomeSections(uid, cancellationToken)?.Sections ?? Array.Empty<ContentSection>();
                         var owned = secs.FirstOrDefault(s => s.Id == tracking.SectionId);
                         if (owned == null) continue;
+                        // A rotating row keeps the tag it shows now (showing a collection or playlist now: left alone).
+                        if (rotating && !string.Equals(owned.SectionType, "items", StringComparison.OrdinalIgnoreCase)) continue;
+                        if (rotating) rowSettings["_queryTagId"] = (owned.Query?.TagIds ?? Array.Empty<string>()).FirstOrDefault() ?? "";
                         var updatedSec = HomeScreenCompanionTask.BuildContentSection(jsonSerializer, rowSettings, string.Empty, owned);
                         typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSec, owned.Id);
                         userManager.UpdateHomeSection(uid, updatedSec, cancellationToken);
