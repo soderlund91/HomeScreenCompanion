@@ -809,11 +809,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // Whether an .hsc-adv element is set to something other than its default. data-adv says how to
     // tell: check (its checkbox ticked), number (its number is not data-adv-def), sysprompt (not the
     // default AI system prompt), group (any .hsc-adv inside it in use), target (other than Series only), tag-art (a generated or
-    // uploaded tag image), blacklist (the card's blacklist has ids); otherwise its select's value
-    // is not one of data-adv-def ("|"-separated).
+    // uploaded tag image), blacklist (the card's blacklist has ids), text (its text field is filled in);
+    // otherwise its select's value is not one of data-adv-def ("|"-separated).
     function advInUse(el) {
         var kind = el.getAttribute('data-adv') || '';
         if (kind === 'check') return !!el.querySelector('input[type="checkbox"]:checked');
+        if (kind === 'text') return !!((el.querySelector('input[type="text"]') || {}).value || '').trim();
         // The AI system prompt: in use when it is not the default (empty = default).
         if (kind === 'sysprompt') {
             var sp = ((el.querySelector('textarea') || {}).value || '').trim();
@@ -874,7 +875,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var used = (config.Tags || []).some(function (t) {
             return t.TagTargetSeason || t.TagTargetEpisode || t.CollectionTargetSeason || t.CollectionTargetEpisode
                 || t.MediaInfoTargetSeason || t.MediaInfoTargetEpisode
-                || t.EnableCollectionTag || t.EnablePlaylistTag || t.CollectionKeepOrder
+                || t.EnableCollectionTag || t.EnablePlaylistTag || t.CollectionKeepOrder || t.CollectionSortName
                 || t.TagPosterStyle || t.TagBackgroundStyle || t.TagBackgroundPath
                 || t.OverrideWhenActive || (t.Blacklist || []).length > 0
                 || hseSettingsUseAdvanced(t.HomeSectionSettings);
@@ -2582,14 +2583,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         ]}
     ];
     var MI_TEXT_PLACEHOLDERS = {
-        Title: 'e.g. Batman, Dark Knight', EpisodeTitle: 'e.g. Pilot, Finale', Overview: 'e.g. heist, time travel',
-        Studio: 'e.g. Warner, Netflix, HBO', Genre: 'e.g. Action, Thriller',
-        Actor: 'e.g. Tom Hanks, Idris Elba', Director: 'e.g. Nolan, Tarantino', Writer: 'e.g. Tarantino, Nolan',
-        ContentRating: 'e.g. PG-13, R', AudioLanguage: 'e.g. eng, swe', ImdbId: 'e.g. tt1234567, tt7654321',
-        TvdbId: 'e.g. 121361',
-        FolderPath: 'e.g. /movies/action',
-        Country: 'e.g. United States',
-        Artist: 'e.g. Radiohead, Pink Floyd', Album: 'e.g. OK Computer, Dark Side of the Moon'
+        Title: 'One per line, e.g. Batman', EpisodeTitle: 'One per line, e.g. Pilot', Overview: 'One per line, e.g. heist',
+        Studio: 'One per line, e.g. Netflix', Genre: 'One per line, e.g. Action',
+        Actor: 'One per line, e.g. Tom Hanks', Director: 'One per line, e.g. Christopher Nolan', Writer: 'One per line, e.g. Quentin Tarantino',
+        ContentRating: 'One per line, e.g. PG-13', AudioLanguage: 'One per line, e.g. eng', ImdbId: 'One per line, e.g. tt1234567',
+        TvdbId: 'One per line, e.g. 121361',
+        FolderPath: 'One per line, e.g. /movies/action',
+        Country: 'One per line, e.g. United States',
+        Artist: 'One per line, e.g. Radiohead', Album: 'One per line, e.g. OK Computer'
     };
 
     function propertyOptionsHtml(selected) {
@@ -2654,7 +2655,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 return tagTextOpHtml + '<select class="selMiValue" is="emby-select" style="flex:1;"><option value="">-- Select tag --</option>' + tagOpts + '</select>';
             }
             var migratedTagVal = migrateCommaSeparated(savedVal || '');
-            return tagTextOpHtml + '<textarea class="txtMiValue" placeholder="e.g. 4K" rows="1" style="flex:1;resize:none;overflow:hidden;padding:6px 8px;font-size:inherit;font-family:inherit;background:var(--plugin-input-bg,rgba(255,255,255,0.08));border:1px solid var(--plugin-input-border,rgba(255,255,255,0.2));border-radius:3px;color:inherit;line-height:1.4;min-height:32px;max-height:120px;overflow-y:auto;">' + migratedTagVal.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>';
+            return tagTextOpHtml + '<textarea class="txtMiValue" placeholder="One per line, e.g. 4K" rows="1" style="flex:1;resize:none;overflow:hidden;padding:6px 8px;font-size:inherit;font-family:inherit;background:var(--plugin-input-bg,rgba(255,255,255,0.08));border:1px solid var(--plugin-input-border,rgba(255,255,255,0.2));border-radius:3px;color:inherit;line-height:1.4;min-height:32px;max-height:120px;overflow-y:auto;">' + migratedTagVal.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>';
         }
         if (MI_DROPDOWN_OPTIONS[prop]) {
             if (prop === 'MediaType') {
@@ -3684,8 +3685,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <div class="fieldDescription">Leave empty to use Display Name.</div>
                         </div>
 
-                        <div class="inputContainer">
-                            <input is="emby-input" type="text" class="txtCollectionSortName" label="Sort Title" value="${collSortName}" />
+                        <div class="inputContainer hsc-adv" data-adv="text">
+                            <input is="emby-input" type="text" class="txtCollectionSortName" label='Sort Title${ADV_BADGE}' value="${collSortName}" />
                             <div class="fieldDescription">Optional. Used instead of the name when collections are sorted by name, e.g. "001" to show this collection first. Leave empty to sort by the collection name.</div>
                         </div>
                         ${getOutputTagHtml('coll', tagConfig.EnableCollectionTag, tagConfig.CollectionTag, tagConfig.CollectionExtraTags)}
