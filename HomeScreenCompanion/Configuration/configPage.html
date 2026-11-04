@@ -887,6 +887,35 @@
         .homescreen-tab.tl-mode .hse-tl-hide { display: none !important; }
         .homescreen-tab .hse-st-single { display: none !important; }
         .homescreen-tab.hse-empty .hse-details > :not(.toplist-tab) { display: none !important; }
+        /* Source folders (Tag & Collection tab): a header in the list, with the rows under it. */
+        .src-folder-head {
+            display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 12px; margin: 14px 0 8px;
+            background: rgba(128,128,128,0.1); border: 1px solid var(--hsc-hairline); border-radius: 8px;
+            cursor: pointer; user-select: none;
+        }
+        .src-folder-head:hover { background: rgba(128,128,128,0.16); }
+        .src-folder-head .md-icon { font-size: 1.25em; color: var(--theme-text-secondary); }
+        .src-folder-chevron { transition: transform 0.15s ease; }
+        .src-folder-head.closed .src-folder-chevron { transform: rotate(-90deg); }
+        .src-folder-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .src-folder-count { font-size: 0.85em; color: var(--theme-text-secondary); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .src-folder-head .src-folder-issue { color: var(--hsc-warning-text); }
+        .src-folder-actions { display: flex; gap: 2px; flex-shrink: 0; opacity: 0.55; }
+        .src-folder-head:hover .src-folder-actions, .src-folder-actions:focus-within { opacity: 1; }
+        .src-folder-actions button { border: none; background: transparent; color: inherit; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+        .src-folder-actions button:hover { background: rgba(128,128,128,0.2); }
+        .txtFolderName { font-weight: 600; font-size: 0.95em; padding: 3px 6px; min-width: 200px; box-sizing: border-box; }
+        .src-folder-none { display: flex; align-items: baseline; gap: 8px; padding: 6px 12px 6px; margin: 18px 0 8px; border-top: 1px solid var(--hsc-hairline); user-select: none; }
+        .src-folder-none-name { font-weight: 600; font-size: 0.9em; color: var(--theme-text-secondary); white-space: nowrap; }
+        .tag-row.hsc-in-folder { margin-left: 18px; }
+        #tagListContainer:not(.hsc-folder-filtering) > .tag-row.hsc-folder-hidden { display: none !important; }
+        /* Rotating from existing: it only makes its home row, of the type of what it rotates. */
+        .hsc-rot-only { display: none; }
+        .tag-row.hsc-rotating .hsc-rot-only { display: block; }
+        .tag-row.hsc-rotating .tag-tab[data-tab="tag"], .tag-row.hsc-rotating .tag-tab[data-tab="collection"],
+        .tag-row.hsc-rotating .tag-tab[data-tab="playlist"], .tag-row.hsc-rotating .tag-tab[data-tab="advanced"],
+        .tag-row.hsc-rotating .source-mediainfo-container, .tag-row.hsc-rotating .toplist-tab,
+        .tag-row.hsc-rotating .hse-st-field { display: none !important; }
         .hsc-callout.danger > .md-icon { color: var(--hsc-danger-text); }
         .hsc-callout.success { background: rgba(82,181,75,0.08); border-color: rgba(82,181,75,0.3); }
         .hsc-callout.success > .md-icon { color: var(--hsc-primary-text); }
@@ -2390,8 +2419,27 @@
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">recommend</i> Personal: Your Next Watch</div>
                         Personal recommendations, worked out on your server (no AI, no internet): every ticked user gets their own playlist of unwatched titles most like what they have been watching, refreshed on every sync. See <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-sec-2b').scrollIntoView({behavior:'smooth'});return false;"><em>Your Next Watch</em> below</a> for how it picks and how to set it up.
                     </div>
+                    <div class="src-card">
+                        <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">autorenew</i> Rotating from existing</div>
+                        One home row that shows one of your collections, tags or playlists, and the next one every few days, like a <em>Now Showing</em> row. <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-more-rotating').scrollIntoView({behavior:'smooth'});return false;">More below</a>.
+                    </div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">folder</i>
+                    <div><strong>Folders</strong> — sort a long list of sources into folders that open and close. A folder only changes how the list looks; nothing a source does depends on it. <em>New folder</em> makes one at the top of the list, with the sources in no folder under <em>No folder</em>. A new source lands first under <em>No folder</em>. Drag a source past a folder's header to move it in, or down under <em>No folder</em> to take it out. On a folder's header you can move it, rename it, or remove it (its sources stay). Searching and filtering also look inside closed folders, and sorting by name sorts within each folder. Which folders are open is remembered in your browser. Click <strong>Save</strong> to keep your folders.</div>
                 </div>
                 <div class="hsc-eyebrow" style="margin:14px 0 8px;">More about the source types</div>
+                <div id="help-more-rotating" class="help-feature-row">
+                    <i class="md-icon help-feat-icon">autorenew</i>
+                    <div><strong>Rotating from existing</strong> — makes one home row from things you already have. It only makes that row: it tags nothing and creates nothing, so the Tag, Collection, Playlist and Blacklist tabs are hidden.
+                        <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
+                            <li><strong>The list</strong> — each line is a <em>Collection</em>, <em>Tag</em> or <em>Playlist</em> (they can be mixed), which one, and an optional <strong>name</strong>: what <code>{name}</code> becomes in the row's title (empty uses its own name). Add as many as you like, and use the arrows to set the order.</li>
+                            <li><strong>Rotate every (days)</strong> and <strong>Start on</strong> — with a day, the first change is on that weekday and it runs every X days from there: every 7 days from Friday gives something new before each weekend. With <em>No set day</em> it counts from the day you save. Changing either starts the count again. The row changes at midnight, server time (within 15 minutes).</li>
+                            <li><strong>Order</strong> — <em>In list order</em>, or <em>Shuffle</em>: a random order that shows every one once before any comes back. A changed list does not make it jump: it goes on from where it is.</li>
+                            <li><strong>Title</strong> — <em>Custom Title</em> on the Home Screen tab: <code>Now Showing: {name}</code> gives for example <em>Now Showing: Marvel</em>. Empty gives just the name.</li>
+                        </ul>
+                        The row stays in its place; only what it shows changes. The Home Screen tab's <em>Media Type</em> and sorting apply when it shows a tag. <strong>Each user sees what they may see:</strong> one who may not see the one whose turn it is (or for whom it is empty) gets the next one they may see, so users can see different things on the same day and a child's account limits nobody else. With nothing to show, a user has no row until there is something, and it comes back in the same place. A playlist only counts for those it is shared with. The Schedule tab works as for any source.</div>
+                </div>
                 <div id="help-more-external" class="help-feature-row">
                     <i class="md-icon help-feat-icon">public</i>
                     <div><strong>External</strong> — paste a list URL from <strong>Trakt</strong>, <strong>MDBList</strong> or <strong>TMDb</strong>. The plugin downloads the list and tags every matching title it finds in your library.
@@ -2543,7 +2591,7 @@
                         <details class="help-more"><summary><i class="md-icon">expand_more</i><span class="help-more-closed">Show details</span><span class="help-more-open">Hide details</span></summary>
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li>The popup lists every collection with a tick box (and a search box when the list is long); tick one or several and click <em>Import</em>. With a long list you can also sort by name or item count and show only collections of a certain size; ticks stay when a collection is hidden.</li>
-                            <li>Each becomes a <strong>Manual List</strong> source, added as a new card at the top, not saved yet — check it and click <strong>Save</strong>.</li>
+                            <li>Each becomes a <strong>Manual List</strong> source, added as a new card, not saved yet — check it and click <strong>Save</strong>.</li>
                             <li>It keeps the <strong>same collection</strong>, not a copy, so links, home rows and favourites keep working: the name, sort title and description stay as they are, the collection's current titles fill the Manual List, and the poster and background are set to <em>Keep current image</em>.</li>
                             <li>Nothing changes until the next sync, and nothing is deleted.</li>
                             <li>Cannot be ticked: collections a source already makes, and collections whose name another collection also has (HSC finds its collection by name — rename one in Emby first).</li>
@@ -2870,7 +2918,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">copy_all</i>
-                    <div><strong>Copy &amp; Sync</strong> — Copies the complete home screen layout from one user to one or more other users. Handy when you want all profiles to look the same. Every row is copied, in the same order — including source rows, whatever that row's own target users are. Two exceptions: a <strong>top-list row</strong> only goes to that list's own target users (a top-list has its own library, and only its users are given access to it) — add the users to the top-list in the Top-Lists tab to give them the row; and a per-user playlist row (such as <em>Your Next Watch</em>) is copied in the same place but shows each user's own playlist, and users without one from that source don't get the row. Old copies pointing at someone else's playlist are re-pointed or removed, and old copies of a top-list row for users who are not its target users are removed. This runs separately from the tag and collection sync.
+                    <div><strong>Copy &amp; Sync</strong> — Copies the complete home screen layout from one user to one or more other users. Handy when you want all profiles to look the same. Every row is copied, in the same order — including source rows, whatever that row's own target users are. Two exceptions: a <strong>top-list row</strong> only goes to that list's own target users (a top-list has its own library, and only its users are given access to it) — add the users to the top-list in the Top-Lists tab to give them the row; and a per-user playlist row (such as <em>Your Next Watch</em>) is copied in the same place but shows each user's own playlist, and users without one from that source don't get the row. A <em>Rotating from existing</em> row only goes to that source's own target users, each with what they may see (with <em>Also add users to the sources and top-lists of copied rows</em>, every target user is put on the source). Old copies pointing at someone else's playlist are re-pointed or removed, and old copies of a top-list row for users who are not its target users are removed. This runs separately from the tag and collection sync.
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li>Tick <em>Enable Home Screen sync</em>, pick the <strong>Source User</strong> whose layout is the model, and tick the users to copy to. Set the source user's home screen up in Emby first, then run it.</li>
                             <li>The target users' own rows are <strong>replaced</strong>, so changes they made themselves are lost on the next run.</li>
@@ -2912,13 +2960,17 @@
                     <div><strong>Content</strong> — in a source's <em>Create as top-list</em>, <em>Auto (based on the source)</em> makes a movie or TV show list from what the source returns (an episode counts as its show); <em>Movies</em> or <em>TV Shows</em> fixes it.</div>
                 </div>
                 <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">video_library</i>
+                    <div><strong>Libraries</strong> — a list from a source ranks only the titles in the libraries you choose (<em>All libraries</em> by default, which also takes in libraries added later). <em>Max titles for top-list</em> counts the chosen libraries, but <em>Max items</em> in the Source tab is counted first, across all libraries, so raise it if the list gets too short. In a manual list the choice narrows the search box; titles already added stay.</div>
+                </div>
+                <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">edit_note</i>
                     <div><strong>Manual top-list</strong> — Click <em>Create manual top-list</em> to hand-pick and order movies yourself, without needing an existing tag. Search your library, put the items in the order you want with the ▲ ▼ buttons, and save. Choose <em>TV Shows</em> in the <em>Create Top-List</em> dialog to rank shows instead.</div>
                 </div>
                 <div class="src-cards" style="grid-template-columns: repeat(3, 1fr);">
                     <div class="src-card">
-                        <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">palette</i> Badge style &amp; Max items</div>
-                        Pick how the rank number looks, for movie and show lists alike: a number badge in one of six colours (<em>Neutral</em>, <em>Slate grey</em>, <em>Emby green</em>, <em>Ocean blue</em>, <em>Soft red</em>, <em>Violet</em>), <em>No number</em>, or <em>Top 10 tile</em>. <em>Top 10 tile</em> draws a big outlined number beside the poster on a flat background in the colour of Emby's dark theme, so the row reads as one strip, like Netflix. On a lighter or black theme the tile edges show faintly. <strong>Max items</strong> limits how many titles the list shows (0 = all). <strong>Card size</strong> works as on the Home Screen tab: <em>Smaller</em> fits more tiles on screen.
+                        <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">palette</i> Badge style &amp; Max titles</div>
+                        Pick how the rank number looks, for movie and show lists alike: a number badge in one of six colours (<em>Neutral</em>, <em>Slate grey</em>, <em>Emby green</em>, <em>Ocean blue</em>, <em>Soft red</em>, <em>Violet</em>), <em>No number</em>, or <em>Top 10 tile</em>. <em>Top 10 tile</em> draws a big outlined number beside the poster on a flat background in the colour of Emby's dark theme, so the row reads as one strip, like Netflix. On a lighter or black theme the tile edges show faintly. <strong>Max titles for top-list</strong> limits how many titles the list shows (0 = all). <strong>Card size</strong> works as on the Home Screen tab: <em>Smaller</em> fits more tiles on screen.
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">tune</i> Customise the Top 10 tile</div>
@@ -2958,7 +3010,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">lock_open</i>
-                    <div><strong>Library access</strong> — every user a top-list is shown to gets access to its library. The list's titles can come from any library on the server, so those users can see and play them even from libraries they otherwise have no access to. Only pick users who may see everything the list can hold.</div>
+                    <div><strong>Library access</strong> — every user a top-list is shown to gets access to its library. The list's titles come from the libraries you choose, so those users can see and play them even if they otherwise have no access to those libraries. Only pick users who may see everything the list can hold.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">block</i>
@@ -3369,7 +3421,7 @@
 
                 <div class="help-section"><i class="md-icon help-section-icon">local_movies</i>Content</div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Media Type</span> — Movie, Series, or Episode. When <b>Episode</b> is selected, all filters evaluate against individual episodes and tags are applied directly to each matching episode.</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Tag</span> — matches items that already have a specific Emby tag applied. One per line: <i>4K</i> / <i>HDR</i> matches items tagged with either.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Tag</span> — matches items that already have a specific Emby tag applied. Pick tags from the list to add them to the box, or type them yourself. One per line: <i>4K</i> / <i>HDR</i> matches items tagged with either.</div></div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Title</span> — matches the movie or series name. When Media Type = Episode, matches the parent series name. One per line: <i>Batman</i> / <i>Dark Knight</i> matches either title.</div></div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Title (Episode)</span> — matches the episode's own title. Use together with Media Type = Episode. One value per line for multiple episode titles.</div></div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Overview</span> — searches the plot description/summary for keywords or phrases. One per line: <i>Christmas</i> / <i>heist</i> matches if <em>either</em> word appears in the overview.</div></div>

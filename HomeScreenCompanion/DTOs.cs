@@ -94,6 +94,8 @@ namespace HomeScreenCompanion
     public class HscUserSectionsResponse
     {
         public ContentSection[] Sections { get; set; } = System.Array.Empty<ContentSection>();
+        // The user's rotating rows: section id to the key a Position points at them with.
+        public System.Collections.Generic.Dictionary<string, string> RotatingKeys { get; set; } = new System.Collections.Generic.Dictionary<string, string>();
     }
 
     [MediaBrowser.Model.Services.Route("/HomeScreenCompanion/Hsc/UserSections", "POST")]

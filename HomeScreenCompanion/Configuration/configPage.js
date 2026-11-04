@@ -205,7 +205,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
     var cachedCollections = [];
     var cachedPlaylists = [];
-    var cachedTags = [];
+    var cachedTagNames = [];   // every tag on the server (a rotating source's list, the Tag rule's picker)
     var lastHscConfig = {};
     var currentManageSections = [];
     var savedFilters = [];
@@ -809,11 +809,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // Whether an .hsc-adv element is set to something other than its default. data-adv says how to
     // tell: check (its checkbox ticked), number (its number is not data-adv-def), sysprompt (not the
     // default AI system prompt), group (any .hsc-adv inside it in use), target (other than Series only), tag-art (a generated or
-    // uploaded tag image), blacklist (the card's blacklist has ids); otherwise its select's value
-    // is not one of data-adv-def ("|"-separated).
+    // uploaded tag image), blacklist (the card's blacklist has ids), text (its text field is filled in);
+    // otherwise its select's value is not one of data-adv-def ("|"-separated).
     function advInUse(el) {
         var kind = el.getAttribute('data-adv') || '';
         if (kind === 'check') return !!el.querySelector('input[type="checkbox"]:checked');
+        if (kind === 'text') return !!((el.querySelector('input[type="text"]') || {}).value || '').trim();
         // The AI system prompt: in use when it is not the default (empty = default).
         if (kind === 'sysprompt') {
             var sp = ((el.querySelector('textarea') || {}).value || '').trim();
@@ -874,7 +875,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var used = (config.Tags || []).some(function (t) {
             return t.TagTargetSeason || t.TagTargetEpisode || t.CollectionTargetSeason || t.CollectionTargetEpisode
                 || t.MediaInfoTargetSeason || t.MediaInfoTargetEpisode
-                || t.EnableCollectionTag || t.EnablePlaylistTag || t.CollectionKeepOrder
+                || t.EnableCollectionTag || t.EnablePlaylistTag || t.CollectionKeepOrder || t.CollectionSortName
                 || t.TagPosterStyle || t.TagBackgroundStyle || t.TagBackgroundPath
                 || t.OverrideWhenActive || (t.Blacklist || []).length > 0
                 || hseSettingsUseAdvanced(t.HomeSectionSettings);
@@ -1214,6 +1215,19 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
             return document.scrollingElement || document.documentElement;
         }
+        // The rows between a and b that stay with what is moved (those in a closed source folder).
+        function goingAlong(a, b) {
+            var out = [];
+            if (opts.movesAlong) for (var el = a.nextElementSibling; el && el !== b; el = el.nextElementSibling) if (opts.movesAlong(el)) out.push(el);
+            return out;
+        }
+        function moveUpPast(list, prev) {
+            var at = row.nextElementSibling;
+            [prev].concat(goingAlong(prev, row)).forEach(function (el) { list.insertBefore(el, at); });
+        }
+        function moveDownPast(list, next) {
+            goingAlong(row, next).concat([next]).forEach(function (el) { list.insertBefore(el, row); });
+        }
         function finishMove(changed) {
             row.classList.add('just-moved');
             setTimeout(function () { row.classList.remove('just-moved'); }, 2000);
@@ -1248,8 +1262,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             function place() {
                 for (var guard = 0; guard < 500; guard++) {
                     var prev = neighbour(-1), next = neighbour(1);
-                    if (prev && pointerY < mid(prev)) list.insertBefore(prev, row.nextElementSibling);
-                    else if (next && pointerY > mid(next)) list.insertBefore(next, row);
+                    if (prev && pointerY < mid(prev)) moveUpPast(list, prev);
+                    else if (next && pointerY > mid(next)) moveDownPast(list, next);
                     else break;
                 }
             }
@@ -1317,8 +1331,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var rows = visibleRows(list);
             var i = rows.indexOf(row);
             // Move the neighbour, not the row: the focused handle stays in place in the DOM.
-            if (e.key === 'ArrowUp' && i > 0) list.insertBefore(rows[i - 1], row.nextElementSibling);
-            else if (e.key === 'ArrowDown' && i >= 0 && i < rows.length - 1) list.insertBefore(rows[i + 1], row);
+            if (e.key === 'ArrowUp' && i > 0) moveUpPast(list, rows[i - 1]);
+            else if (e.key === 'ArrowDown' && i >= 0 && i < rows.length - 1) moveDownPast(list, rows[i + 1]);
             else return;
             row.scrollIntoView({ block: 'nearest' });
             finishMove(true);
@@ -2237,6 +2251,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     function clearDefaultCustomName(hseSettings, hseTab) {
         var orig = '';
         try { orig = decodeURIComponent((hseTab && hseTab.dataset.hseOrigName) || ''); } catch (ex) {}
+        if (isRotatingRow(hseTab && hseTab.closest('.tag-row'))) orig = '{name}';
         var cn = (hseSettings.CustomName || '').trim();
         if (!cn || (orig && cn === orig)) delete hseSettings.CustomName;
     }
@@ -2394,7 +2409,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             NextWatchSeedDays: readNwSeedDays(row), NextWatchUseTaste: readNwUseTaste(row),
             MediaInfoTargetEpisode: false, MediaInfoTargetSeason: false, MediaInfoTargetSeries: false,
             MediaInfoTargetType: '', MediaInfoSeasonMode: false,
-        }, readTopListTab(row));
+        }, readTopListTab(row), readRotation(row), { ListFolder: folderOfRow(row) });
     }
 
     var _formAc = null;
@@ -2582,14 +2597,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         ]}
     ];
     var MI_TEXT_PLACEHOLDERS = {
-        Title: 'e.g. Batman, Dark Knight', EpisodeTitle: 'e.g. Pilot, Finale', Overview: 'e.g. heist, time travel',
-        Studio: 'e.g. Warner, Netflix, HBO', Genre: 'e.g. Action, Thriller',
-        Actor: 'e.g. Tom Hanks, Idris Elba', Director: 'e.g. Nolan, Tarantino', Writer: 'e.g. Tarantino, Nolan',
-        ContentRating: 'e.g. PG-13, R', AudioLanguage: 'e.g. eng, swe', ImdbId: 'e.g. tt1234567, tt7654321',
-        TvdbId: 'e.g. 121361',
-        FolderPath: 'e.g. /movies/action',
-        Country: 'e.g. United States',
-        Artist: 'e.g. Radiohead, Pink Floyd', Album: 'e.g. OK Computer, Dark Side of the Moon'
+        Title: 'One per line, e.g. Batman', EpisodeTitle: 'One per line, e.g. Pilot', Overview: 'One per line, e.g. heist',
+        Studio: 'One per line, e.g. Netflix', Genre: 'One per line, e.g. Action',
+        Actor: 'One per line, e.g. Tom Hanks', Director: 'One per line, e.g. Christopher Nolan', Writer: 'One per line, e.g. Quentin Tarantino',
+        ContentRating: 'One per line, e.g. PG-13', AudioLanguage: 'One per line, e.g. eng', ImdbId: 'One per line, e.g. tt1234567',
+        TvdbId: 'One per line, e.g. 121361',
+        FolderPath: 'One per line, e.g. /movies/action',
+        Country: 'One per line, e.g. United States',
+        Artist: 'One per line, e.g. Radiohead', Album: 'One per line, e.g. OK Computer'
     };
 
     function propertyOptionsHtml(selected) {
@@ -2647,14 +2662,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<option value="contains"' + (tagTextOp === 'contains' ? ' selected' : '') + '>Contains</option>' +
                 '<option value="exact"' + (tagTextOp === 'exact' ? ' selected' : '') + '>Exact</option>' +
                 '</select>';
-            if (cachedTags.length > 0) {
-                var tagOpts = cachedTags.map(function (t) {
-                    return '<option value="' + t.replace(/"/g, '&quot;') + '"' + (t === savedVal ? ' selected' : '') + '>' + t + '</option>';
-                }).join('');
-                return tagTextOpHtml + '<select class="selMiValue" is="emby-select" style="flex:1;"><option value="">-- Select tag --</option>' + tagOpts + '</select>';
-            }
-            var migratedTagVal = migrateCommaSeparated(savedVal || '');
-            return tagTextOpHtml + '<textarea class="txtMiValue" placeholder="e.g. 4K" rows="1" style="flex:1;resize:none;overflow:hidden;padding:6px 8px;font-size:inherit;font-family:inherit;background:var(--plugin-input-bg,rgba(255,255,255,0.08));border:1px solid var(--plugin-input-border,rgba(255,255,255,0.2));border-radius:3px;color:inherit;line-height:1.4;min-height:32px;max-height:120px;overflow-y:auto;">' + migratedTagVal.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>';
+            // The picker only adds a line to the box: the box holds the value, so a rule can keep
+            // several tags and a part of a name (Contains).
+            var tagPickHtml = cachedTagNames.length === 0 ? '' :
+                '<select class="selMiTagPick" is="emby-select" aria-label="Add a tag" style="flex:0 0 130px;min-width:0;"><option value="">-- Add tag --</option>' +
+                cachedTagNames.map(function (t) { return '<option value="' + escapeHtml(t) + '">' + escapeHtml(t) + '</option>'; }).join('') +
+                '</select>';
+            // A tag whose own name has a comma is one tag, not an old comma-separated list.
+            var migratedTagVal = cachedTagNames.indexOf(savedVal) >= 0 ? savedVal : migrateCommaSeparated(savedVal || '');
+            return tagTextOpHtml + tagPickHtml + '<textarea class="txtMiValue" placeholder="One per line, e.g. 4K" rows="1" style="flex:1;resize:none;overflow:hidden;padding:6px 8px;font-size:inherit;font-family:inherit;background:var(--plugin-input-bg,rgba(255,255,255,0.08));border:1px solid var(--plugin-input-border,rgba(255,255,255,0.2));border-radius:3px;color:inherit;line-height:1.4;min-height:32px;max-height:120px;overflow-y:auto;">' + migratedTagVal.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>';
         }
         if (MI_DROPDOWN_OPTIONS[prop]) {
             if (prop === 'MediaType') {
@@ -3209,6 +3225,121 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         if (note) note.textContent = isNw ? 'Leave empty to use the text shown in the box.' : 'Leave empty for no description.';
     }
 
+    // ---- Rotating from existing source (RotatingRow.cs) ----
+    var ROTATING_HINT = 'One home row that shows one of your collections, tags or playlists, and the next one every few days. It only makes that row: it tags nothing and creates nothing.';
+
+    function isRotatingRow(row) {
+        return !!row && (row.querySelector('.selSourceType') || {}).value === 'RotatingExisting';
+    }
+
+    // The Home Screen tab's fields for a mixed list: those of a tag row when it has a tag (they
+    // only apply to tags), else of its playlists or collections. Each item's row gets its own type.
+    function rotationSectionType(kinds) {
+        return kinds.indexOf('Tag') >= 0 ? 'items' : kinds.indexOf('Playlist') >= 0 ? 'playlist' : 'boxset';
+    }
+
+    function rotationKindsOf(row) {
+        return Array.from(row.querySelectorAll('.source-rotating-container .rot-item')).filter(function (i) {
+            return !!i.querySelector('.selRotItem').value;
+        }).map(function (i) { return i.querySelector('.selRotKind').value; });
+    }
+
+    // Custom Title's placeholder: the row's default title.
+    function hseTitlePlaceholder(row) {
+        return isRotatingRow(row) ? '{name}' : (row.querySelector('.txtEntryLabel').value || row.querySelector('.txtTagName').value || '');
+    }
+
+    function rotationNames(kind) {
+        if (kind === 'Tag') return (cachedTagNames || []).slice();
+        var names = (kind === 'Playlist' ? cachedPlaylists : cachedCollections || []).map(function (o) { return o.Name || ''; });
+        return names.filter(function (n, i) { return n && names.indexOf(n) === i; });
+    }
+
+    function rotationItemOptionsHtml(kind, value) {
+        var names = rotationNames(kind);
+        // One no longer on the server stays selected, so a Save keeps it.
+        if (value && names.indexOf(value) < 0) names.unshift(value);
+        return '<option value="">-- Select --</option>' + names.map(function (n) {
+            return '<option value="' + escapeHtml(n) + '"' + (n === value ? ' selected' : '') + '>' + escapeHtml(n) + '</option>';
+        }).join('');
+    }
+
+    // One line: what kind, which one, its name, the arrows and remove.
+    function rotationItemHtml(kind, value, name) {
+        function opt(v) { return '<option value="' + v + '"' + (v === kind ? ' selected' : '') + '>' + v + '</option>'; }
+        var arrow = 'cursor:pointer;border:none;background:transparent;color:inherit;padding:2px 4px;';
+        return '<div class="rot-item" style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">' +
+            '<div style="flex:0 0 120px;"><select is="emby-select" class="selRotKind" style="width:100%;">' + opt('Collection') + opt('Tag') + opt('Playlist') + '</select></div>' +
+            '<div style="flex:1 1 50%; min-width:0;"><select is="emby-select" class="selRotItem" style="width:100%;">' + rotationItemOptionsHtml(kind, value) + '</select></div>' +
+            '<div style="flex:1 1 50%; min-width:0;"><input type="text" class="txtRotName emby-input" placeholder="Name (optional)" value="' + escapeHtml(name || '') + '" style="width:100%;box-sizing:border-box;" /></div>' +
+            '<button type="button" class="btnRotUp" title="Move up" style="' + arrow + '"><i class="md-icon">arrow_upward</i></button>' +
+            '<button type="button" class="btnRotDown" title="Move down" style="' + arrow + '"><i class="md-icon">arrow_downward</i></button>' +
+            '<button type="button" is="emby-button" class="raised btnRotRemove btn-row-remove" title="Remove"><i class="md-icon">remove_circle_outline</i></button>' +
+            '</div>';
+    }
+
+    function rotatingSettingsHtml(t) {
+        var every = t.RotationEveryDays > 0 ? t.RotationEveryDays : 7;
+        var startDay = t.RotationStartDay || '', order = t.RotationOrder || 'List';
+        function opt(v, label, cur) { return '<option value="' + v + '"' + (v === cur ? ' selected' : '') + '>' + label + '</option>'; }
+        var items = (t.RotationItems || []).length ? t.RotationItems : [{ Kind: 'Collection', Value: '', Name: '' }];
+        return '<div class="rot-item-list" style="margin-top:10px;">' + items.map(function (i) { return rotationItemHtml(i.Kind || 'Collection', i.Value, i.Name); }).join('') + '</div>' +
+            '<div class="fieldDescription" style="margin-bottom:10px;">The name is what <code>{name}</code> becomes in the row\'s title. Leave it empty to use the item\'s own name.</div>' +
+            '<div style="margin-bottom:15px;"><button is="emby-button" type="button" class="raised btnRotAdd hsc-btn-dashed" style="width:100%;"><i class="md-icon" style="margin-right:5px;">add</i>Add another</button></div>' +
+            '<div style="display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap; margin-bottom:6px;">' +
+                '<div style="flex:0 0 150px;"><input is="emby-input" type="number" class="txtRotEvery" label="Rotate every (days)" min="1" value="' + every + '" /></div>' +
+                '<div style="flex:1 1 180px;"><label class="selectLabel">Start on</label><select is="emby-select" class="selRotStart" style="width:100%;">' +
+                    opt('', 'No set day', startDay) +
+                    ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map(function (d) { return opt(d, d, startDay); }).join('') +
+                '</select></div>' +
+                '<div style="flex:1 1 180px;"><label class="selectLabel">Order</label><select is="emby-select" class="selRotOrder" style="width:100%;">' +
+                    opt('List', 'In list order', order) + opt('Shuffle', 'Shuffle', order) + '</select></div>' +
+            '</div>' +
+            '<div class="fieldDescription" style="margin-bottom:15px;">Set a day to change on the same weekday, e.g. every 7 days from Friday for something new before each weekend. With no set day it counts from the day you save. The row changes at midnight, server time (within 15 minutes).</div>';
+    }
+
+    function wireRotating(row) {
+        var box = row.querySelector('.source-rotating-container');
+        if (!box) return;
+        box.addEventListener('change', function (e) {
+            if (e.target.classList.contains('selRotKind')) e.target.closest('.rot-item').querySelector('.selRotItem').innerHTML = rotationItemOptionsHtml(e.target.value, '');
+            if (e.target.classList.contains('selRotKind') || e.target.classList.contains('selRotItem')) updateHseSectionAvailability(row);
+        });
+        box.addEventListener('click', function (e) {
+            var list = box.querySelector('.rot-item-list');
+            var btn = e.target.closest('.btnRotAdd, .btnRotRemove, .btnRotUp, .btnRotDown');
+            if (!btn) return;
+            var item = btn.closest('.rot-item');
+            // A new line starts as the kind of the line above it.
+            var kinds = list.querySelectorAll('.selRotKind');
+            if (btn.classList.contains('btnRotAdd')) list.insertAdjacentHTML('beforeend', rotationItemHtml(kinds.length ? kinds[kinds.length - 1].value : 'Collection', '', ''));
+            else if (btn.classList.contains('btnRotRemove')) {
+                item.remove();
+                if (!list.querySelector('.rot-item')) list.innerHTML = rotationItemHtml('Collection', '', '');
+                updateHseSectionAvailability(row);
+            }
+            else if (btn.classList.contains('btnRotUp') && item.previousElementSibling) list.insertBefore(item, item.previousElementSibling);
+            else if (btn.classList.contains('btnRotDown') && item.nextElementSibling) list.insertBefore(item.nextElementSibling, item);
+        });
+    }
+
+    // A rotating source's settings for its saved config; it only makes its row, so the rest is off.
+    function readRotation(row) {
+        if (!isRotatingRow(row)) return {};
+        var box = row.querySelector('.source-rotating-container');
+        var items = [];
+        box.querySelectorAll('.rot-item').forEach(function (i) {
+            var value = i.querySelector('.selRotItem').value;
+            if (value) items.push({ Kind: i.querySelector('.selRotKind').value, Value: value, Name: i.querySelector('.txtRotName').value.trim() });
+        });
+        return {
+            RotationItems: items,
+            RotationEveryDays: Math.max(1, parseInt(box.querySelector('.txtRotEvery').value, 10) || 1),
+            RotationStartDay: box.querySelector('.selRotStart').value, RotationOrder: box.querySelector('.selRotOrder').value,
+            EnableTag: false, EnableCollection: false, EnablePlaylist: false, EnableTopList: false
+        };
+    }
+
     function getSourceBadgeHtml(st) {
         var map = {
             'External':          { icon: 'language',        title: 'External List' },
@@ -3216,6 +3347,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             'LocalPlaylist':     { icon: 'playlist_play',   title: 'Local Playlist' },
             'Manual':            { icon: 'format_list_numbered', title: 'Manual List' },
             'NextWatch':         { icon: 'recommend',       title: 'Personal: Your Next Watch' },
+            'RotatingExisting':  { icon: 'autorenew',       title: 'Rotating from existing' },
             'MediaInfo':         { icon: 'tune',            title: 'Smart Playlist' },
                 'AI':              { icon: 'auto_awesome',   title: 'AI created lists' }
         };
@@ -3282,7 +3414,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         // The name the row's title defaults to (see clearDefaultCustomName).
         var homeSectionOrigNameEnc = encodeURIComponent((tagConfig.Name || tagConfig.Tag || '').trim());
         var homeSectionTrackedEnc = encodeURIComponent(JSON.stringify(tagConfig.HomeSectionTracked || []));
-        var hsDefaultSectionType = tagConfig.EnableCollection ? 'boxset' : (tagConfig.EnableTag !== false ? 'items' : (tagConfig.EnablePlaylist ? 'playlist' : 'boxset'));
+        var hsDefaultSectionType = sourceType === 'RotatingExisting' ? rotationSectionType((tagConfig.RotationItems || []).map(function (i) { return i.Kind; })) : tagConfig.EnableCollection ? 'boxset' : (tagConfig.EnableTag !== false ? 'items' : (tagConfig.EnablePlaylist ? 'playlist' : 'boxset'));
         var topListOn = !!tagConfig.EnableTopList;
 
         var mediaFilters = (tagConfig.MediaInfoFilters && tagConfig.MediaInfoFilters.length > 0)
@@ -3331,7 +3463,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var newClass = isNew ? "just-added" : "";
 
         var html = `
-        <div class="tag-row ${inactiveClass} ${newClass}" data-index="${idx}" data-tag="${tagName.toLowerCase()}" data-last-modified="${lastMod}" data-nw-migrated="${tagConfig.NextWatchUsersMigrated ? '1' : '0'}" data-coll-imported="${tagConfig.CollectionImported ? '1' : '0'}" data-imported-st="${tagConfig.CollectionImported ? (tagConfig.SourceType || '') : ''}" data-poster-replaced="${tagConfig.CollectionPosterReplaced ? '1' : '0'}" data-bg-replaced="${tagConfig.CollectionBackgroundReplaced ? '1' : '0'}" data-thumb-replaced="${tagConfig.CollectionThumbReplaced ? '1' : '0'}" data-banner-replaced="${tagConfig.CollectionBannerReplaced ? '1' : '0'}" data-last-runs="${encodeURIComponent(JSON.stringify(tagConfig.LastRuns || []))}" data-group-key="${encodeURIComponent(groupIssueKey(tagConfig.Name, tagConfig.Tag))}" data-tl-saved="${topListOn && !isNew ? '1' : '0'}" data-tl-saved-tag="${escapeHtml((tagConfig.Tag || '').trim().toLowerCase())}" data-dirty="false">
+        <div class="tag-row ${inactiveClass} ${newClass}${sourceType === 'RotatingExisting' ? ' hsc-rotating' : ''}" data-list-folder="${escapeHtml(tagConfig.ListFolder || '')}" data-index="${idx}" data-tag="${tagName.toLowerCase()}" data-last-modified="${lastMod}" data-nw-migrated="${tagConfig.NextWatchUsersMigrated ? '1' : '0'}" data-coll-imported="${tagConfig.CollectionImported ? '1' : '0'}" data-imported-st="${tagConfig.CollectionImported ? (tagConfig.SourceType || '') : ''}" data-poster-replaced="${tagConfig.CollectionPosterReplaced ? '1' : '0'}" data-bg-replaced="${tagConfig.CollectionBackgroundReplaced ? '1' : '0'}" data-thumb-replaced="${tagConfig.CollectionThumbReplaced ? '1' : '0'}" data-banner-replaced="${tagConfig.CollectionBannerReplaced ? '1' : '0'}" data-last-runs="${encodeURIComponent(JSON.stringify(tagConfig.LastRuns || []))}" data-group-key="${encodeURIComponent(groupIssueKey(tagConfig.Name, tagConfig.Tag))}" data-tl-saved="${topListOn && !isNew ? '1' : '0'}" data-tl-saved-tag="${escapeHtml((tagConfig.Tag || '').trim().toLowerCase())}" data-dirty="false">
             <div class="tag-header">
                 <div style="display:flex; align-items:center; min-width:0;">
                     <div class="header-actions" style="margin-right:12px; display:flex; align-items:center;" onclick="event.stopPropagation()">
@@ -3371,7 +3503,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 
                 <div class="tab-content general-tab">
                     <div class="inputContainer" style="flex-grow:1;"><input is="emby-input" class="txtEntryLabel" type="text" label="Display Name" value="${labelName}" /></div>
-                    
                     <div style="margin-bottom: 15px;">
                         <label class="selectLabel">Source Type</label>
                         <select is="emby-select" class="selSourceType" style="width:100%;">
@@ -3383,6 +3514,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <option value="LocalPlaylist" ${sourceType === 'LocalPlaylist' ? 'selected' : ''}>Local Playlist</option>
                             <option value="Manual" ${sourceType === 'Manual' ? 'selected' : ''}>Manual List (pick movies and shows)</option>
                             <option value="NextWatch" ${sourceType === 'NextWatch' ? 'selected' : ''}>Personal: Your Next Watch</option>
+                            <option value="RotatingExisting" ${sourceType === 'RotatingExisting' ? 'selected' : ''}>Rotating from existing</option>
                         </select>
                         <p class="source-type-hint" style="margin:6px 0 0 0; font-size:1em; opacity:0.8; line-height:1.4;">${(function(st) {
                             if (st === 'External')         return 'Use an external list to tag, or create a collection, from the items that match your library.';
@@ -3392,6 +3524,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             if (st === 'MediaInfo')       return 'Filter your own library to select which movies or shows to tag or create a collection of. This is also known as a Smart Playlist.';
                             if (st === 'AI')              return 'Use AI to create a list. Write your prompt and the AI will build a list based on it.';
                             if (st === 'NextWatch')       return NEXT_WATCH_HINT;
+                            if (st === 'RotatingExisting') return ROTATING_HINT;
                             return '';
                         })(sourceType)}</p>
                     </div>
@@ -3425,6 +3558,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         </div>
                         <div class="manualItemList" style="max-height:420px;overflow-y:auto;border:1px solid var(--line-color);border-radius:6px;padding:4px 8px;min-height:44px;"></div>
                     </div>
+
+                    <div class="source-rotating-container" style="display: ${sourceType === 'RotatingExisting' ? 'block' : 'none'};">${rotatingSettingsHtml(tagConfig)}</div>
 
                     <div class="source-ai-container" style="display: ${sourceType === 'AI' ? 'block' : 'none'};">
                         <div style="margin-bottom: 15px;">
@@ -3684,8 +3819,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <div class="fieldDescription">Leave empty to use Display Name.</div>
                         </div>
 
-                        <div class="inputContainer">
-                            <input is="emby-input" type="text" class="txtCollectionSortName" label="Sort Title" value="${collSortName}" />
+                        <div class="inputContainer hsc-adv" data-adv="text">
+                            <input is="emby-input" type="text" class="txtCollectionSortName" label='Sort Title${ADV_BADGE}' value="${collSortName}" />
                             <div class="fieldDescription">Optional. Used instead of the name when collections are sorted by name, e.g. "001" to show this collection first. Leave empty to sort by the collection name.</div>
                         </div>
                         ${getOutputTagHtml('coll', tagConfig.EnableCollectionTag, tagConfig.CollectionTag, tagConfig.CollectionExtraTags)}
@@ -3842,7 +3977,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     </div>
                 </div>
 
-                <div class="tab-content homescreen-tab${topListOn ? ' tl-mode' : ''}${tagConfig.EnableTag === false && !tagConfig.EnableCollection && !tagConfig.EnablePlaylist && !topListOn ? ' hse-empty' : ''}" style="display:none;"
+                <div class="tab-content homescreen-tab${topListOn ? ' tl-mode' : ''}${tagConfig.EnableTag === false && !tagConfig.EnableCollection && !tagConfig.EnablePlaylist && !topListOn && sourceType !== 'RotatingExisting' ? ' hse-empty' : ''}" style="display:none;"
                     data-hse-libraryid="${homeSectionLibraryId}"
                     data-hse-userids="${homeSectionUserIdsEnc}"
                     data-hse-settings="${homeSectionSettingsEnc}"
@@ -3856,7 +3991,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <span>Add as home screen section</span>
                         </label>
                         <div class="fieldDescription">A home screen section will be managed for selected users each time sync runs.</div>
-                        <div class="hse-disabled-hint" style="font-size:0.9em; color:var(--hsc-danger-text); margin-top:4px; display:${(enableHomeSection && tagConfig.EnableTag === false && !tagConfig.EnableCollection && !tagConfig.EnablePlaylist && !tagConfig.EnableTopList) ? 'block' : 'none'};">A plain row needs <strong>Apply Tag</strong>, <strong>Create Collection</strong> or <strong>Create Playlist</strong>, or tick <strong>Create as top-list</strong> below. Untick <em>Add as home screen section</em> if you do not want a row.</div>
+                        <div class="hse-disabled-hint" style="font-size:0.9em; color:var(--hsc-danger-text); margin-top:4px; display:${(enableHomeSection && tagConfig.EnableTag === false && !tagConfig.EnableCollection && !tagConfig.EnablePlaylist && !tagConfig.EnableTopList && sourceType !== 'RotatingExisting') ? 'block' : 'none'};">A plain row needs <strong>Apply Tag</strong>, <strong>Create Collection</strong> or <strong>Create Playlist</strong>, or tick <strong>Create as top-list</strong> below. Untick <em>Add as home screen section</em> if you do not want a row.</div>
                     </div>
                     <div class="hse-details" style="display:${enableHomeSection ? 'block' : 'none'}; margin-top:15px;">
                         ${buildTopListTabHtml(tagConfig)}
@@ -3878,11 +4013,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             </div>
         </div>`;
 
+        // With folders, "the top" for a new card is the top of the sources in no folder.
+        var noFolder = prepend && !afterRef ? folderNone(container) : null;
         if (afterRef) afterRef.insertAdjacentHTML('afterend', html);
+        else if (noFolder) noFolder.insertAdjacentHTML('afterend', html);
         else if (prepend) container.insertAdjacentHTML('afterbegin', html);
         else container.insertAdjacentHTML('beforeend', html);
 
-        var newRow = afterRef ? afterRef.nextElementSibling : (prepend ? container.firstElementChild : container.lastElementChild);
+        var newRow = afterRef ? afterRef.nextElementSibling : noFolder ? noFolder.nextElementSibling : (prepend ? container.firstElementChild : container.lastElementChild);
         setupRowEvents(newRow);
         initManualEditor(newRow);
         updateNextWatchWarning(newRow);
@@ -3897,8 +4035,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         });
 
         if (isNew) {
+            newRow.dataset.touched = '1';
             setTimeout(() => { newRow.classList.remove('just-added'); }, 2000);
+            // Below the folders it may be out of sight.
+            if (noFolder) setTimeout(() => { newRow.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 50);
         }
+        return newRow;
     }
 
     // ── Create as top-list (top of the Home Screen tab: the source's home row as a ranked top-list) ──
@@ -3906,6 +4048,108 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // (SourceTopLists.cs) and the next run makes the library, copies and rows. Its own fields
     // are content type, max items and the badges; users, title, position and look are the Home
     // Screen tab's, whose fields the top-list sets are hidden (tl-mode). Not for Your Next Watch.
+    // ── A top-list's libraries (TopListLibraries.cs): "All libraries" or the ones ticked ─────────
+    // The field's data-libs is always its value, so it can be read before the libraries have loaded,
+    // and ids of libraries that no longer exist stay in it until the choice is changed by hand
+    // (opening a card never changes what is saved).
+    var _topListLibrariesPromise = null;
+    function loadTopListLibraries() {
+        if (_topListLibrariesPromise) return _topListLibrariesPromise;
+        var tok = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+        _topListLibrariesPromise = fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/Libraries'), { headers: { 'X-MediaBrowser-Token': tok } })
+            .then(function (r) { return r.json(); })
+            .then(function (d) { return d.Libraries || []; })
+            .catch(function () { _topListLibrariesPromise = null; return []; });
+        return _topListLibrariesPromise;
+    }
+
+    function topListLibIds(field) {
+        try { return JSON.parse(decodeURIComponent((field && field.dataset.libs) || '%5B%5D')) || []; } catch (e) { return []; }
+    }
+
+    function setTopListLibIds(field, ids) {
+        field.dataset.libs = encodeURIComponent(JSON.stringify(ids.map(String).sort()));
+    }
+
+    function topListLibFieldHtml(ids, labelHtml, description, style) {
+        var sorted = (ids || []).map(String).sort();
+        return '<div class="tl-lib-field" data-libs="' + encodeURIComponent(JSON.stringify(sorted)) + '" style="' + (style || '') + '">' +
+            labelHtml +
+            '<div class="tl-lib-host"><em style="opacity:0.5">Loading libraries...</em></div>' +
+            '<div class="tl-lib-gone fieldDescription" style="display:none;color:var(--hsc-warning-text);margin-top:6px;">None of the chosen libraries exists any more. Choose others, or tick All libraries.</div>' +
+            '<div class="fieldDescription">' + description + '</div>' +
+            '</div>';
+    }
+
+    // kind: 'Movies', 'Shows' or 'Auto': libraries that cannot hold the kind are left out, unless
+    // chosen already. dropHidden (the Content changed): such a chosen library is unticked too.
+    function renderTopListLibs(field, libs, kind, onChange, dropHidden) {
+        function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+        var fits = function (l) {
+            var t = (l.CollectionType || '').toLowerCase();
+            return kind === 'Shows' ? t !== 'movies' : kind === 'Movies' ? t !== 'tvshows' : true;
+        };
+        var ids = topListLibIds(field);
+        if (dropHidden) {
+            var kept = ids.filter(function (id) { return !libs.some(function (l) { return String(l.Id) === id && !fits(l); }); });
+            if (kept.length !== ids.length) { setTopListLibIds(field, kept); ids = kept; }
+        }
+        var chosen = function (l) { return ids.indexOf(String(l.Id)) !== -1; };
+        var list = libs.filter(function (l) { return fits(l) || chosen(l); });
+        var goneNote = field.querySelector('.tl-lib-gone');
+        var host = field.querySelector('.tl-lib-host');
+        var labelOf = function () {
+            var now = topListLibIds(field);
+            if (now.length === 0) return 'All libraries';
+            var names = libs.filter(function (l) { return now.indexOf(String(l.Id)) !== -1; }).map(function (l) { return l.Name; });
+            return names.length ? names.join(', ') : 'Chosen libraries not found';
+        };
+        var rowHtml = function (cls, value, name, checked) {
+            return '<div class="checkboxContainer" style="margin:2px 0;"><label><input type="checkbox" is="emby-checkbox" class="' + cls + '"' +
+                (value ? ' value="' + esc(value) + '"' : '') + (checked ? ' checked' : '') + '><span>' + esc(name) + '</span></label></div>';
+        };
+        host.innerHTML = '<div class="filter-dropdown-wrapper tl-lib-dropdown" style="width:100%;">' +
+            '<button type="button" class="tl-lib-btn" style="display:flex;align-items:center;width:100%;padding:6px 10px;background:var(--plugin-input-bg,rgba(128,128,128,0.08));border:1px solid var(--plugin-input-border,var(--line-color));border-radius:6px;font-size:0.9em;color:inherit;cursor:pointer;box-sizing:border-box;text-align:left;">' +
+            '<span class="tl-lib-label" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>' +
+            '<i class="md-icon tl-lib-caret" style="font-size:1em;margin-left:6px;flex-shrink:0;">expand_more</i></button>' +
+            '<div class="filter-dropdown-panel" style="min-width:220px;width:100%;box-sizing:border-box;max-height:260px;overflow-y:auto;">' +
+            rowHtml('chkTlLibAll', '', 'All libraries', ids.length === 0) +
+            '<div class="filter-dropdown-divider"></div>' +
+            list.map(function (l) { return rowHtml('chkTlLib', String(l.Id), l.Name, chosen(l)); }).join('') +
+            '</div></div>';
+
+        var btn = host.querySelector('.tl-lib-btn'), panel = host.querySelector('.filter-dropdown-panel');
+        var lbl = host.querySelector('.tl-lib-label'), caret = host.querySelector('.tl-lib-caret');
+        var all = host.querySelector('.chkTlLibAll');
+        lbl.textContent = labelOf();
+        goneNote.style.display = ids.length > 0 && !libs.some(chosen) ? 'block' : 'none';
+        btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            caret.textContent = panel.classList.toggle('open') ? 'expand_less' : 'expand_more';
+        });
+        document.addEventListener('click', function closeLibDrop(e) {
+            if (!panel.isConnected) { document.removeEventListener('click', closeLibDrop); return; }
+            if (!panel.contains(e.target) && !btn.contains(e.target)) {
+                panel.classList.remove('open');
+                caret.textContent = 'expand_more';
+            }
+        });
+        // Runs before the change reaches the card or form, so their dirty checks read the new value.
+        panel.addEventListener('change', function (e) {
+            var boxes = Array.from(panel.querySelectorAll('.chkTlLib'));
+            if (e.target === all) {
+                if (all.checked) boxes.forEach(function (c) { c.checked = false; });
+                else if (!boxes.some(function (c) { return c.checked; })) all.checked = true;   // never "none"
+            } else {
+                all.checked = !boxes.some(function (c) { return c.checked; });
+            }
+            setTopListLibIds(field, boxes.filter(function (c) { return c.checked; }).map(function (c) { return c.value; }));
+            lbl.textContent = labelOf();
+            goneNote.style.display = 'none';
+            if (onChange) onChange();
+        });
+    }
+
     function buildTopListTabHtml(tc) {
         var on = !!tc.EnableTopList;
         // A list that is off starts as Auto when ticked (Movies was only the old default).
@@ -3931,14 +4175,17 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     '</select>' +
                     '<div class="fieldDescription">Only titles of this kind are ranked. Switching it later makes the list again (a new library).</div>' +
                 '</div>' +
+                topListLibFieldHtml(tc.TopListLibraryIds, '<label class="selectLabel">Libraries</label>',
+                    'Only titles in these libraries are ranked, and Max titles for top-list below counts them. Max items in the Source tab is counted first, across all libraries: raise it if the list gets too short. Tag and collection are not affected. Applies from the next run.',
+                    'margin-bottom:12px;') +
                 '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">' +
-                    '<label style="font-size:0.9em;white-space:nowrap;margin:0;">Max items</label>' +
+                    '<label style="font-size:0.9em;white-space:nowrap;margin:0;">Max titles for top-list</label>' +
                     '<input is="emby-input" class="txtTopListMax" type="number" value="' + (Math.max(0, tc.TopListMaxItems || 0)) + '" min="0" style="width:90px;" />' +
                     '<span style="font-size:0.8em;opacity:0.5;">0 = all</span>' +
                 '</div>' +
                 '<div class="tl-badge-host"><em style="opacity:0.5">Loading badges...</em></div>' +
                 '<div class="hsc-callout warning" style="margin-top:6px;"><i class="md-icon">warning</i>' +
-                    '<span><strong>Library access is not checked per title.</strong> A top-list gets a library of its own, and every user it is shown to gets access to that library. Its titles can come from any library on the server, so those users can see and play them even from libraries they otherwise have no access to.</span>' +
+                    '<span><strong>Library access is not checked per title.</strong> A top-list gets a library of its own, and every user it is shown to gets access to that library. Its titles come from the libraries you choose, so those users can see and play them even if they otherwise have no access to those libraries.</span>' +
                 '</div>' +
             '</div>' +
             '</div>';
@@ -3950,6 +4197,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         if (hseTab.dataset.hseLoaded === '1')
             return Array.from(hseTab.querySelectorAll('.chkHseUser:checked')).map(function (c) { return c.value; });
         try { return JSON.parse(decodeURIComponent(hseTab.dataset.hseUserids || '%5B%5D')) || []; } catch (e) { return []; }
+    }
+
+    function plUserIdsOf(row) {
+        var plTab = row.querySelector('.playlist-tab');
+        if (!plTab) return [];
+        if (plTab.dataset.plLoaded === '1')
+            return Array.from(plTab.querySelectorAll('.chkPlaylistUser:checked')).map(function (c) { return c.value; });
+        try { return JSON.parse(decodeURIComponent(plTab.dataset.plUserids || '%5B%5D')) || []; } catch (e) { return []; }
     }
 
     // 'Auto' (movies or TV shows by the source's titles, decided by each run), 'Movies' or 'Shows'.
@@ -3978,7 +4233,40 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // A source card changed on this page, or added: Save's checks apply to it. Cards left alone are
     // saved as they are (a home row with nothing to show goes off, as before these checks).
     function rowChangedHere(row) {
-        return row.dataset.touched === '1' || row.classList.contains('just-added');
+        return row.dataset.touched === '1' && !row.classList.contains('hsc-tour-demo');
+    }
+
+    // Cards restored from an unsaved draft were changed here too, unlike the cards next to them:
+    // each is compared with the card as loaded, the same way Save does for LastModified.
+    function markDraftCardsChanged(view) {
+        if (!originalConfigState) return;
+        var loaded = groupConfigTags(JSON.parse(originalConfigState).Tags);
+        var now = groupConfigTags(getUiConfig(view, true).Tags);
+        var plain = function (card) { return JSON.stringify(Object.assign({}, card, { LastModified: '' })); };
+        view.querySelectorAll('#tagListContainer .tag-row').forEach(function (row) {
+            var label = (row.querySelector('.txtEntryLabel') || {}).value;
+            if (label === undefined) return;
+            var tag = row.querySelector('.txtTagName').value || label;
+            var key = label ? label + '\x1F' + tag : tag;
+            if (!loaded[key] || !now[key] || plain(loaded[key]) !== plain(now[key])) row.dataset.touched = '1';
+        });
+    }
+
+    // How a source is called in Save's messages.
+    function sourceNamesOf(rows) {
+        return rows.map(function (r) {
+            return ((r.querySelector('.txtEntryLabel') || {}).value || (r.querySelector('.txtTagName') || {}).value || 'New source').trim();
+        }).join(', ');
+    }
+
+    // Sources with neither name nor tag (Save is stopped for them). They all share one key, so two of
+    // them would overwrite each other. Only those changed here: see homeRowsWithoutUsers.
+    function sourcesWithoutName(view) {
+        return Array.from(view.querySelectorAll('#tagListContainer .tag-row')).filter(function (row) {
+            return row.querySelector('.selSourceType') && rowChangedHere(row)
+                && !((row.querySelector('.txtEntryLabel') || {}).value || '').trim()
+                && !((row.querySelector('.txtTagName') || {}).value || '').trim();
+        });
     }
 
     // Sources with Create as top-list on but no user picked (Save is stopped for them).
@@ -3988,6 +4276,25 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 && !!(row.querySelector('.chkEnableTopList') || {}).checked
                 && !!(row.querySelector('.chkEnableHomeSection') || {}).checked
                 && hseUserIdsOf(row).length === 0;
+        });
+    }
+
+    // Sources with a home row but no user to show it to (Save is stopped for them). Only those changed
+    // here: an old source without users does not stop a save until someone edits it.
+    function homeRowsWithoutUsers(view) {
+        return Array.from(view.querySelectorAll('#tagListContainer .tag-row')).filter(function (row) {
+            return row.querySelector('.selSourceType') && rowChangedHere(row)
+                && !!(row.querySelector('.chkEnableHomeSection') || {}).checked
+                && hseUserIdsOf(row).length === 0;
+        });
+    }
+
+    // The same for Create Playlist. A rotating source makes no playlist and has no Playlist tab.
+    function playlistsWithoutUsers(view) {
+        return Array.from(view.querySelectorAll('#tagListContainer .tag-row')).filter(function (row) {
+            return row.querySelector('.selSourceType') && rowChangedHere(row) && !isRotatingRow(row)
+                && !!(row.querySelector('.chkEnablePlaylist') || {}).checked
+                && plUserIdsOf(row).length === 0;
         });
     }
 
@@ -4053,12 +4360,21 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         tab.dataset.tlLoaded = '1';
         initBadgePicker(host, ((row.querySelector('.txtTagName') || {}).value || '').trim());
         updateTopListTab(row);
+        refreshTopListLibs(row, false);
     }
 
-    // Movies ↔ TV Shows: the badge previews are drawn for the kind (the chosen look is kept).
+    function refreshTopListLibs(row, dropHidden) {
+        var field = row.querySelector('.toplist-tab .tl-lib-field');
+        if (!field) return;
+        loadTopListLibraries().then(function (libs) { renderTopListLibs(field, libs, topListContentOf(row), null, dropHidden); });
+    }
+
+    // Movies ↔ TV Shows: the badge previews are drawn for the kind (the chosen look is kept), and the
+    // libraries follow it.
     function onTopListContentChanged(row) {
         var tab = row.querySelector('.toplist-tab');
         if (!tab || tab.dataset.tlLoaded !== '1') return;
+        refreshTopListLibs(row, true);
         var host = tab.querySelector('.tl-badge-host');
         var values = topListBadgeValues(tab);
         host.innerHTML = topListBadgeHtml(row, values);
@@ -4100,7 +4416,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             TopListMaxItems: Math.max(0, parseInt((tab.querySelector('.txtTopListMax') || {}).value, 10) || 0),
             TopListBadgeStyle: b.style || 'neutral',
             TopListBadgeOptions: b.options || '',
-            TopListRealPoster: b.realPoster || ''
+            TopListRealPoster: b.realPoster || '',
+            TopListLibraryIds: topListLibIds(tab.querySelector('.tl-lib-field'))
         };
     }
 
@@ -4123,6 +4440,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
 
     function setupRowEvents(row) {
+        wireRotating(row);
         function updateBadges(row) {
             var container = row.querySelector('.badge-container');
             if (!container) return;
@@ -4248,6 +4566,26 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 row.querySelector('.source-mediainfo-container').style.display = (type && type !== '') ? 'block' : 'none';
                 row.querySelector('.source-ai-container').style.display = type === 'AI' ? 'block' : 'none';
                 row.querySelector('.source-manual-container').style.display = type === 'Manual' ? 'block' : 'none';
+                row.querySelector('.source-rotating-container').style.display = type === 'RotatingExisting' ? 'block' : 'none';
+                var _wasRotating = row.classList.contains('hsc-rotating');
+                row.classList.toggle('hsc-rotating', type === 'RotatingExisting');
+                if (type === 'RotatingExisting') {
+                    // It only makes its home row: that goes on, and what it does not do goes off (their tabs are hidden).
+                    var _rotHs = row.querySelector('.chkEnableHomeSection');
+                    if (_rotHs && !_rotHs.checked) { _rotHs.checked = true; _rotHs.dispatchEvent(new Event('change', { bubbles: true })); }
+                    ['.chkEnableTag', '.chkEnableCollection', '.chkEnablePlaylist', '.chkEnableTopList'].forEach(function (sel) {
+                        var _c = row.querySelector(sel);
+                        if (_c && _c.checked) { _c.checked = false; _c.dispatchEvent(new Event('change', { bubbles: true })); }
+                    });
+                    var _rotOpenTab = row.querySelector('.tag-tab.active');
+                    if (_rotOpenTab && /^(tag|collection|playlist|advanced)$/.test(_rotOpenTab.dataset.tab)) row.querySelector('.tag-tab[data-tab="general"]').click();
+                } else if (_wasRotating) {
+                    var _tagBack = row.querySelector('.chkEnableTag');
+                    if (_tagBack && !_tagBack.checked) { _tagBack.checked = true; _tagBack.dispatchEvent(new Event('change', { bubbles: true })); }
+                }
+                updateHseSectionAvailability(row);
+                var _rotTitle = row.querySelector('.homescreen-tab [data-field="CustomName"]');
+                if (_rotTitle) _rotTitle.setAttribute('placeholder', hseTitlePlaceholder(row));
 
                 var _hint = row.querySelector('.source-type-hint');
                 if (_hint) {
@@ -4258,7 +4596,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         'Manual':           'Pick movies and shows by hand. Search to add them, use the arrows to set the order, and remove them with ✕.',
                         'MediaInfo':        'Filter your own library to select which movies or shows to tag or create a collection of. This is also known as a Smart Playlist.',
                         'AI':               'Use AI to create a list. Write your prompt and the AI will build a list based on it.',
-                        'NextWatch':        NEXT_WATCH_HINT
+                        'NextWatch':        NEXT_WATCH_HINT,
+                        'RotatingExisting': ROTATING_HINT
                     };
                     _hint.textContent = _hints[type] || '';
                 }
@@ -4330,6 +4669,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var dateMiRule = e.target.closest('.mi-rule');
                 dateMiRule.querySelector('.mi-value-wrapper').innerHTML = getMiValueHtml(
                     dateMiRule.querySelector('.selMiProperty').value, '', '', '', e.target.value);
+            }
+            if (e.target.classList.contains('selMiTagPick') && e.target.value) {
+                var tagBox = e.target.closest('.mi-rule').querySelector('.txtMiValue');
+                var tagLines = tagBox.value.split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean);
+                var pickedTag = e.target.value;
+                e.target.value = '';
+                if (!tagLines.some(function (l) { return l.toLowerCase() === pickedTag.toLowerCase(); })) {
+                    tagBox.value = tagLines.concat(pickedTag).join('\n');
+                    tagBox.dispatchEvent(new Event('input', { bubbles: true }));
+                }
             }
             if (e.target.classList.contains('selMiValue')) {
                 var _miRule = e.target.closest('.mi-rule');
@@ -4791,7 +5140,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             row.querySelector('.txtTagName').setAttribute('placeholder', lbl);
             row.querySelector('.txtCollectionName').setAttribute('placeholder', lbl);
             var hseCustomTitle = row.querySelector('[data-field="CustomName"]');
-            if (hseCustomTitle) hseCustomTitle.setAttribute('placeholder', lbl);
+            if (hseCustomTitle) hseCustomTitle.setAttribute('placeholder', hseTitlePlaceholder(row));
             updateBadges(row);
         }
         row.querySelector('.txtEntryLabel').addEventListener('input', function() {
@@ -4802,19 +5151,29 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         // Manual order: drag the handle (mouse, touch or pen) or use its arrow keys.
         makeRowSortable(row, row.querySelector('.drag-handle'), {
             list: function () { return row.parentElement; },
-            rowSelector: '.tag-row',
+            rowSelector: '.tag-row, .src-folder-head, .src-folder-none',
+            movesAlong: function (el) { return el.classList.contains('hsc-folder-hidden'); },
             canDrag: function () { return !!row.parentElement && !row.parentElement.classList.contains('sort-hidden'); },
             onStart: function () {
                 // Closed rows are easier to move past each other.
                 row.parentElement.querySelectorAll('.tag-body').forEach(function (b) { b.style.display = 'none'; });
                 row.parentElement.querySelectorAll('.expand-icon').forEach(function (i) { i.innerText = 'expand_more'; });
             },
-            onMoved: function () { setTimeout(checkFormState, 0); }
+            onMoved: function () {
+                var movedView = row.closest('#HomeScreenCompanionConfigPage') || activeView();
+                refreshSourceFolders(movedView);
+                setTimeout(checkFormState, 0);
+            }
+        });
+
+        row.querySelector('.drag-handle').addEventListener('blur', function () {
+            refreshSourceFolders(row.closest('#HomeScreenCompanionConfigPage') || activeView());
         });
 
         row.querySelector('.btnDuplicateRow').addEventListener('click', () => {
             var config = markAsCopy(readRowAsConfig(row));
-            renderTagGroup(config, row.closest('#tagListContainer'), true, undefined, true);
+            // A copy of a source in a folder stays in that folder.
+            renderTagGroup(config, row.closest('#tagListContainer'), true, undefined, true, folderOfRow(row) ? row : undefined);
             applyFilters(row.closest('#HomeScreenCompanionConfigPage') || activeView());
             setTimeout(checkFormState, 0);
         });
@@ -5429,6 +5788,215 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         return rows;
     }
 
+    // ---- Source folders (Tag & Collection tab) ----
+    // Only how the list looks: nothing in a sync reads them. A folder is a header in the list and the
+    // rows under it are in it, so every other piece of code still sees one flat list, and dragging a
+    // row past a header moves it into that folder. The folders come first; a "No folder" divider
+    // under them starts the rows in none (a new source sits above the folders until the page
+    // reloads, in none too). No folders: no divider.
+    // Saved as TagConfig.ListFolder and SourceFolders; which ones are closed is this browser's own.
+    var FOLDER_CLOSED_KEY = 'HomeScreenCompanion_ClosedFolders';
+
+    function closedFolders() {
+        try { return JSON.parse(localStorage.getItem(FOLDER_CLOSED_KEY) || '[]') || []; } catch (e) { return []; }
+    }
+    function setFolderClosed(name, closed) {
+        var list = closedFolders().filter(function (n) { return n !== name; });
+        if (closed) list.push(name);
+        try { localStorage.setItem(FOLDER_CLOSED_KEY, JSON.stringify(list)); } catch (e) { }
+    }
+    function folderHeads(container) {
+        return Array.prototype.filter.call(container.children, function (el) { return el.classList.contains('src-folder-head'); });
+    }
+    function folderOfRow(row) {
+        for (var el = row.previousElementSibling; el; el = el.previousElementSibling) {
+            if (el.classList.contains('src-folder-none')) return '';
+            if (el.classList.contains('src-folder-head')) return el.dataset.folder;
+        }
+        return '';
+    }
+    function folderRows(head) {
+        var rows = [];
+        for (var el = head.nextElementSibling; el && !el.classList.contains('src-folder-head') && !el.classList.contains('src-folder-none'); el = el.nextElementSibling) rows.push(el);
+        return rows;
+    }
+    function folderNone(container) {
+        return Array.prototype.filter.call(container.children, function (el) { return el.classList.contains('src-folder-none'); })[0] || null;
+    }
+    var FOLDER_NONE_HTML = '<div class="src-folder-none"><span class="src-folder-none-name">No folder</span><span class="src-folder-count"></span></div>';
+    function uniqueFolderName(container, wanted, except) {
+        var names = folderHeads(container).filter(function (h) { return h !== except; }).map(function (h) { return h.dataset.folder.toLowerCase(); });
+        var name = wanted, n = 2;
+        while (names.indexOf(name.toLowerCase()) >= 0) name = wanted + ' ' + (n++);
+        return name;
+    }
+    function folderHeadHtml(name) {
+        function btn(cls, icon, title) { return '<button type="button" class="' + cls + '" title="' + title + '" aria-label="' + title + '"><i class="md-icon">' + icon + '</i></button>'; }
+        return '<div class="src-folder-head" data-folder="' + escapeHtml(name) + '">' +
+            '<i class="md-icon src-folder-chevron">expand_more</i>' +
+            '<i class="md-icon src-folder-icon">folder</i>' +
+            '<span class="src-folder-name">' + escapeHtml(name) + '</span>' +
+            '<span class="src-folder-count"></span>' +
+            '<i class="md-icon src-folder-issue" title="A source in this folder has an issue from its last run" style="display:none;">warning</i>' +
+            '<span class="src-folder-actions">' +
+                btn('btnFolderUp', 'arrow_upward', 'Move folder up') + btn('btnFolderDown', 'arrow_downward', 'Move folder down') +
+                btn('btnFolderRename', 'edit', 'Rename folder') + btn('btnFolderRemove', 'close', 'Remove folder (its sources stay)') +
+            '</span></div>';
+    }
+
+    // Classes and counts, from what the list looks like now.
+    function refreshSourceFolders(view) {
+        var container = view.querySelector('#tagListContainer');
+        if (!container) return;
+        var closed = closedFolders(), filtering = container.classList.contains('hsc-folder-filtering');
+        var heads = folderHeads(container);
+        var none = folderNone(container);
+        if (none && heads.length === 0) { none.remove(); none = null; }
+        var inFolder = false, isClosed = false, loose = [];
+        // The row being moved with its handle stays in view, also inside a closed folder.
+        var focused = document.activeElement && document.activeElement.classList.contains('drag-handle') ? document.activeElement.closest('.tag-row') : null;
+        Array.prototype.forEach.call(container.children, function (el) {
+            if (el.classList.contains('src-folder-head')) { inFolder = true; isClosed = closed.indexOf(el.dataset.folder) >= 0; return; }
+            if (el === none) { inFolder = false; isClosed = false; return; }
+            if (!inFolder) loose.push(el);
+            el.classList.toggle('hsc-in-folder', inFolder);
+            el.classList.toggle('hsc-folder-hidden', inFolder && isClosed && el !== focused);
+        });
+        if (none) {
+            var looseShown = loose.filter(function (r) { return r.style.display !== 'none'; }).length;
+            none.style.display = filtering && looseShown === 0 ? 'none' : '';
+            none.querySelector('.src-folder-count').textContent = filtering ? looseShown + ' of ' + loose.length
+                : loose.length === 0 ? 'Drag a source here to take it out of a folder' : loose.length === 1 ? '1 source' : loose.length + ' sources';
+        }
+        heads.forEach(function (h) {
+            var rows = folderRows(h);
+            var shown = rows.filter(function (r) { return r.style.display !== 'none'; }).length;
+            var open = closed.indexOf(h.dataset.folder) < 0;
+            h.classList.toggle('closed', !open && !filtering);
+            h.style.display = filtering && shown === 0 ? 'none' : '';
+            h.querySelector('.src-folder-count').textContent = filtering ? shown + ' of ' + rows.length
+                : rows.length === 0 ? 'Empty: drag a source here' : rows.length === 1 ? '1 source' : rows.length + ' sources';
+            h.querySelector('.src-folder-issue').style.display = rows.some(function (r) {
+                return !!_groupIssues[decodeURIComponent(r.dataset.groupKey || '')];
+            }) ? '' : 'none';
+        });
+    }
+
+    // After the rows are drawn: the saved folders, each with its rows, then the rows in no folder.
+    function layoutSourceFolders(view, config) {
+        var container = view.querySelector('#tagListContainer');
+        var rows = Array.prototype.slice.call(container.querySelectorAll(':scope > .tag-row'));
+        var names = [];
+        function add(n) { if (n && !names.some(function (x) { return x.toLowerCase() === n.toLowerCase(); })) names.push(n); }
+        (config.SourceFolders || []).forEach(add);
+        rows.forEach(function (r) { add(r.dataset.listFolder); });
+        names.forEach(function (name) {
+            container.insertAdjacentHTML('beforeend', folderHeadHtml(name));
+            rows.filter(function (r) { return (r.dataset.listFolder || '').toLowerCase() === name.toLowerCase(); })
+                .forEach(function (r) { container.appendChild(r); });
+        });
+        if (names.length === 0) return;
+        container.insertAdjacentHTML('beforeend', FOLDER_NONE_HTML);
+        rows.filter(function (r) { return !r.dataset.listFolder; }).forEach(function (r) { container.appendChild(r); });
+    }
+
+    // At the very top of the list.
+    function addSourceFolder(view, wanted) {
+        var container = view.querySelector('#tagListContainer');
+        var name = uniqueFolderName(container, wanted);
+        var none = folderNone(container);
+        if (!none) container.insertAdjacentHTML('afterbegin', FOLDER_NONE_HTML);
+        else {
+            // Sources dragged above the folders are in none: the new header must not take them in.
+            var below = none.nextElementSibling, first;
+            while ((first = container.firstElementChild) && first.classList.contains('tag-row')) container.insertBefore(first, below);
+        }
+        container.insertAdjacentHTML('afterbegin', folderHeadHtml(name));
+        return container.firstElementChild;
+    }
+
+    // A source that something wants to show: its folder opens.
+    function revealSourceRow(view, row) {
+        var name = folderOfRow(row);
+        if (!name || closedFolders().indexOf(name) < 0) return;
+        setFolderClosed(name, false);
+        refreshSourceFolders(view);
+    }
+
+    function startFolderRename(view, head) {
+        var span = head.querySelector('.src-folder-name');
+        if (!span || head.querySelector('.txtFolderName')) return;
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'txtFolderName emby-input';
+        input.value = head.dataset.folder;
+        span.style.display = 'none';
+        span.parentNode.insertBefore(input, span);
+        var finished = false;
+        function finish(keep) {
+            if (finished) return;
+            finished = true;
+            var container = view.querySelector('#tagListContainer');
+            var wanted = input.value.trim();
+            input.remove();
+            span.style.display = '';
+            if (!keep || !wanted || wanted === head.dataset.folder) return;
+            var name = uniqueFolderName(container, wanted, head);
+            var wasClosed = closedFolders().indexOf(head.dataset.folder) >= 0;
+            setFolderClosed(head.dataset.folder, false);
+            head.dataset.folder = name;
+            span.textContent = name;
+            if (wasClosed) setFolderClosed(name, true);
+            refreshSourceFolders(view);
+            setTimeout(checkFormState, 0);
+        }
+        input.addEventListener('keydown', function (e) {
+            e.stopPropagation();
+            if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+            else if (e.key === 'Escape') finish(false);
+        });
+        input.addEventListener('blur', function () { finish(true); });
+        input.addEventListener('click', function (e) { e.stopPropagation(); });
+        input.focus();
+        input.select();
+    }
+
+    function wireSourceFolders(view) {
+        var container = view.querySelector('#tagListContainer');
+        function changed() { refreshSourceFolders(view); setTimeout(checkFormState, 0); }
+        var addFolder = view.querySelector('#btnAddFolder');
+        addFolder.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); addFolder.click(); } });
+        addFolder.addEventListener('click', function () {
+            var head = addSourceFolder(view, 'New folder');
+            changed();
+            head.scrollIntoView({ block: 'center' });
+            startFolderRename(view, head);
+        });
+        container.addEventListener('click', function (e) {
+            var head = e.target.closest('.src-folder-head');
+            if (!head || head.parentElement !== container) return;
+            var heads = folderHeads(container), at = heads.indexOf(head), block = [head].concat(folderRows(head));
+            if (e.target.closest('.btnFolderUp')) {
+                if (at > 0) block.forEach(function (el) { container.insertBefore(el, heads[at - 1]); });
+                changed();
+            } else if (e.target.closest('.btnFolderDown')) {
+                if (at < heads.length - 1) block.forEach(function (el) { container.insertBefore(el, heads[at + 2] || folderNone(container)); });
+                changed();
+            } else if (e.target.closest('.btnFolderRename')) {
+                startFolderRename(view, head);
+            } else if (e.target.closest('.btnFolderRemove')) {
+                var looseFrom = folderNone(container).nextElementSibling;
+                folderRows(head).forEach(function (r) { container.insertBefore(r, looseFrom); });
+                setFolderClosed(head.dataset.folder, false);
+                head.remove();
+                changed();
+            } else if (!e.target.closest('.txtFolderName')) {
+                setFolderClosed(head.dataset.folder, closedFolders().indexOf(head.dataset.folder) < 0);
+                refreshSourceFolders(view);
+            }
+        });
+    }
+
     function sortRows(container, criteria) {
         var rows = Array.from(container.querySelectorAll('.tag-row'));
         // While the list is in manual order its DOM order is the user's order (moved and new rows
@@ -5454,7 +6022,20 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             return manualRank(a) - manualRank(b);
         });
 
-        rows.forEach(row => container.appendChild(row));
+        // Each row stays in its folder: sorted within it, the folders in their order, then the rest.
+        var parts = folderHeads(container).map(function (h) { return { head: h, rows: [] }; });
+        var none = folderNone(container), loose = [];
+        rows.forEach(function (row) {
+            var name = folderOfRow(row);
+            var part = parts.filter(function (p) { return p.head.dataset.folder === name; })[0];
+            (part ? part.rows : loose).push(row);
+        });
+        parts.forEach(function (p) {
+            container.appendChild(p.head);
+            p.rows.forEach(function (row) { container.appendChild(row); });
+        });
+        if (none) container.appendChild(none);
+        loose.forEach(function (row) { container.appendChild(row); });
 
         if (criteria !== 'Manual') container.classList.add('sort-hidden');
         else container.classList.remove('sort-hidden');
@@ -5764,6 +6345,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
     // The row a saved "before:" / "after:" key points at, shown before the row list has loaded.
     function hsePositionKeyLabel(key) {
+        // A rotating source's row is known by its source: its title changes with the turn.
+        if (key.indexOf('src:') === 0) return hscRowKeyLabel(key) + ' (rotating)';
         if (key.indexOf('name:') === 0) return key.substring(5);
         return key.substring(5).split('|')[0];
     }
@@ -5816,6 +6399,47 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         return v ? v.value : '';
     }
 
+    // A rotating source's own row for this user: its title cannot tell it (it changes with the turn).
+    function ownRotatingRowId(root, userId) {
+        var tab = root.closest && root.closest('.homescreen-tab');
+        if (!tab || !isRotatingRow(tab.closest('.tag-row'))) return '';
+        function norm(id) { return (id || '').replace(/-/g, '').toLowerCase(); }
+        try {
+            var t = JSON.parse(decodeURIComponent(tab.dataset.hseTracked || '[]')).find(function (x) { return norm(x.UserId) === norm(userId); });
+            return t ? t.SectionId || '' : '';
+        } catch (e) { return ''; }
+    }
+
+    // A save can change a Position on the server: one that points at a renamed rotating source
+    // (RowPlacement.FollowRenamedSources). Brings the page up to date; true when something changed.
+    function followSavedPositions(view, config) {
+        var grouped = groupConfigTags(config.Tags), any = false;
+        view.querySelectorAll('#tagListContainer .tag-row').forEach(function (row) {
+            var labelEl = row.querySelector('.txtEntryLabel'), tab = row.querySelector('.homescreen-tab');
+            if (!labelEl || !tab) return;
+            var name = labelEl.value, tagName = row.querySelector('.txtTagName').value || name;
+            var tc = grouped[name ? name + '\x1F' + tagName : tagName];
+            if (!tc) return;
+            var pos = '';
+            try { pos = JSON.parse(tc.HomeSectionSettings || '{}')._position || ''; } catch (e) { return; }
+            var isSrc = function (p) { return /^(before|after):src:/.test(p); };
+            if (!isSrc(pos)) return;
+            tab.dataset.hseSettings = encodeURIComponent(tc.HomeSectionSettings);
+            var val = tab.querySelector('.hsc-pos-value');
+            if (!val || val.value === pos || !isSrc(val.value)) return;
+            var key = pos.substring(pos.indexOf(':') + 1), sel = tab.querySelector('.hsc-pos-row');
+            val.value = pos;
+            if (!Array.from(sel.options).some(function (o) { return o.value === key; })) {
+                var o = document.createElement('option');
+                o.value = key; o.textContent = hsePositionKeyLabel(key);
+                sel.appendChild(o);
+            }
+            sel.value = key;
+            any = true;
+        });
+        return any;
+    }
+
     // Lists the rows on the user's home screen as choices for Before / After (the row being placed
     // left out: ownName, its title). The saved choice stays when the list cannot be loaded.
     function fillPositionRows(root, userId, ownName) {
@@ -5830,10 +6454,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var own = typeof ownName === 'function' ? ownName() : ownName;
                 own = (own || '').trim().toLowerCase();
                 var current = sel.value;
+                var rotating = (data && data.RotatingKeys) || {}, ownRow = ownRotatingRowId(root, userId);
                 ((data && data.Sections) || []).forEach(function (s, i) {
-                    var key = hseSectionKey(s);
+                    if (ownRow && s.Id === ownRow) return;
+                    var rotatingKey = rotating[s.Id];
+                    var key = rotatingKey || hseSectionKey(s);
                     if (own && key === 'name:' + own) return;
-                    var label = stripInactive(s.CustomName || '') || s.Name || s.SectionType || ('Row ' + (i + 1));
+                    var label = rotatingKey ? hsePositionKeyLabel(rotatingKey)
+                        : stripInactive(s.CustomName || '') || s.Name || s.SectionType || ('Row ' + (i + 1));
                     var existing = Array.from(sel.options).find(function (o) { return o.value === key; });
                     if (existing) { existing.textContent = label; return; }
                     var o = document.createElement('option');
@@ -5902,7 +6530,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
         var customName = ((s.CustomName || '').trim() === (defaultName || '').trim() ? '' : (s.CustomName || '')).replace(/"/g, '&quot;');
         var customNamePlaceholder = (defaultName || '').replace(/"/g, '&quot;');
-        html += '<div style="margin-bottom:12px;"><input is="emby-input" type="text" class="hse-field-str" data-field="CustomName" label="Custom Title" value="' + customName + '" placeholder="' + customNamePlaceholder + '"/></div>';
+        html += '<div style="margin-bottom:12px;"><input is="emby-input" type="text" class="hse-field-str" data-field="CustomName" label="Custom Title" value="' + customName + '" placeholder="' + customNamePlaceholder + '"/><div class="fieldDescription hsc-rot-only"><code>{name}</code> becomes the name of what the row shows, e.g. <code>Now Showing: {name}</code>. Leave it empty for just the name.</div></div>';
 
         // Where the row goes. The Row list is the first selected user's rows (filled in by
         // fillPositionRows); the saved choice is shown until that list has loaded.
@@ -6116,6 +6744,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                                     : ''
                 };
 
+                // A rotating row's live title and type come from its turn, not from the form.
+                if (isRotatingRow(tab.closest('.tag-row'))) { delete fieldMap.CustomName; delete fieldMap.SectionType; }
                 Object.keys(fieldMap).forEach(function(field) {
                     var el = tab.querySelector('[data-field="' + field + '"]');
                     if (!el) return;
@@ -6214,16 +6844,19 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 wireUserMultiSelect(tab.querySelector('.hse-user-list-inner'));
 
                 // Structured section settings form
-                var defaultTagName = row.querySelector('.txtEntryLabel').value || row.querySelector('.txtTagName').value || '';
-                var tagEnabled  = !!(row.querySelector('.chkEnableTag') || {}).checked;
-                var collEnabled = !!(row.querySelector('.chkEnableCollection') || {}).checked;
+                var defaultTagName = hseTitlePlaceholder(row);
+                var rotating = isRotatingRow(row);
+                var rotType = rotating ? rotationSectionType(rotationKindsOf(row)) : '';
+                var tagEnabled  = rotating ? rotType === 'items' : !!(row.querySelector('.chkEnableTag') || {}).checked;
+                var collEnabled = rotating ? rotType === 'boxset' : !!(row.querySelector('.chkEnableCollection') || {}).checked;
+                if (rotating) savedSettings.SectionType = rotType;
 
                 // Check dirty state BEFORE rendering — so we know if user had unsaved changes already
                 var _hseView = row.closest('#HomeScreenCompanionConfigPage') || activeView();
                 var _wasAlreadyDirty = _hseView && originalConfigState &&
                     JSON.stringify(getUiConfig(_hseView, true)) !== originalConfigState;
 
-                var plEnabled = !!(row.querySelector('.chkEnablePlaylist') || {}).checked;
+                var plEnabled = rotating ? rotType === 'playlist' : !!(row.querySelector('.chkEnablePlaylist') || {}).checked;
                 tab.querySelector('.hse-fields-inner').innerHTML = buildHomeSectionFormHtml(savedSettings, defaultSectionType, defaultTagName, tagEnabled, collEnabled, libraryOptions, savedLibraryId, allLibraries, plEnabled);
                 wireHomeSectionTypeChange(tab);
                 wirePositionField(tab);
@@ -6252,11 +6885,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             });
     }
     function updateHseSectionAvailability(row) {
-        var tagEnabled  = !!(row.querySelector('.chkEnableTag') || {}).checked;
-        var collEnabled = !!(row.querySelector('.chkEnableCollection') || {}).checked;
+        // A rotating row's fields follow what is in its list.
+        var rotating = isRotatingRow(row);
+        var rotType = rotating ? rotationSectionType(rotationKindsOf(row)) : '';
+        var tagEnabled  = rotating ? rotType === 'items' : !!(row.querySelector('.chkEnableTag') || {}).checked;
+        var collEnabled = rotating ? rotType === 'boxset' : !!(row.querySelector('.chkEnableCollection') || {}).checked;
         var hseCbx = row.querySelector('.chkEnableHomeSection');
         if (!hseCbx) return;
-        var plEnabled = !!(row.querySelector('.chkEnablePlaylist') || {}).checked;
+        var plEnabled = rotating ? rotType === 'playlist' : !!(row.querySelector('.chkEnablePlaylist') || {}).checked;
         // A top-list row needs none of them: its titles come from the source's run.
         var tlEnabled = !!(row.querySelector('.chkEnableTopList') || {}).checked && (row.querySelector('.selSourceType') || {}).value !== 'NextWatch';
 
@@ -6278,6 +6914,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
     // The home screen section has something to show: a tag, collection or playlist, or its top-list.
     function hseAllowed(row) {
+        if (isRotatingRow(row)) return true;
         var nw = (row.querySelector('.selSourceType') || {}).value === 'NextWatch';
         return ['.chkEnableTag', '.chkEnableCollection', '.chkEnablePlaylist'].concat(nw ? [] : ['.chkEnableTopList'])
             .some(function (c) { return !!(row.querySelector(c) || {}).checked; });
@@ -6440,7 +7077,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 NextWatchUsersMigrated: row.dataset.nwMigrated === '1',
                 NextWatchSeedDays: readNwSeedDays(row), NextWatchUseTaste: readNwUseTaste(row)
             };
-            Object.assign(baseTag, readTopListTab(row));
+            Object.assign(baseTag, readTopListTab(row), readRotation(row), { ListFolder: folderOfRow(row) });
 
             if (st === 'External') {
                 var pushedExternal = false;
@@ -6557,6 +7194,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             ShowAdvancedBadges: view.querySelector('#chkShowAdvancedBadges').checked,
             Tags: flatTags,
             SavedFilters: savedFilters,
+            SourceFolders: folderHeads(view.querySelector('#tagListContainer')).map(function (h) { return h.dataset.folder; }),
             HomeSyncEnabled: hscEnabled ? hscEnabled.checked : (lastHscConfig.HomeSyncEnabled || false),
             HomeSyncProfiles: hscEnabled ? readHscProfiles(view) : (lastHscConfig.HomeSyncProfiles || []),
             // Replaced by HomeSyncProfiles (see effectiveHscProfiles): cleared on save.
@@ -6748,7 +7386,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         ShowCopyPasteButtons: 'Copy & paste sources', ShowImportCollectionButton: 'Import collection', ShowMissingTitles: 'Show missing titles',
         MissingIncludeGaps: 'Missing: include shows that lack episodes', MissingExportToFile: 'Missing: keep the list in a file',
         MissingExportFolder: 'Missing: file folder', MissingExportJson: 'Missing: JSON file', MissingExportCsv: 'Missing: CSV files',
-        RankedCollectionsEnabled: 'Ranked collections', ShowAdvancedBadges: 'Show Advanced badges', SavedFilters: 'Saved filters',
+        RankedCollectionsEnabled: 'Ranked collections', ShowAdvancedBadges: 'Show Advanced badges', SourceFolders: 'Source folders', SavedFilters: 'Saved filters',
         HomeSyncEnabled: 'Home Screen sync: on/off', HomeSyncProfiles: 'Home Screen sync: profiles',
         ContinueWatchingBumpEnabled: 'Continue Watching bump: on/off', ContinueWatchingBumpMode: 'Continue Watching bump: mode',
         ContinueWatchingBumpAllUsers: 'Continue Watching bump: all users', ContinueWatchingBumpUserIds: 'Continue Watching bump: users',
@@ -6953,6 +7591,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
             row.style.display = (matchesSearch && matchesFeature && matchesSrc && matchesStatus && matchesIssues) ? 'block' : 'none';
         });
+        // Searching or filtering looks inside closed folders too.
+        container.classList.toggle('hsc-folder-filtering', !!(searchTerm || anyFeature || anySrc || anyStatus || fIssues));
+        refreshSourceFolders(view);
         // Recount here too: rows are rendered, added and reloaded after the issues arrive.
         updateIssueCounter(view);
         var counter = view.querySelector('#btnIssueCounter');
@@ -7106,6 +7747,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     EnableHomeSection: t.EnableHomeSection || false, HomeSectionLibraryId: t.HomeSectionLibraryId || 'auto',
                     HomeSectionUserIds: t.HomeSectionUserIds || [], HomeSectionSettings: t.HomeSectionSettings || '{}',
                     HomeSectionTracked: t.HomeSectionTracked || [],
+                    ListFolder: t.ListFolder || '', RotationItems: t.RotationItems || [], RotationEveryDays: t.RotationEveryDays || 7,
+                    RotationStartDay: t.RotationStartDay || '', RotationOrder: t.RotationOrder || 'List',
                     AiProvider: t.AiProvider || 'OpenAI',
                     AiPrompt: t.AiPrompt || '',
                     AiIncludeRecentlyWatched: t.AiIncludeRecentlyWatched || false,
@@ -7133,6 +7776,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     EnableTopList: !!t.EnableTopList, TopListContentType: (t.TopListContentType === 'Shows' || t.TopListContentType === 'Movies') ? t.TopListContentType : 'Auto',
                     TopListMaxItems: t.TopListMaxItems || 0, TopListBadgeStyle: t.TopListBadgeStyle || 'neutral',
                     TopListBadgeOptions: t.TopListBadgeOptions || '', TopListRealPoster: t.TopListRealPoster || '',
+                    TopListLibraryIds: t.TopListLibraryIds || [],
                     LastRuns: [],
                 };
             }
@@ -9114,6 +9758,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     existing.HomeSectionTracked = existing.HomeSectionTracked || [];
                     existing.MaxItems = maxItems;
                     existing.ContentType = isShows ? 'Shows' : 'Movies';
+                    // Callers without the field keep the list's saved libraries.
+                    if (ui.libraryIds) existing.LibraryIds = ui.libraryIds;
                 } else {
                     topLists.push({
                         TagName: tagName,
@@ -9122,7 +9768,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         HomeSectionLibraryId: ctx.libraryItemId || 'auto',
                         HomeSectionSettings: hseSettings,
                         HomeSectionTracked: [],
-                        ContentType: isShows ? 'Shows' : 'Movies'
+                        ContentType: isShows ? 'Shows' : 'Movies',
+                        LibraryIds: ui.libraryIds || []
                     });
                 }
                 config.TopLists = topLists;
@@ -9362,7 +10009,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             // The tile's big numeral has room for 1-10 (BadgeRenderer.RenderRanked).
             '<div class="tl-badge-top10-note fieldDescription" style="margin:2px 0 6px;' + (tileSel ? '' : 'display:none;') + '">' +
                 '<i class="md-icon" style="font-size:1.15em;vertical-align:-3px;margin-right:4px;color:var(--hsc-info-text);">info</i>' +
-                'The Top 10 tile has room for 10 titles. From number 11 on, titles get a round number badge instead: set Max items to 10 to keep the whole row as tiles.</div>' +
+                'The Top 10 tile has room for 10 titles. From number 11 on, titles get a round number badge instead: set Max titles for top-list to 10 to keep the whole row as tiles.</div>' +
             buildRealPosterHtml(realPoster, contentKind) +
             '</div>';
     }
@@ -10095,7 +10742,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 buildBadgePickerHtml(preset ? preset.badgeStyle : 'neutral', preset ? preset.badgeOptions : '', preset ? preset.realPoster : '', isShows ? 'shows' : 'movies') +
 
                 '<div style="' + fieldStyle + '">' +
-                '<label style="' + labelStyle + '">Max items <span style="font-weight:400;text-transform:none;letter-spacing:0;opacity:0.7;">(0 = all)</span></label>' +
+                '<label style="' + labelStyle + '">Max titles for top-list <span style="font-weight:400;text-transform:none;letter-spacing:0;opacity:0.7;">(0 = all)</span></label>' +
                 '<input type="number" class="tlm-max-items" min="0" step="1" style="' + inputStyle + '" placeholder="0" />' +
                 '</div>' +
 
@@ -10180,11 +10827,25 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
 
     // What a manual top-list can rank: movies or, for a show top-list, series (top-list copies left out).
-    function loadTopListCandidates(isShows, tok) {
-        return fetch(window.ApiClient.getUrl(isShows ? 'HomeScreenCompanion/TopList/AllSeries' : 'HomeScreenCompanion/TopList/AllMovies'), {
-            headers: { 'X-MediaBrowser-Token': tok }
-        }).then(function (r) { return r.json(); });
+    function loadTopListCandidates(isShows, tok, libraryIds) {
+        var url = window.ApiClient.getUrl(isShows ? 'HomeScreenCompanion/TopList/AllSeries' : 'HomeScreenCompanion/TopList/AllMovies');
+        if (libraryIds && libraryIds.length) url += (url.indexOf('?') === -1 ? '?' : '&') + 'LibraryIds=' + encodeURIComponent(libraryIds.join(','));
+        return fetch(url, { headers: { 'X-MediaBrowser-Token': tok } }).then(function (r) { return r.json(); });
     }
+
+    // A manual list's Libraries field: narrows its search box, titles already added stay.
+    function wireManualTopListLibs(root, libs, isShows, tok, onCandidates) {
+        var field = root.querySelector('.tl-lib-field');
+        var latest = 0;
+        renderTopListLibs(field, libs, isShows ? 'Shows' : 'Movies', function () {
+            var mine = ++latest;
+            loadTopListCandidates(isShows, tok, topListLibIds(field)).then(function (r) {
+                if (mine === latest) onCandidates(r.Movies || []);
+            }).catch(function () { });
+        });
+    }
+
+    var MANUAL_LIBS_HINT = 'Narrows the search below. Titles you have already added stay in the list.';
 
     // existingData = { listName, customName, displayMode, imageType, userIds: [], movies: [{ItemId,ImdbId,Name,Year}] }
     // contentType: 'Movies' (default) or 'Shows' — for shows, "movies" below are series.
@@ -10218,15 +10879,17 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
         var tok = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
 
-        var loadCandidates = loadTopListCandidates(isShows, tok);
+        var loadCandidates = loadTopListCandidates(isShows, tok, preset && preset.libraryIds);
 
         Promise.all([
             loadCandidates,
-            getHseUsers()
+            getHseUsers(),
+            loadTopListLibraries()
         ])
         .then(function (results) {
             var allMovies = (results[0].Movies || []);
             var users     = results[1];
+            var topListLibs = results[2];
 
             var presetUserIds = (preset && preset.userIds) || [];
 
@@ -10307,6 +10970,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<div style="flex:1;min-width:0;padding-left:20px;">' +
                 '<div style="' + colHeaderStyle + '"><i class="md-icon" style="font-size:0.9em;vertical-align:middle;margin-right:5px;">format_list_numbered</i>' + (isShows ? 'Show List' : 'Movie List') + '</div>' +
 
+                topListLibFieldHtml(preset && preset.libraryIds, '<label style="' + labelStyle + '">Libraries</label>', MANUAL_LIBS_HINT, fieldStyle) +
+
                 '<div style="' + fieldStyle + '">' +
                 '<label style="' + labelStyle + '">' + (isShows ? 'Add Show' : 'Add Movie') + '</label>' +
                 '<div style="position:relative;">' +
@@ -10332,6 +10997,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
             initBadgePicker(modal);
             wireUserMultiSelect(modal);
+            wireManualTopListLibs(modal, topListLibs, isShows, tok, function (list) { allMovies = list; });
             wirePositionField(modal);
             refreshAdvanced(modal);
             fillPositionRows(modal, presetUserIds[0] || ((users || [])[0] || {}).Id, function () {
@@ -10483,7 +11149,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     if (isShows && !prepareResult.FilesCreated) throw new Error('None of the selected shows has episode files.');
                     executeTopListCreationSteps(
                         listName, customNameVal, selectedUserIds, displayMode, customNameVal, imageType, 0,
-                        prepareResult, { saveBtn: createBtn, errEl: errEl, modal: modal, badgeStyle: badgeStyle, badgeOptions: badgeOptions, realPoster: realPoster, cardSizeOffset: cardSize, contentType: isShows ? 'Shows' : 'Movies' }, function () {
+                        prepareResult, { libraryIds: topListLibIds(modal.querySelector('.tl-lib-field')), saveBtn: createBtn, errEl: errEl, modal: modal, badgeStyle: badgeStyle, badgeOptions: badgeOptions, realPoster: realPoster, cardSizeOffset: cardSize, contentType: isShows ? 'Shows' : 'Movies' }, function () {
                             document.removeEventListener('keydown', onEsc);
                             if (typeof onSuccess === 'function') onSuccess();
                         }
@@ -10517,6 +11183,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }
         var tab = row.querySelector('.tag-tab[data-tab="' + tabName + '"]');
         if (tab) tab.click();
+        revealSourceRow(view, row);
         setTimeout(function () { try { row.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { row.scrollIntoView(); } }, 50);
     }
 
@@ -10564,7 +11231,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<div class="hsc-callout" style="margin-bottom:12px;"><i class="md-icon">info</i><span>Set in the <strong>Home Screen</strong> tab of the source <strong>' + escHtml(d.sourceName || d.tagName) + '</strong> (<em>Create as top-list</em>), with its users, title and position.</span></div>' +
                 (d.noLibrary ? '<div class="hsc-callout warning" style="margin-bottom:12px;"><i class="md-icon">schedule</i><span>Not made yet: the next run of the source (or a full sync) makes its library and rows.</span></div>' : '') +
                 line('Content', d.contentType === 'Shows' ? 'TV Shows' : 'Movies') +
-                line('Max items', d.maxItems && d.maxItems !== '0' ? escHtml(d.maxItems) : 'All') +
+                line('Max titles for top-list', d.maxItems && d.maxItems !== '0' ? escHtml(d.maxItems) : 'All') +
                 line('Users', names.length ? escHtml(names.join(', ')) : '<em style="opacity:0.6;">none</em>') +
                 line('Show', displayModeLabel) +
                 '<div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:16px;border-top:1px solid var(--line-color);padding-top:10px;flex-wrap:wrap;">' +
@@ -10612,11 +11279,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 getHseUsers(),
                 fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/ManualItems') + '?ListName=' + encodeURIComponent(tagName), {
                     headers: { 'X-MediaBrowser-Token': tok }
-                }).then(function (r) { return r.json(); })
+                }).then(function (r) { return r.json(); }),
+                loadTopListLibraries()
             ]).then(function (res) {
                 var allMovies = res[0].Movies || [];
                 var users     = res[1];
                 var data      = res[2];
+                var topListLibs = res[3];
 
                 if (!data.Success) {
                     body.innerHTML = '<div style="color:var(--hsc-danger-text);padding:8px 0;">Failed to load: ' + escHtml(data.Message || 'Unknown error') + '</div>';
@@ -10684,6 +11353,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     '<div style="flex:1;min-width:0;padding-left:20px;">' +
                     '<div style="' + colHeaderStyle + '"><i class="md-icon" style="font-size:0.9em;vertical-align:middle;margin-right:5px;">format_list_numbered</i>' + (isShows ? 'Show List' : 'Movie List') + '</div>' +
 
+                    topListLibFieldHtml(data.LibraryIds, '<label style="' + labelStyle + '">Libraries</label>', MANUAL_LIBS_HINT, fieldStyle) +
+
                     '<div style="' + fieldStyle + '">' +
                     '<label style="' + labelStyle + '">' + (isShows ? 'Add Show' : 'Add Movie') + '</label>' +
                     '<div style="position:relative;">' +
@@ -10709,7 +11380,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 body.appendChild(wrapper);
                 initBadgePicker(body, tagName);
                 wireUserMultiSelect(wrapper);
+                wireManualTopListLibs(wrapper, topListLibs, isShows, tok, function (list) { allMovies = list; });
                 refreshAdvanced(wrapper);
+                // The search list above was loaded before the list's libraries were known.
+                if ((data.LibraryIds || []).length) {
+                    loadTopListCandidates(isShows, tok, data.LibraryIds).then(function (r) { allMovies = r.Movies || []; }).catch(function () { });
+                }
 
                 var selectedMovies = presetMovies.slice();
                 var originalManualState;
@@ -10807,6 +11483,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         badgeOptions: readBadgeOptions(body),
                         realPoster: readRealPoster(body),
                         userIds: Array.from(wrapper.querySelectorAll('.chkMtlUser:checked')).map(function (c) { return c.value; }).sort(),
+                        libraryIds: topListLibIds(wrapper.querySelector('.tl-lib-field')),
                         movies: selectedMovies.map(function (m) { return m.ItemId; })
                     });
                 }
@@ -10852,7 +11529,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             var errEl = wrapper.querySelector('.mtl-error');
                             executeTopListCreationSteps(
                                 tagName, customNameVal, userIds, displayMode, customNameVal, imageType, 0,
-                                prepareResult, { saveBtn: fakeBtn, errEl: errEl, modal: body, innerBox: wrapper, badgeStyle: badgeStyle, badgeOptions: badgeOptions, realPoster: realPoster, cardSizeOffset: cardSize, closeHandler: resolve, silent: true, contentType: contentType },
+                                prepareResult, { libraryIds: topListLibIds(wrapper.querySelector('.tl-lib-field')), saveBtn: fakeBtn, errEl: errEl, modal: body, innerBox: wrapper, badgeStyle: badgeStyle, badgeOptions: badgeOptions, realPoster: realPoster, cardSizeOffset: cardSize, closeHandler: resolve, silent: true, contentType: contentType },
                                 resolve
                             );
                         })
@@ -10914,7 +11591,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     buildBadgePickerHtml(presetBadgeStyle, presetBadgeOptions, presetRealPoster, isShows ? 'shows' : 'movies') +
 
                     '<div style="' + fieldStyle + '">' +
-                    '<label style="' + labelStyle + '">Max items <span style="font-weight:400;text-transform:none;letter-spacing:0;opacity:0.7;">(0 = all)</span></label>' +
+                    '<label style="' + labelStyle + '">Max titles for top-list <span style="font-weight:400;text-transform:none;letter-spacing:0;opacity:0.7;">(0 = all)</span></label>' +
                     '<input type="number" class="tlm-max-items" min="0" step="1" style="' + inputStyle + '" placeholder="0" />' +
                     '</div>' +
 
@@ -11056,7 +11733,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 // A top-list is a library of its own, and every user it is shown to gets access to it.
                 '<div class="hsc-callout warning" style="margin-top:20px;">' +
                 '<i class="md-icon">warning</i>' +
-                '<span><strong>Library access is not checked per title.</strong> A top-list gets a library of its own, and every user you show it to gets access to that library. Its ' + (isShows ? 'shows' : 'movies') + ' can come from any library on the server, so those users can see and play them even from libraries they otherwise have no access to.</span>' +
+                '<span><strong>Library access is not checked per title.</strong> A top-list gets a library of its own, and every user you show it to gets access to that library. Its ' + (isShows ? 'shows' : 'movies') + ' come from the libraries you choose, so those users can see and play them even if they otherwise have no access to those libraries.</span>' +
                 '</div>' +
                 '</div>';
 
@@ -11508,7 +12185,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // server and returns the source; it becomes a new unsaved card at the top to check and save.
     function showPasteSourceModal(view) {
         showPasteModal(_copyKinds.source, {
-            hint: 'Paste a source copied with <strong>Copy</strong> on a source card – from this server or another one. It is added as a new card at the top; check it and click <strong>Save</strong>. Users and libraries are matched by name, Manual List titles by IMDb/TMDb/TVDb id (then name and year); anything this server does not have is listed afterwards.',
+            hint: 'Paste a source copied with <strong>Copy</strong> on a source card – from this server or another one. It is added as a new card; check it and click <strong>Save</strong>. Users and libraries are matched by name, Manual List titles by IMDb/TMDb/TVDb id (then name and year); anything this server does not have is listed afterwards.',
             applyLabel: 'Add source',
             notMsg: 'This is not a copied source. Use Copy on a source card and paste that text here.',
             isValid: function (p) { return Array.isArray(p.Tags); },
@@ -11530,13 +12207,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         config.LastModified = new Date().toISOString();
         if (prepare) prepare(config);
         if (sourceNameTaken(view, config)) markAsCopy(config);
-        var container = view.querySelector('#tagListContainer');
-        renderTagGroup(config, container, true, undefined, true);
+        var row = renderTagGroup(config, view.querySelector('#tagListContainer'), true, undefined, true);
         applyFilters(view);
         setTimeout(checkFormState, 0);
         showSourceResult(modal, 'Source added: ' + String(config.Name || config.Tag).replace(/&/g, '&amp;').replace(/</g, '&lt;'),
-            'It is not saved yet – check the new card at the top and click <strong>Save</strong>.', result.Notices || []);
-        return container.firstElementChild;
+            'It is not saved yet – check the new card and click <strong>Save</strong>.', result.Notices || []);
+        return row;
     }
 
     // Quick Start starter sources: built-in copied sources (no API key needed), added through the
@@ -11764,6 +12440,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             realPoster:     r.RealPosterBadge || '',
             maxItems:       String(r.MaxItems || '0'),
             movies:         r.Items || [],
+            libraryIds:     r.LibraryIds || [],
             notices:        r.Notices || []
         };
         if (r.IsManual) showManualTopListModal(onSuccess, null, isShows ? 'Shows' : '', { prefill: prefill });
@@ -12764,13 +13441,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     function tourEnsureDemo(view) {
         var row = tourDemoRow(view);
         if (row) return row;
-        var container = view.querySelector('#tagListContainer');
-        renderTagGroup({
+        row = renderTagGroup({
             Name: 'Trending Movies', Tag: '', SourceType: 'External', Active: true,
             Urls: [{ url: 'https://trakt.tv/movies/trending', limit: 20 }],
             EnableTag: true, EnableHomeSection: true
-        }, container, true, undefined, true);
-        row = container.firstElementChild;
+        }, view.querySelector('#tagListContainer'), true, undefined, true);
         row.classList.add('hsc-tour-demo');
         row.style.display = ''; // a search or filter on the list never hides it
         return row;
@@ -12842,7 +13517,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<li><strong>Local Media Information</strong>: filters on your own library (a smart playlist).</li>' +
                 '<li><strong>Manual List</strong>: titles you pick by hand.</li>' +
                 '<li><strong>AI created lists</strong>: describe the list and an AI builds it.</li>' +
-                '<li><strong>Your Next Watch</strong>: picks for each user from what they watch.</li></ul>' },
+                '<li><strong>Your Next Watch</strong>: picks for each user from what they watch.</li>' +
+                '<li><strong>Rotating from existing</strong>: one row that shows the next collection, tag or playlist every few days.</li></ul>' },
         { page: 'TagCollection', demo: 'general', target: tourInDemo('.source-external-container'), icon: 'link', title: 'Source tab: the list',
           html: '<p>For an External List, paste the list\'s address here, e.g. a Trakt list or an MDBList top-list. <strong>Add another URL</strong> merges more lists into this source.</p>' +
                 '<p>The number next to a URL caps how many titles are taken from it (0 = all). Only titles that are in your library are used.</p>' +
@@ -13186,7 +13862,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             form.addEventListener('click', (e) => {
                 var dayBtn = e.target.closest('.day-toggle');
                 if (dayBtn) dayBtn.classList.toggle('active');
-                if (e.target.closest('.btnRemoveUrl, .btnAddUrl, .btnRemoveExtraTag, .btnAddExtraTag, .btnAddOutTag, .btnRemoveLocal, .btnAddLocal, .btnRemoveDate, .btnAddDate, .btnRemoveFilterGroup, .btnAddMediaInfoFilter, .btnClearAllFilters, .btnGroupOpChoice, .btnGroupInnerOpChoice, .btnAddMiRule, .btnRemoveMiRule, .btnRemoveGroup, .day-toggle, .btnRemovePoster, .btnApplyMiPreset, .btnApplySchedulePreset')) {
+                if (e.target.closest('.btnRemoveUrl, .btnAddUrl, .btnRemoveExtraTag, .btnAddExtraTag, .btnAddOutTag, .btnRemoveLocal, .btnAddLocal, .btnRotAdd, .btnRotRemove, .btnRotUp, .btnRotDown, .btnRemoveDate, .btnAddDate, .btnRemoveFilterGroup, .btnAddMediaInfoFilter, .btnClearAllFilters, .btnGroupOpChoice, .btnGroupInnerOpChoice, .btnAddMiRule, .btnRemoveMiRule, .btnRemoveGroup, .day-toggle, .btnRemovePoster, .btnApplyMiPreset, .btnApplySchedulePreset')) {
                     changeHandler();
                 }
             }, { signal: _signal });
@@ -13373,6 +14049,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var controlRowHtml = `
                     <div class="control-row" style="flex-direction: row !important; align-items: center !important; flex-wrap: nowrap !important; justify-content: flex-start !important; padding: 10px 15px !important; gap: 0 !important;">
 
+                        <div class="filter-dropdown-btn" id="btnAddFolder" role="button" tabindex="0" style="margin-right: 10px; flex-shrink:0;" title="A folder only sorts this list. It changes nothing the sources do.">
+                            <i class="md-icon" style="font-size:1.1em;">create_new_folder</i>
+                            <span>New folder</span>
+                        </div>
+
                         <span class="control-label" style="margin-right: 10px; flex-shrink: 0;">Sort:</span>
 
                         <select is="emby-select" id="cbSortTags" style="color:inherit; background:rgba(128,128,128,0.08); border:1px solid var(--line-color); padding:5px; border-radius:6px; font-size:0.9em; cursor:pointer; width: 80px; margin-right: 0px;">
@@ -13478,6 +14159,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     });
                 }
 
+                wireSourceFolders(view);
                 view.querySelector('#btnAddTag').addEventListener('click', () => {
                     renderTagGroup({ Tag: '', Urls: [{ url: '', limit: 0 }], Active: true }, view.querySelector('#tagListContainer'), true, undefined, true);
                     applyFilters(view);
@@ -13543,11 +14225,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             Promise.all([
                 window.ApiClient.getJSON(window.ApiClient.getUrl("Users/" + window.ApiClient.getCurrentUserId() + "/Items", { IncludeItemTypes: "BoxSet", Recursive: true })).catch(function () { return { Items: [] }; }),
                 window.ApiClient.getJSON(window.ApiClient.getUrl("Items", { IncludeItemTypes: "Playlist", Recursive: true })).catch(function () { return { Items: [] }; }),
-                window.ApiClient.getJSON(window.ApiClient.getUrl("Items/Filters2", { UserId: window.ApiClient.getCurrentUserId(), Recursive: true })).catch(function () { return { Tags: [] }; })
+                window.ApiClient.getJSON(window.ApiClient.getUrl("Tags", { Recursive: true })).catch(function () { return { Items: [] }; })
             ]).then(responses => {
+                cachedTagNames = ((responses[2] && responses[2].Items) || []).map(function (t) { return t.Name; }).filter(Boolean).sort(natCmp);
                 cachedCollections = (responses[0].Items || []).slice().sort(byName);
                 cachedPlaylists = (responses[1].Items || []).slice().sort(byName);
-                cachedTags = ((responses[2] && responses[2].Tags) || []).slice().sort(natCmp);
 
                 // Only the copy of the page being shown picks up what was left behind on leaving.
                 loadConfig({ leaveState: readLeaveState() || { ui: null } });
@@ -13745,27 +14427,46 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         view.querySelector('.HomeScreenCompanionForm').addEventListener('submit', e => {
             e.preventDefault();
 
+            // Every source needs a name: two without one would overwrite each other.
+            var _noName = sourcesWithoutName(view);
+            if (_noName.length > 0) {
+                openSourceRowTab(view, _noName[0], 'general');
+                window.Dashboard.alert('Not saved: ' + (_noName.length === 1 ? 'a source has' : _noName.length + ' sources have') + ' no name. Fill in Display Name in the General tab.');
+                return;
+            }
+
             // A home row with nothing to show (no tag, collection, playlist or top-list) is not saved.
             var _hseEmpty = Array.from(view.querySelectorAll('#tagListContainer .tag-row')).filter(function (r) {
                 return r.querySelector('.selSourceType') && rowChangedHere(r) && !!(r.querySelector('.chkEnableHomeSection') || {}).checked && !hseAllowed(r);
             });
             if (_hseEmpty.length > 0) {
-                var _emptyNames = _hseEmpty.map(function (r) {
-                    return ((r.querySelector('.txtEntryLabel') || {}).value || (r.querySelector('.txtTagName') || {}).value || 'New source').trim();
-                });
                 openSourceRowTab(view, _hseEmpty[0], 'homescreen');
-                window.Dashboard.alert('Not saved: the home screen section of ' + _emptyNames.join(', ') + ' has nothing to show. Tick Apply Tag, Create Collection, Create Playlist or Create as top-list, or untick Add as home screen section.');
+                window.Dashboard.alert('Not saved: the home screen section of ' + sourceNamesOf(_hseEmpty) + ' has nothing to show. Tick Apply Tag, Create Collection, Create Playlist or Create as top-list, or untick Add as home screen section.');
                 return;
             }
 
             // A top-list needs its users before it can be saved (it can be ticked without them).
             var _tlNoUsers = topListsWithoutUsers(view);
             if (_tlNoUsers.length > 0) {
-                var _names = _tlNoUsers.map(function (r) {
-                    return ((r.querySelector('.txtEntryLabel') || {}).value || (r.querySelector('.txtTagName') || {}).value || 'New source').trim();
-                });
                 openSourceRowTab(view, _tlNoUsers[0], 'homescreen');
-                window.Dashboard.alert('Not saved: pick at least one user for the top-list under Target Users in the Home Screen tab of ' + _names.join(', ') + '. They get the top-list row.');
+                window.Dashboard.alert('Not saved: pick at least one user for the top-list under Target Users in the Home Screen tab of ' + sourceNamesOf(_tlNoUsers) + '. They get the top-list row.');
+                return;
+            }
+
+            // The same for any other home row.
+            var _rowNoUsers = homeRowsWithoutUsers(view);
+            if (_rowNoUsers.length > 0) {
+                openSourceRowTab(view, _rowNoUsers[0], 'homescreen');
+                window.Dashboard.alert('Not saved: pick at least one user under Target Users in the Home Screen tab of ' + sourceNamesOf(_rowNoUsers) + '. They get the home row.' +
+                    (_rowNoUsers.some(function (r) { return !isRotatingRow(r); }) ? ' If you do not want a row, untick Add as home screen section.' : ''));
+                return;
+            }
+
+            // And for a playlist.
+            var _plNoUsers = playlistsWithoutUsers(view);
+            if (_plNoUsers.length > 0) {
+                openSourceRowTab(view, _plNoUsers[0], 'playlist');
+                window.Dashboard.alert('Not saved: pick at least one user under Target Users in the Playlist tab of ' + sourceNamesOf(_plNoUsers) + '. They get the playlist. If you do not want a playlist, untick Create Playlist.');
                 return;
             }
 
@@ -13953,7 +14654,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 writeLeaveState(null);
                 hideDraftBar();
                 // The server now holds what was just saved: that is the new "as fetched" state.
-                window.ApiClient.getPluginConfiguration(pluginId).then(function (c) { view._hscServerStamp = serverStamp(c); view._hscLoadedUsers = sourceUserLists(c); }).catch(function () { });
+                window.ApiClient.getPluginConfiguration(pluginId).then(function (c) {
+                    view._hscServerStamp = serverStamp(c);
+                    view._hscLoadedUsers = sourceUserLists(c);
+                    var clean = JSON.stringify(getUiConfig(view, true)) === originalConfigState;
+                    if (followSavedPositions(view, c) && clean) { originalConfigState = JSON.stringify(getUiConfig(view, true)); checkFormState(); }
+                }).catch(function () { });
 
                 // Apply home section settings immediately for existing tracked sections (fire-and-forget)
                 configObj.Tags.forEach(function(tc) {
@@ -13961,7 +14667,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var hasTracked = (tc.HomeSectionTracked || []).some(function(t) {
                         return t.SectionId && !t.SectionId.startsWith('hsc__');
                     });
-                    if (!hasTracked) return;
+                    // (A rotating source's rows are made from its turn: also its first ones, and only when due.)
+                    if (!hasTracked && tc.SourceType !== 'RotatingExisting') return;
                     var applyUrl = window.ApiClient.getUrl('HomeScreenCompanion/Hsc/ApplyTagHomeSections');
                     var tok = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
                     fetch(applyUrl, {
@@ -14084,6 +14791,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             opts = opts || {};
             var leave = opts.leaveState || null;
             var ui = leave ? null : captureUi();
+            _topListLibrariesPromise = null;
             _hseLibraryCachePromise = null; // återställ cache så nya bibliotek (t.ex. ny top-list) hämtas
             preFetchLibraryData();          // starta hämtning direkt vid sidladdning
             view._hscLoading = true;
@@ -14106,6 +14814,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             if (c.ApiKey === undefined) c.ApiKey = s ? (s.ApiKey || '') : '';
                         });
                         renderConfig(view, Object.assign({}, config, leave.draft));
+                        markDraftCardsChanged(view);
                         restored = true;
                         serverChanged = !!leave.serverStamp && leave.serverStamp !== fetchedStamp;
                         // Keep the stamp the draft was based on, so the warning stays until Save/Discard.
@@ -14225,6 +14934,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var srcEmptyHint = view.querySelector('#srcEmptyHint');
                 if (srcEmptyHint) srcEmptyHint.style.display = keys.length === 0 ? '' : 'none';
 
+                layoutSourceFolders(view, config);
                 var savedSort = localStorage.getItem('HomeScreenCompanion_SortBy') || 'Manual';
                 sortRows(container, savedSort);
                 applyFilters(view);
