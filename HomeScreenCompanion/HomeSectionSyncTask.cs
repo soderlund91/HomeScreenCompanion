@@ -539,7 +539,7 @@ namespace HomeScreenCompanion
                         // does not have that row, PlaceNewRow looks on the master's screen (the
                         // reference user) for the nearest row above it that this user has; else the top.
                         int at = Array.FindIndex(masterSections, s => s.Id == section.Id);
-                        string position = at > 0 ? "after:" + HomeScreenCompanionTask.SectionKey(masterSections[at - 1]) : "top";
+                        string position = at > 0 ? "after:" + HomeScreenCompanionTask.PositionKeysOf(_userManager, _userManager.GetInternalId(profile.SourceUserId), masterSections)(masterSections[at - 1]) : "top";
                         HomeScreenCompanionTask.PlaceNewRow(_userManager, targetInternalId, added.Id, position, cancellationToken,
                             new[] { profile.SourceUserId }, copy.CustomName);
                         // Remembered (with the row's id), so it is updated next time and unticking

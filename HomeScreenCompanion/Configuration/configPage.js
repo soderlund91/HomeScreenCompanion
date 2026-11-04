@@ -205,8 +205,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
     var cachedCollections = [];
     var cachedPlaylists = [];
-    var cachedTags = [];
-    var cachedTagNames = [];   // every tag on the server (a rotating source's list)
+    var cachedTagNames = [];   // every tag on the server (a rotating source's list, the Tag rule's picker)
     var lastHscConfig = {};
     var currentManageSections = [];
     var savedFilters = [];
@@ -2663,14 +2662,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<option value="contains"' + (tagTextOp === 'contains' ? ' selected' : '') + '>Contains</option>' +
                 '<option value="exact"' + (tagTextOp === 'exact' ? ' selected' : '') + '>Exact</option>' +
                 '</select>';
-            if (cachedTags.length > 0) {
-                var tagOpts = cachedTags.map(function (t) {
-                    return '<option value="' + t.replace(/"/g, '&quot;') + '"' + (t === savedVal ? ' selected' : '') + '>' + t + '</option>';
-                }).join('');
-                return tagTextOpHtml + '<select class="selMiValue" is="emby-select" style="flex:1;"><option value="">-- Select tag --</option>' + tagOpts + '</select>';
-            }
-            var migratedTagVal = migrateCommaSeparated(savedVal || '');
-            return tagTextOpHtml + '<textarea class="txtMiValue" placeholder="One per line, e.g. 4K" rows="1" style="flex:1;resize:none;overflow:hidden;padding:6px 8px;font-size:inherit;font-family:inherit;background:var(--plugin-input-bg,rgba(255,255,255,0.08));border:1px solid var(--plugin-input-border,rgba(255,255,255,0.2));border-radius:3px;color:inherit;line-height:1.4;min-height:32px;max-height:120px;overflow-y:auto;">' + migratedTagVal.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>';
+            // The picker only adds a line to the box: the box holds the value, so a rule can keep
+            // several tags and a part of a name (Contains).
+            var tagPickHtml = cachedTagNames.length === 0 ? '' :
+                '<select class="selMiTagPick" is="emby-select" aria-label="Add a tag" style="flex:0 0 130px;min-width:0;"><option value="">-- Add tag --</option>' +
+                cachedTagNames.map(function (t) { return '<option value="' + escapeHtml(t) + '">' + escapeHtml(t) + '</option>'; }).join('') +
+                '</select>';
+            // A tag whose own name has a comma is one tag, not an old comma-separated list.
+            var migratedTagVal = cachedTagNames.indexOf(savedVal) >= 0 ? savedVal : migrateCommaSeparated(savedVal || '');
+            return tagTextOpHtml + tagPickHtml + '<textarea class="txtMiValue" placeholder="One per line, e.g. 4K" rows="1" style="flex:1;resize:none;overflow:hidden;padding:6px 8px;font-size:inherit;font-family:inherit;background:var(--plugin-input-bg,rgba(255,255,255,0.08));border:1px solid var(--plugin-input-border,rgba(255,255,255,0.2));border-radius:3px;color:inherit;line-height:1.4;min-height:32px;max-height:120px;overflow-y:auto;">' + migratedTagVal.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>';
         }
         if (MI_DROPDOWN_OPTIONS[prop]) {
             if (prop === 'MediaType') {
@@ -3504,12 +3504,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 <div class="tab-content general-tab">
                     <div class="inputContainer" style="flex-grow:1;"><input is="emby-input" class="txtEntryLabel" type="text" label="Display Name" value="${labelName}" /></div>
                     <div style="margin-bottom: 15px;">
-                        <label class="selectLabel">Folder</label>
-                        <select is="emby-select" class="selSourceFolder" style="width:100%;"><option value="">No folder</option></select>
-                        <div class="fieldDescription">Only sorts this list. It changes nothing the source does.</div>
-                    </div>
-                    
-                    <div style="margin-bottom: 15px;">
                         <label class="selectLabel">Source Type</label>
                         <select is="emby-select" class="selSourceType" style="width:100%;">
                             <option value="" ${!sourceType ? 'selected' : ''}>-- Select source type --</option>
@@ -4019,11 +4013,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             </div>
         </div>`;
 
+        // With folders, "the top" for a new card is the top of the sources in no folder.
+        var noFolder = prepend && !afterRef ? folderNone(container) : null;
         if (afterRef) afterRef.insertAdjacentHTML('afterend', html);
+        else if (noFolder) noFolder.insertAdjacentHTML('afterend', html);
         else if (prepend) container.insertAdjacentHTML('afterbegin', html);
         else container.insertAdjacentHTML('beforeend', html);
 
-        var newRow = afterRef ? afterRef.nextElementSibling : (prepend ? container.firstElementChild : container.lastElementChild);
+        var newRow = afterRef ? afterRef.nextElementSibling : noFolder ? noFolder.nextElementSibling : (prepend ? container.firstElementChild : container.lastElementChild);
         setupRowEvents(newRow);
         initManualEditor(newRow);
         updateNextWatchWarning(newRow);
@@ -4038,8 +4035,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         });
 
         if (isNew) {
+            newRow.dataset.touched = '1';
             setTimeout(() => { newRow.classList.remove('just-added'); }, 2000);
+            // Below the folders it may be out of sight.
+            if (noFolder) setTimeout(() => { newRow.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 50);
         }
+        return newRow;
     }
 
     // ── Create as top-list (top of the Home Screen tab: the source's home row as a ranked top-list) ──
@@ -4093,6 +4094,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         try { return JSON.parse(decodeURIComponent(hseTab.dataset.hseUserids || '%5B%5D')) || []; } catch (e) { return []; }
     }
 
+    function plUserIdsOf(row) {
+        var plTab = row.querySelector('.playlist-tab');
+        if (!plTab) return [];
+        if (plTab.dataset.plLoaded === '1')
+            return Array.from(plTab.querySelectorAll('.chkPlaylistUser:checked')).map(function (c) { return c.value; });
+        try { return JSON.parse(decodeURIComponent(plTab.dataset.plUserids || '%5B%5D')) || []; } catch (e) { return []; }
+    }
+
     // 'Auto' (movies or TV shows by the source's titles, decided by each run), 'Movies' or 'Shows'.
     function topListContentOf(row) {
         var v = (row.querySelector('.selTopListContent') || {}).value;
@@ -4119,7 +4128,40 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // A source card changed on this page, or added: Save's checks apply to it. Cards left alone are
     // saved as they are (a home row with nothing to show goes off, as before these checks).
     function rowChangedHere(row) {
-        return row.dataset.touched === '1' || row.classList.contains('just-added');
+        return row.dataset.touched === '1' && !row.classList.contains('hsc-tour-demo');
+    }
+
+    // Cards restored from an unsaved draft were changed here too, unlike the cards next to them:
+    // each is compared with the card as loaded, the same way Save does for LastModified.
+    function markDraftCardsChanged(view) {
+        if (!originalConfigState) return;
+        var loaded = groupConfigTags(JSON.parse(originalConfigState).Tags);
+        var now = groupConfigTags(getUiConfig(view, true).Tags);
+        var plain = function (card) { return JSON.stringify(Object.assign({}, card, { LastModified: '' })); };
+        view.querySelectorAll('#tagListContainer .tag-row').forEach(function (row) {
+            var label = (row.querySelector('.txtEntryLabel') || {}).value;
+            if (label === undefined) return;
+            var tag = row.querySelector('.txtTagName').value || label;
+            var key = label ? label + '\x1F' + tag : tag;
+            if (!loaded[key] || !now[key] || plain(loaded[key]) !== plain(now[key])) row.dataset.touched = '1';
+        });
+    }
+
+    // How a source is called in Save's messages.
+    function sourceNamesOf(rows) {
+        return rows.map(function (r) {
+            return ((r.querySelector('.txtEntryLabel') || {}).value || (r.querySelector('.txtTagName') || {}).value || 'New source').trim();
+        }).join(', ');
+    }
+
+    // Sources with neither name nor tag (Save is stopped for them). They all share one key, so two of
+    // them would overwrite each other. Only those changed here: see homeRowsWithoutUsers.
+    function sourcesWithoutName(view) {
+        return Array.from(view.querySelectorAll('#tagListContainer .tag-row')).filter(function (row) {
+            return row.querySelector('.selSourceType') && rowChangedHere(row)
+                && !((row.querySelector('.txtEntryLabel') || {}).value || '').trim()
+                && !((row.querySelector('.txtTagName') || {}).value || '').trim();
+        });
     }
 
     // Sources with Create as top-list on but no user picked (Save is stopped for them).
@@ -4129,6 +4171,25 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 && !!(row.querySelector('.chkEnableTopList') || {}).checked
                 && !!(row.querySelector('.chkEnableHomeSection') || {}).checked
                 && hseUserIdsOf(row).length === 0;
+        });
+    }
+
+    // Sources with a home row but no user to show it to (Save is stopped for them). Only those changed
+    // here: an old source without users does not stop a save until someone edits it.
+    function homeRowsWithoutUsers(view) {
+        return Array.from(view.querySelectorAll('#tagListContainer .tag-row')).filter(function (row) {
+            return row.querySelector('.selSourceType') && rowChangedHere(row)
+                && !!(row.querySelector('.chkEnableHomeSection') || {}).checked
+                && hseUserIdsOf(row).length === 0;
+        });
+    }
+
+    // The same for Create Playlist. A rotating source makes no playlist and has no Playlist tab.
+    function playlistsWithoutUsers(view) {
+        return Array.from(view.querySelectorAll('#tagListContainer .tag-row')).filter(function (row) {
+            return row.querySelector('.selSourceType') && rowChangedHere(row) && !isRotatingRow(row)
+                && !!(row.querySelector('.chkEnablePlaylist') || {}).checked
+                && plUserIdsOf(row).length === 0;
         });
     }
 
@@ -4493,6 +4554,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var dateMiRule = e.target.closest('.mi-rule');
                 dateMiRule.querySelector('.mi-value-wrapper').innerHTML = getMiValueHtml(
                     dateMiRule.querySelector('.selMiProperty').value, '', '', '', e.target.value);
+            }
+            if (e.target.classList.contains('selMiTagPick') && e.target.value) {
+                var tagBox = e.target.closest('.mi-rule').querySelector('.txtMiValue');
+                var tagLines = tagBox.value.split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean);
+                var pickedTag = e.target.value;
+                e.target.value = '';
+                if (!tagLines.some(function (l) { return l.toLowerCase() === pickedTag.toLowerCase(); })) {
+                    tagBox.value = tagLines.concat(pickedTag).join('\n');
+                    tagBox.dispatchEvent(new Event('input', { bubbles: true }));
+                }
             }
             if (e.target.classList.contains('selMiValue')) {
                 var _miRule = e.target.closest('.mi-rule');
@@ -4965,7 +5036,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         // Manual order: drag the handle (mouse, touch or pen) or use its arrow keys.
         makeRowSortable(row, row.querySelector('.drag-handle'), {
             list: function () { return row.parentElement; },
-            rowSelector: '.tag-row, .src-folder-head',
+            rowSelector: '.tag-row, .src-folder-head, .src-folder-none',
             movesAlong: function (el) { return el.classList.contains('hsc-folder-hidden'); },
             canDrag: function () { return !!row.parentElement && !row.parentElement.classList.contains('sort-hidden'); },
             onStart: function () {
@@ -5604,8 +5675,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
     // ---- Source folders (Tag & Collection tab) ----
     // Only how the list looks: nothing in a sync reads them. A folder is a header in the list and the
-    // rows under it are in it (rows above the first header are in none), so every other piece of
-    // code still sees one flat list, and dragging a row past a header moves it into that folder.
+    // rows under it are in it, so every other piece of code still sees one flat list, and dragging a
+    // row past a header moves it into that folder. The folders come first; a "No folder" divider
+    // under them starts the rows in none (a new source sits above the folders until the page
+    // reloads, in none too). No folders: no divider.
     // Saved as TagConfig.ListFolder and SourceFolders; which ones are closed is this browser's own.
     var FOLDER_CLOSED_KEY = 'HomeScreenCompanion_ClosedFolders';
 
@@ -5621,15 +5694,21 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         return Array.prototype.filter.call(container.children, function (el) { return el.classList.contains('src-folder-head'); });
     }
     function folderOfRow(row) {
-        for (var el = row.previousElementSibling; el; el = el.previousElementSibling)
+        for (var el = row.previousElementSibling; el; el = el.previousElementSibling) {
+            if (el.classList.contains('src-folder-none')) return '';
             if (el.classList.contains('src-folder-head')) return el.dataset.folder;
+        }
         return '';
     }
     function folderRows(head) {
         var rows = [];
-        for (var el = head.nextElementSibling; el && !el.classList.contains('src-folder-head'); el = el.nextElementSibling) rows.push(el);
+        for (var el = head.nextElementSibling; el && !el.classList.contains('src-folder-head') && !el.classList.contains('src-folder-none'); el = el.nextElementSibling) rows.push(el);
         return rows;
     }
+    function folderNone(container) {
+        return Array.prototype.filter.call(container.children, function (el) { return el.classList.contains('src-folder-none'); })[0] || null;
+    }
+    var FOLDER_NONE_HTML = '<div class="src-folder-none"><span class="src-folder-none-name">No folder</span><span class="src-folder-count"></span></div>';
     function uniqueFolderName(container, wanted, except) {
         var names = folderHeads(container).filter(function (h) { return h !== except; }).map(function (h) { return h.dataset.folder.toLowerCase(); });
         var name = wanted, n = 2;
@@ -5650,20 +5729,30 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '</span></div>';
     }
 
-    // Classes, counts and the sources' Folder lists, from what the list looks like now.
+    // Classes and counts, from what the list looks like now.
     function refreshSourceFolders(view) {
         var container = view.querySelector('#tagListContainer');
         if (!container) return;
         var closed = closedFolders(), filtering = container.classList.contains('hsc-folder-filtering');
-        var heads = folderHeads(container), names = heads.map(function (h) { return h.dataset.folder; });
-        var inFolder = false, isClosed = false;
+        var heads = folderHeads(container);
+        var none = folderNone(container);
+        if (none && heads.length === 0) { none.remove(); none = null; }
+        var inFolder = false, isClosed = false, loose = [];
         // The row being moved with its handle stays in view, also inside a closed folder.
         var focused = document.activeElement && document.activeElement.classList.contains('drag-handle') ? document.activeElement.closest('.tag-row') : null;
         Array.prototype.forEach.call(container.children, function (el) {
             if (el.classList.contains('src-folder-head')) { inFolder = true; isClosed = closed.indexOf(el.dataset.folder) >= 0; return; }
+            if (el === none) { inFolder = false; isClosed = false; return; }
+            if (!inFolder) loose.push(el);
             el.classList.toggle('hsc-in-folder', inFolder);
             el.classList.toggle('hsc-folder-hidden', inFolder && isClosed && el !== focused);
         });
+        if (none) {
+            var looseShown = loose.filter(function (r) { return r.style.display !== 'none'; }).length;
+            none.style.display = filtering && looseShown === 0 ? 'none' : '';
+            none.querySelector('.src-folder-count').textContent = filtering ? looseShown + ' of ' + loose.length
+                : loose.length === 0 ? 'Drag a source here to take it out of a folder' : loose.length === 1 ? '1 source' : loose.length + ' sources';
+        }
         heads.forEach(function (h) {
             var rows = folderRows(h);
             var shown = rows.filter(function (r) { return r.style.display !== 'none'; }).length;
@@ -5671,24 +5760,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             h.classList.toggle('closed', !open && !filtering);
             h.style.display = filtering && shown === 0 ? 'none' : '';
             h.querySelector('.src-folder-count').textContent = filtering ? shown + ' of ' + rows.length
-                : rows.length === 0 ? 'Empty: drag a source here, or pick this folder on the source' : rows.length === 1 ? '1 source' : rows.length + ' sources';
+                : rows.length === 0 ? 'Empty: drag a source here' : rows.length === 1 ? '1 source' : rows.length + ' sources';
             h.querySelector('.src-folder-issue').style.display = rows.some(function (r) {
                 return !!_groupIssues[decodeURIComponent(r.dataset.groupKey || '')];
             }) ? '' : 'none';
         });
-        var optionsKey = JSON.stringify(names);
-        container.querySelectorAll('.selSourceFolder').forEach(function (sel) {
-            if (sel.dataset.optionsKey !== optionsKey) {
-                sel.innerHTML = '<option value="">No folder</option>' + names.map(function (n) {
-                    return '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>';
-                }).join('') + '<option value="__new__">+ New folder…</option>';
-                sel.dataset.optionsKey = optionsKey;
-            }
-            sel.value = folderOfRow(sel.closest('.tag-row'));
-        });
     }
 
-    // After the rows are drawn: the saved folders, each with its rows, under the rows in no folder.
+    // After the rows are drawn: the saved folders, each with its rows, then the rows in no folder.
     function layoutSourceFolders(view, config) {
         var container = view.querySelector('#tagListContainer');
         var rows = Array.prototype.slice.call(container.querySelectorAll(':scope > .tag-row'));
@@ -5701,23 +5780,24 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             rows.filter(function (r) { return (r.dataset.listFolder || '').toLowerCase() === name.toLowerCase(); })
                 .forEach(function (r) { container.appendChild(r); });
         });
+        if (names.length === 0) return;
+        container.insertAdjacentHTML('beforeend', FOLDER_NONE_HTML);
+        rows.filter(function (r) { return !r.dataset.listFolder; }).forEach(function (r) { container.appendChild(r); });
     }
 
+    // At the very top of the list.
     function addSourceFolder(view, wanted) {
         var container = view.querySelector('#tagListContainer');
         var name = uniqueFolderName(container, wanted);
-        container.insertAdjacentHTML('beforeend', folderHeadHtml(name));
-        return container.lastElementChild;
-    }
-
-    function moveRowToFolder(view, row, name) {
-        var container = view.querySelector('#tagListContainer');
-        var heads = folderHeads(container);
-        if (!name) { container.insertBefore(row, heads[0] || null); return; }
-        var at = heads.findIndex(function (h) { return h.dataset.folder === name; });
-        if (at < 0) return;
-        setFolderClosed(name, false);
-        container.insertBefore(row, heads[at + 1] || null);
+        var none = folderNone(container);
+        if (!none) container.insertAdjacentHTML('afterbegin', FOLDER_NONE_HTML);
+        else {
+            // Sources dragged above the folders are in none: the new header must not take them in.
+            var below = none.nextElementSibling, first;
+            while ((first = container.firstElementChild) && first.classList.contains('tag-row')) container.insertBefore(first, below);
+        }
+        container.insertAdjacentHTML('afterbegin', folderHeadHtml(name));
+        return container.firstElementChild;
     }
 
     // A source that something wants to show: its folder opens.
@@ -5785,12 +5865,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 if (at > 0) block.forEach(function (el) { container.insertBefore(el, heads[at - 1]); });
                 changed();
             } else if (e.target.closest('.btnFolderDown')) {
-                if (at < heads.length - 1) block.forEach(function (el) { container.insertBefore(el, heads[at + 2] || null); });
+                if (at < heads.length - 1) block.forEach(function (el) { container.insertBefore(el, heads[at + 2] || folderNone(container)); });
                 changed();
             } else if (e.target.closest('.btnFolderRename')) {
                 startFolderRename(view, head);
             } else if (e.target.closest('.btnFolderRemove')) {
-                folderRows(head).forEach(function (r) { container.insertBefore(r, heads[0]); });
+                var looseFrom = folderNone(container).nextElementSibling;
+                folderRows(head).forEach(function (r) { container.insertBefore(r, looseFrom); });
                 setFolderClosed(head.dataset.folder, false);
                 head.remove();
                 changed();
@@ -5798,19 +5879,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 setFolderClosed(head.dataset.folder, closedFolders().indexOf(head.dataset.folder) < 0);
                 refreshSourceFolders(view);
             }
-        });
-        container.addEventListener('change', function (e) {
-            if (!e.target.classList.contains('selSourceFolder')) return;
-            var row = e.target.closest('.tag-row');
-            if (e.target.value === '__new__') {
-                var head = addSourceFolder(view, 'New folder');
-                moveRowToFolder(view, row, head.dataset.folder);
-                changed();
-                startFolderRename(view, head);
-                return;
-            }
-            moveRowToFolder(view, row, e.target.value);
-            changed();
         });
     }
 
@@ -5839,19 +5907,20 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             return manualRank(a) - manualRank(b);
         });
 
-        // Each row stays in its folder: sorted within it, the folders in their order.
-        var parts = [{ head: null, rows: [] }];
-        Array.prototype.forEach.call(container.children, function (el) {
-            if (el.classList.contains('src-folder-head')) parts.push({ head: el, rows: [] });
-        });
+        // Each row stays in its folder: sorted within it, the folders in their order, then the rest.
+        var parts = folderHeads(container).map(function (h) { return { head: h, rows: [] }; });
+        var none = folderNone(container), loose = [];
         rows.forEach(function (row) {
             var name = folderOfRow(row);
-            (parts.filter(function (p) { return p.head && p.head.dataset.folder === name; })[0] || parts[0]).rows.push(row);
+            var part = parts.filter(function (p) { return p.head.dataset.folder === name; })[0];
+            (part ? part.rows : loose).push(row);
         });
         parts.forEach(function (p) {
-            if (p.head) container.appendChild(p.head);
+            container.appendChild(p.head);
             p.rows.forEach(function (row) { container.appendChild(row); });
         });
+        if (none) container.appendChild(none);
+        loose.forEach(function (row) { container.appendChild(row); });
 
         if (criteria !== 'Manual') container.classList.add('sort-hidden');
         else container.classList.remove('sort-hidden');
@@ -6161,6 +6230,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
     // The row a saved "before:" / "after:" key points at, shown before the row list has loaded.
     function hsePositionKeyLabel(key) {
+        // A rotating source's row is known by its source: its title changes with the turn.
+        if (key.indexOf('src:') === 0) return hscRowKeyLabel(key) + ' (rotating)';
         if (key.indexOf('name:') === 0) return key.substring(5);
         return key.substring(5).split('|')[0];
     }
@@ -6213,6 +6284,47 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         return v ? v.value : '';
     }
 
+    // A rotating source's own row for this user: its title cannot tell it (it changes with the turn).
+    function ownRotatingRowId(root, userId) {
+        var tab = root.closest && root.closest('.homescreen-tab');
+        if (!tab || !isRotatingRow(tab.closest('.tag-row'))) return '';
+        function norm(id) { return (id || '').replace(/-/g, '').toLowerCase(); }
+        try {
+            var t = JSON.parse(decodeURIComponent(tab.dataset.hseTracked || '[]')).find(function (x) { return norm(x.UserId) === norm(userId); });
+            return t ? t.SectionId || '' : '';
+        } catch (e) { return ''; }
+    }
+
+    // A save can change a Position on the server: one that points at a renamed rotating source
+    // (RowPlacement.FollowRenamedSources). Brings the page up to date; true when something changed.
+    function followSavedPositions(view, config) {
+        var grouped = groupConfigTags(config.Tags), any = false;
+        view.querySelectorAll('#tagListContainer .tag-row').forEach(function (row) {
+            var labelEl = row.querySelector('.txtEntryLabel'), tab = row.querySelector('.homescreen-tab');
+            if (!labelEl || !tab) return;
+            var name = labelEl.value, tagName = row.querySelector('.txtTagName').value || name;
+            var tc = grouped[name ? name + '\x1F' + tagName : tagName];
+            if (!tc) return;
+            var pos = '';
+            try { pos = JSON.parse(tc.HomeSectionSettings || '{}')._position || ''; } catch (e) { return; }
+            var isSrc = function (p) { return /^(before|after):src:/.test(p); };
+            if (!isSrc(pos)) return;
+            tab.dataset.hseSettings = encodeURIComponent(tc.HomeSectionSettings);
+            var val = tab.querySelector('.hsc-pos-value');
+            if (!val || val.value === pos || !isSrc(val.value)) return;
+            var key = pos.substring(pos.indexOf(':') + 1), sel = tab.querySelector('.hsc-pos-row');
+            val.value = pos;
+            if (!Array.from(sel.options).some(function (o) { return o.value === key; })) {
+                var o = document.createElement('option');
+                o.value = key; o.textContent = hsePositionKeyLabel(key);
+                sel.appendChild(o);
+            }
+            sel.value = key;
+            any = true;
+        });
+        return any;
+    }
+
     // Lists the rows on the user's home screen as choices for Before / After (the row being placed
     // left out: ownName, its title). The saved choice stays when the list cannot be loaded.
     function fillPositionRows(root, userId, ownName) {
@@ -6227,10 +6339,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var own = typeof ownName === 'function' ? ownName() : ownName;
                 own = (own || '').trim().toLowerCase();
                 var current = sel.value;
+                var rotating = (data && data.RotatingKeys) || {}, ownRow = ownRotatingRowId(root, userId);
                 ((data && data.Sections) || []).forEach(function (s, i) {
-                    var key = hseSectionKey(s);
+                    if (ownRow && s.Id === ownRow) return;
+                    var rotatingKey = rotating[s.Id];
+                    var key = rotatingKey || hseSectionKey(s);
                     if (own && key === 'name:' + own) return;
-                    var label = stripInactive(s.CustomName || '') || s.Name || s.SectionType || ('Row ' + (i + 1));
+                    var label = rotatingKey ? hsePositionKeyLabel(rotatingKey)
+                        : stripInactive(s.CustomName || '') || s.Name || s.SectionType || ('Row ' + (i + 1));
                     var existing = Array.from(sel.options).find(function (o) { return o.value === key; });
                     if (existing) { existing.textContent = label; return; }
                     var o = document.createElement('option');
@@ -11921,7 +12037,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // server and returns the source; it becomes a new unsaved card at the top to check and save.
     function showPasteSourceModal(view) {
         showPasteModal(_copyKinds.source, {
-            hint: 'Paste a source copied with <strong>Copy</strong> on a source card – from this server or another one. It is added as a new card at the top; check it and click <strong>Save</strong>. Users and libraries are matched by name, Manual List titles by IMDb/TMDb/TVDb id (then name and year); anything this server does not have is listed afterwards.',
+            hint: 'Paste a source copied with <strong>Copy</strong> on a source card – from this server or another one. It is added as a new card; check it and click <strong>Save</strong>. Users and libraries are matched by name, Manual List titles by IMDb/TMDb/TVDb id (then name and year); anything this server does not have is listed afterwards.',
             applyLabel: 'Add source',
             notMsg: 'This is not a copied source. Use Copy on a source card and paste that text here.',
             isValid: function (p) { return Array.isArray(p.Tags); },
@@ -11943,13 +12059,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         config.LastModified = new Date().toISOString();
         if (prepare) prepare(config);
         if (sourceNameTaken(view, config)) markAsCopy(config);
-        var container = view.querySelector('#tagListContainer');
-        renderTagGroup(config, container, true, undefined, true);
+        var row = renderTagGroup(config, view.querySelector('#tagListContainer'), true, undefined, true);
         applyFilters(view);
         setTimeout(checkFormState, 0);
         showSourceResult(modal, 'Source added: ' + String(config.Name || config.Tag).replace(/&/g, '&amp;').replace(/</g, '&lt;'),
-            'It is not saved yet – check the new card at the top and click <strong>Save</strong>.', result.Notices || []);
-        return container.firstElementChild;
+            'It is not saved yet – check the new card and click <strong>Save</strong>.', result.Notices || []);
+        return row;
     }
 
     // Quick Start starter sources: built-in copied sources (no API key needed), added through the
@@ -13177,13 +13292,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     function tourEnsureDemo(view) {
         var row = tourDemoRow(view);
         if (row) return row;
-        var container = view.querySelector('#tagListContainer');
-        renderTagGroup({
+        row = renderTagGroup({
             Name: 'Trending Movies', Tag: '', SourceType: 'External', Active: true,
             Urls: [{ url: 'https://trakt.tv/movies/trending', limit: 20 }],
             EnableTag: true, EnableHomeSection: true
-        }, container, true, undefined, true);
-        row = container.firstElementChild;
+        }, view.querySelector('#tagListContainer'), true, undefined, true);
         row.classList.add('hsc-tour-demo');
         row.style.display = ''; // a search or filter on the list never hides it
         return row;
@@ -13787,6 +13900,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     var controlRowHtml = `
                     <div class="control-row" style="flex-direction: row !important; align-items: center !important; flex-wrap: nowrap !important; justify-content: flex-start !important; padding: 10px 15px !important; gap: 0 !important;">
 
+                        <div class="filter-dropdown-btn" id="btnAddFolder" role="button" tabindex="0" style="margin-right: 10px; flex-shrink:0;" title="A folder only sorts this list. It changes nothing the sources do.">
+                            <i class="md-icon" style="font-size:1.1em;">create_new_folder</i>
+                            <span>New folder</span>
+                        </div>
+
                         <span class="control-label" style="margin-right: 10px; flex-shrink: 0;">Sort:</span>
 
                         <select is="emby-select" id="cbSortTags" style="color:inherit; background:rgba(128,128,128,0.08); border:1px solid var(--line-color); padding:5px; border-radius:6px; font-size:0.9em; cursor:pointer; width: 80px; margin-right: 0px;">
@@ -13836,11 +13954,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         </div>
 
                         <button type="button" id="btnIssueCounter" class="hsc-issue-counter" style="display:none;" title="Show only these groups"></button>
-
-                        <div class="filter-dropdown-btn" id="btnAddFolder" role="button" tabindex="0" style="margin-left:auto; flex-shrink:0;" title="A folder only sorts this list. It changes nothing the sources do.">
-                            <i class="md-icon" style="font-size:1.1em;">create_new_folder</i>
-                            <span>New folder</span>
-                        </div>
 
                     </div>`;
 
@@ -13963,13 +14076,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             Promise.all([
                 window.ApiClient.getJSON(window.ApiClient.getUrl("Users/" + window.ApiClient.getCurrentUserId() + "/Items", { IncludeItemTypes: "BoxSet", Recursive: true })).catch(function () { return { Items: [] }; }),
                 window.ApiClient.getJSON(window.ApiClient.getUrl("Items", { IncludeItemTypes: "Playlist", Recursive: true })).catch(function () { return { Items: [] }; }),
-                window.ApiClient.getJSON(window.ApiClient.getUrl("Items/Filters2", { UserId: window.ApiClient.getCurrentUserId(), Recursive: true })).catch(function () { return { Tags: [] }; }),
                 window.ApiClient.getJSON(window.ApiClient.getUrl("Tags", { Recursive: true })).catch(function () { return { Items: [] }; })
             ]).then(responses => {
-                cachedTagNames = ((responses[3] && responses[3].Items) || []).map(function (t) { return t.Name; }).filter(Boolean).sort(natCmp);
+                cachedTagNames = ((responses[2] && responses[2].Items) || []).map(function (t) { return t.Name; }).filter(Boolean).sort(natCmp);
                 cachedCollections = (responses[0].Items || []).slice().sort(byName);
                 cachedPlaylists = (responses[1].Items || []).slice().sort(byName);
-                cachedTags = ((responses[2] && responses[2].Tags) || []).slice().sort(natCmp);
 
                 // Only the copy of the page being shown picks up what was left behind on leaving.
                 loadConfig({ leaveState: readLeaveState() || { ui: null } });
@@ -14167,27 +14278,46 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         view.querySelector('.HomeScreenCompanionForm').addEventListener('submit', e => {
             e.preventDefault();
 
+            // Every source needs a name: two without one would overwrite each other.
+            var _noName = sourcesWithoutName(view);
+            if (_noName.length > 0) {
+                openSourceRowTab(view, _noName[0], 'general');
+                window.Dashboard.alert('Not saved: ' + (_noName.length === 1 ? 'a source has' : _noName.length + ' sources have') + ' no name. Fill in Display Name in the General tab.');
+                return;
+            }
+
             // A home row with nothing to show (no tag, collection, playlist or top-list) is not saved.
             var _hseEmpty = Array.from(view.querySelectorAll('#tagListContainer .tag-row')).filter(function (r) {
                 return r.querySelector('.selSourceType') && rowChangedHere(r) && !!(r.querySelector('.chkEnableHomeSection') || {}).checked && !hseAllowed(r);
             });
             if (_hseEmpty.length > 0) {
-                var _emptyNames = _hseEmpty.map(function (r) {
-                    return ((r.querySelector('.txtEntryLabel') || {}).value || (r.querySelector('.txtTagName') || {}).value || 'New source').trim();
-                });
                 openSourceRowTab(view, _hseEmpty[0], 'homescreen');
-                window.Dashboard.alert('Not saved: the home screen section of ' + _emptyNames.join(', ') + ' has nothing to show. Tick Apply Tag, Create Collection, Create Playlist or Create as top-list, or untick Add as home screen section.');
+                window.Dashboard.alert('Not saved: the home screen section of ' + sourceNamesOf(_hseEmpty) + ' has nothing to show. Tick Apply Tag, Create Collection, Create Playlist or Create as top-list, or untick Add as home screen section.');
                 return;
             }
 
             // A top-list needs its users before it can be saved (it can be ticked without them).
             var _tlNoUsers = topListsWithoutUsers(view);
             if (_tlNoUsers.length > 0) {
-                var _names = _tlNoUsers.map(function (r) {
-                    return ((r.querySelector('.txtEntryLabel') || {}).value || (r.querySelector('.txtTagName') || {}).value || 'New source').trim();
-                });
                 openSourceRowTab(view, _tlNoUsers[0], 'homescreen');
-                window.Dashboard.alert('Not saved: pick at least one user for the top-list under Target Users in the Home Screen tab of ' + _names.join(', ') + '. They get the top-list row.');
+                window.Dashboard.alert('Not saved: pick at least one user for the top-list under Target Users in the Home Screen tab of ' + sourceNamesOf(_tlNoUsers) + '. They get the top-list row.');
+                return;
+            }
+
+            // The same for any other home row.
+            var _rowNoUsers = homeRowsWithoutUsers(view);
+            if (_rowNoUsers.length > 0) {
+                openSourceRowTab(view, _rowNoUsers[0], 'homescreen');
+                window.Dashboard.alert('Not saved: pick at least one user under Target Users in the Home Screen tab of ' + sourceNamesOf(_rowNoUsers) + '. They get the home row.' +
+                    (_rowNoUsers.some(function (r) { return !isRotatingRow(r); }) ? ' If you do not want a row, untick Add as home screen section.' : ''));
+                return;
+            }
+
+            // And for a playlist.
+            var _plNoUsers = playlistsWithoutUsers(view);
+            if (_plNoUsers.length > 0) {
+                openSourceRowTab(view, _plNoUsers[0], 'playlist');
+                window.Dashboard.alert('Not saved: pick at least one user under Target Users in the Playlist tab of ' + sourceNamesOf(_plNoUsers) + '. They get the playlist. If you do not want a playlist, untick Create Playlist.');
                 return;
             }
 
@@ -14375,7 +14505,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 writeLeaveState(null);
                 hideDraftBar();
                 // The server now holds what was just saved: that is the new "as fetched" state.
-                window.ApiClient.getPluginConfiguration(pluginId).then(function (c) { view._hscServerStamp = serverStamp(c); view._hscLoadedUsers = sourceUserLists(c); }).catch(function () { });
+                window.ApiClient.getPluginConfiguration(pluginId).then(function (c) {
+                    view._hscServerStamp = serverStamp(c);
+                    view._hscLoadedUsers = sourceUserLists(c);
+                    var clean = JSON.stringify(getUiConfig(view, true)) === originalConfigState;
+                    if (followSavedPositions(view, c) && clean) { originalConfigState = JSON.stringify(getUiConfig(view, true)); checkFormState(); }
+                }).catch(function () { });
 
                 // Apply home section settings immediately for existing tracked sections (fire-and-forget)
                 configObj.Tags.forEach(function(tc) {
@@ -14529,6 +14664,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             if (c.ApiKey === undefined) c.ApiKey = s ? (s.ApiKey || '') : '';
                         });
                         renderConfig(view, Object.assign({}, config, leave.draft));
+                        markDraftCardsChanged(view);
                         restored = true;
                         serverChanged = !!leave.serverStamp && leave.serverStamp !== fetchedStamp;
                         // Keep the stamp the draft was based on, so the warning stays until Save/Discard.

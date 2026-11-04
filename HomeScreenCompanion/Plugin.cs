@@ -51,6 +51,8 @@ namespace HomeScreenCompanion
                 incoming.HomeSyncAdditions = (current.HomeSyncAdditions ?? new List<HomeSyncAddition>())
                     .Select(a => new HomeSyncAddition { List = a.List, Key = a.Key, UserId = a.UserId, Picked = a.Picked, SectionId = a.SectionId }).ToList();
                 HomeSectionSyncTask.KeepKeysOfRenamedSources(current, incoming);
+                // A Position that points at a rotating source's row follows when the source is renamed.
+                RowPlacement.FollowRenamedSources(incoming, RotatingRow.Renames(current, incoming));
                 // The page does not send it: once the tour has been shown it stays shown.
                 incoming.WelcomeTourSeen = incoming.WelcomeTourSeen || current.WelcomeTourSeen;
             }

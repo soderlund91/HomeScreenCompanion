@@ -905,6 +905,8 @@
         .src-folder-actions button { border: none; background: transparent; color: inherit; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
         .src-folder-actions button:hover { background: rgba(128,128,128,0.2); }
         .txtFolderName { font-weight: 600; font-size: 0.95em; padding: 3px 6px; min-width: 200px; box-sizing: border-box; }
+        .src-folder-none { display: flex; align-items: baseline; gap: 8px; padding: 6px 12px 6px; margin: 18px 0 8px; border-top: 1px solid var(--hsc-hairline); user-select: none; }
+        .src-folder-none-name { font-weight: 600; font-size: 0.9em; color: var(--theme-text-secondary); white-space: nowrap; }
         .tag-row.hsc-in-folder { margin-left: 18px; }
         #tagListContainer:not(.hsc-folder-filtering) > .tag-row.hsc-folder-hidden { display: none !important; }
         /* Rotating from existing: it only makes its home row, of the type of what it rotates. */
@@ -2424,7 +2426,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">folder</i>
-                    <div><strong>Folders</strong> — sort a long list of sources into folders that open and close. A folder only changes how the list looks; nothing a source does depends on it. <em>New folder</em> makes one. Drag a source past a folder's header to move it in or out, or pick the folder under <em>Folder</em> on the source's Source tab. On a folder's header you can move it, rename it, or remove it (its sources stay). Searching and filtering also look inside closed folders, and sorting by name sorts within each folder. Which folders are open is remembered in your browser. Click <strong>Save</strong> to keep your folders.</div>
+                    <div><strong>Folders</strong> — sort a long list of sources into folders that open and close. A folder only changes how the list looks; nothing a source does depends on it. <em>New folder</em> makes one at the top of the list, with the sources in no folder under <em>No folder</em>. A new source lands first under <em>No folder</em>. Drag a source past a folder's header to move it in, or down under <em>No folder</em> to take it out. On a folder's header you can move it, rename it, or remove it (its sources stay). Searching and filtering also look inside closed folders, and sorting by name sorts within each folder. Which folders are open is remembered in your browser. Click <strong>Save</strong> to keep your folders.</div>
                 </div>
                 <div class="hsc-eyebrow" style="margin:14px 0 8px;">More about the source types</div>
                 <div id="help-more-rotating" class="help-feature-row">
@@ -2589,7 +2591,7 @@
                         <details class="help-more"><summary><i class="md-icon">expand_more</i><span class="help-more-closed">Show details</span><span class="help-more-open">Hide details</span></summary>
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li>The popup lists every collection with a tick box (and a search box when the list is long); tick one or several and click <em>Import</em>. With a long list you can also sort by name or item count and show only collections of a certain size; ticks stay when a collection is hidden.</li>
-                            <li>Each becomes a <strong>Manual List</strong> source, added as a new card at the top, not saved yet — check it and click <strong>Save</strong>.</li>
+                            <li>Each becomes a <strong>Manual List</strong> source, added as a new card, not saved yet — check it and click <strong>Save</strong>.</li>
                             <li>It keeps the <strong>same collection</strong>, not a copy, so links, home rows and favourites keep working: the name, sort title and description stay as they are, the collection's current titles fill the Manual List, and the poster and background are set to <em>Keep current image</em>.</li>
                             <li>Nothing changes until the next sync, and nothing is deleted.</li>
                             <li>Cannot be ticked: collections a source already makes, and collections whose name another collection also has (HSC finds its collection by name — rename one in Emby first).</li>
@@ -3415,7 +3417,7 @@
 
                 <div class="help-section"><i class="md-icon help-section-icon">local_movies</i>Content</div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Media Type</span> — Movie, Series, or Episode. When <b>Episode</b> is selected, all filters evaluate against individual episodes and tags are applied directly to each matching episode.</div></div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Tag</span> — matches items that already have a specific Emby tag applied. One per line: <i>4K</i> / <i>HDR</i> matches items tagged with either.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Tag</span> — matches items that already have a specific Emby tag applied. Pick tags from the list to add them to the box, or type them yourself. One per line: <i>4K</i> / <i>HDR</i> matches items tagged with either.</div></div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Title</span> — matches the movie or series name. When Media Type = Episode, matches the parent series name. One per line: <i>Batman</i> / <i>Dark Knight</i> matches either title.</div></div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Title (Episode)</span> — matches the episode's own title. Use together with Media Type = Episode. One value per line for multiple episode titles.</div></div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Overview</span> — searches the plot description/summary for keywords or phrases. One per line: <i>Christmas</i> / <i>heist</i> matches if <em>either</em> word appears in the overview.</div></div>

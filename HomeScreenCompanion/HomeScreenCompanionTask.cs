@@ -5159,9 +5159,17 @@ namespace HomeScreenCompanion
             => !string.IsNullOrWhiteSpace(s.CustomName) ? "name:" + StripInactive(s.CustomName).Trim().ToLowerInvariant()
                 : "type:" + (s.SectionType ?? "").ToLowerInvariant() + "|" + (s.ParentId ?? "");
 
+        // The key a Position knows this user's rows by: a rotating source's row by its source (see
+        // RotatingRow.PositionKeys), any other row by its SectionKey.
+        internal static Func<ContentSection, string> PositionKeysOf(IUserManager userManager, long userInternalId, IEnumerable<ContentSection> sections)
+        {
+            var rotating = RotatingRow.PositionKeys(userManager, userInternalId, sections);
+            return s => !string.IsNullOrEmpty(s.Id) && rotating.TryGetValue(s.Id, out var key) ? key : SectionKey(s);
+        }
+
         // Where a new row goes (HomeSectionSettings "_position"): "" or "bottom" = where Emby puts it
-        // (the bottom), "top", "before:<SectionKey>" = right above that row, or "after:<SectionKey>" =
-        // right below it. When this user's home screen does not have that row: next to the nearest
+        // (the bottom), "top", "before:<key>" = right above that row, or "after:<key>" = right below
+        // it (key: see PositionKeysOf). When this user's home screen does not have that row: next to the nearest
         // row around it (in the order of another of the users who has it) that this user does have —
         // below the nearest one above it for "after" (else at the top), above the nearest one below it
         // for "before" (else at the bottom); at the bottom when none of them has the row.
@@ -5172,7 +5180,7 @@ namespace HomeScreenCompanion
             try
             {
                 var sections = userManager.GetHomeSections(userInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>();
-                var target = TargetIndex(userManager, sections, sectionId, position, referenceUserIds, ownTitle, cancellationToken);
+                var target = TargetIndex(userManager, userInternalId, sections, sectionId, position, referenceUserIds, ownTitle, cancellationToken);
                 if (target.HasValue) MoveRow(userManager, userInternalId, sectionId, target.Value, sections.Length, cancellationToken);
             }
             catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
@@ -5189,7 +5197,7 @@ namespace HomeScreenCompanion
                 int current = Array.FindIndex(sections, s => s.Id == sectionId);
                 if (current < 0) return false;
                 int? target = string.IsNullOrEmpty(position) || position == "bottom" ? sections.Length - 1
-                    : TargetIndex(userManager, sections, sectionId, position, referenceUserIds, ownTitle, cancellationToken);
+                    : TargetIndex(userManager, userInternalId, sections, sectionId, position, referenceUserIds, ownTitle, cancellationToken);
                 if (!target.HasValue || target.Value == current) return false;
                 userManager.MoveHomeSections(userInternalId, new[] { sectionId }, target.Value, cancellationToken);
                 return true;
@@ -5206,12 +5214,20 @@ namespace HomeScreenCompanion
             if (!before && !position.StartsWith("after:", StringComparison.Ordinal)) return position;
             var key = position.Substring(before ? "before:".Length : "after:".Length);
             var row = key.StartsWith("name:", StringComparison.Ordinal) ? "'" + key.Substring(5) + "'"
-                : key.StartsWith("type:", StringComparison.Ordinal) ? key.Substring(5).Split('|')[0] + " row" : key;
+                : key.StartsWith("type:", StringComparison.Ordinal) ? key.Substring(5).Split('|')[0] + " row"
+                : key.StartsWith(HomeSectionSyncTask.SrcPrefix, StringComparison.Ordinal) ? "rotating source '" + RotatingSourceName(key) + "'" : key;
             return (before ? "before " : "after ") + row;
         }
 
+        // The name in a rotating source's key ("src:<name>/<tag>", each URI-escaped).
+        private static string RotatingSourceName(string key)
+        {
+            var parts = key.Substring(HomeSectionSyncTask.SrcPrefix.Length).Split('/');
+            return Uri.UnescapeDataString(parts[0].Length > 0 || parts.Length < 2 ? parts[0] : parts[1]);
+        }
+
         // The index the row gets among the other rows (its final index); null: leave it where it is.
-        private static int? TargetIndex(IUserManager userManager, ContentSection[] sections, string sectionId, string position,
+        private static int? TargetIndex(IUserManager userManager, long userInternalId, ContentSection[] sections, string sectionId, string position,
             IEnumerable<string>? referenceUserIds, string? ownTitle, CancellationToken cancellationToken)
         {
             if (position == "top") return 0;
@@ -5219,13 +5235,14 @@ namespace HomeScreenCompanion
             if (!before && !position.StartsWith("after:", StringComparison.Ordinal)) return null;
             var anchor = position.Substring(before ? "before:".Length : "after:".Length);
             var others = sections.Where(s => s.Id != sectionId).ToList();
-            int at = others.FindIndex(s => SectionKey(s) == anchor);
+            var keyOf = PositionKeysOf(userManager, userInternalId, sections);
+            int at = others.FindIndex(s => keyOf(s) == anchor);
             if (at >= 0) return before ? at : at + 1;
             var near = RowKeysNear(userManager, anchor, before, referenceUserIds, ownTitle, cancellationToken);
             if (near == null) return null;
             foreach (var key in near)
             {
-                int found = others.FindIndex(s => SectionKey(s) == key);
+                int found = others.FindIndex(s => keyOf(s) == key);
                 if (found >= 0) return before ? found : found + 1;
             }
             // None of the rows around it: "after" goes to the top, "before" to the bottom.
@@ -5243,8 +5260,9 @@ namespace HomeScreenCompanion
             {
                 try
                 {
-                    var keys = (userManager.GetHomeSections(userManager.GetInternalId(userId), cancellationToken)?.Sections ?? Array.Empty<ContentSection>())
-                        .Select(SectionKey).Where(k => k != ownKey).ToList();
+                    var uid = userManager.GetInternalId(userId);
+                    var sections = userManager.GetHomeSections(uid, cancellationToken)?.Sections ?? Array.Empty<ContentSection>();
+                    var keys = sections.Select(PositionKeysOf(userManager, uid, sections)).Where(k => k != ownKey).ToList();
                     int at = keys.IndexOf(anchor);
                     if (at < 0) continue;
                     if (below) return keys.Skip(at + 1).ToList();

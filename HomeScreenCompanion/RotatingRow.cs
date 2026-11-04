@@ -404,6 +404,52 @@ namespace HomeScreenCompanion
                     : all.FirstOrDefault(s => !string.IsNullOrEmpty(s.Id) && s.CustomName == tracked.RowTitle && Shows(s) == tracked.RowShows));
         }
 
+        /// <summary>
+        /// The user's rotating rows among sections: section id to the key a Position points at them
+        /// with (the source's, HomeSectionSyncTask.SourceKey). The title changes with the turn, so
+        /// another row placed before or after one cannot point at that.
+        /// </summary>
+        internal static Dictionary<string, string> PositionKeys(IUserManager um, long userInternalId, IEnumerable<ContentSection> sections)
+        {
+            var keys = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var all = sections.ToList();
+            foreach (var t in (Plugin.Instance?.Configuration?.Tags ?? new List<TagConfig>()).Where(Is))
+                foreach (var tracked in t.HomeSectionTracked ?? new List<HomeSectionTracking>())
+                {
+                    try
+                    {
+                        if (um.GetInternalId(tracked.UserId) != userInternalId) continue;
+                        var row = FindRow(all, tracked);
+                        if (row != null) keys[row.Id] = HomeSectionSyncTask.SourceKey(t.Name, t.Tag);
+                    }
+                    catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                }
+            return keys;
+        }
+
+        /// <summary>
+        /// Rotating sources renamed in this save: old key to new. A source has no id, but a renamed
+        /// one still tracks the same rows, whatever else was added, removed or moved in the save.
+        /// </summary>
+        internal static Dictionary<string, string> Renames(PluginConfiguration old, PluginConfiguration incoming)
+        {
+            var renames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            string KeyOfSource(TagConfig t) => HomeSectionSyncTask.SourceKey(t.Name, t.Tag);
+            bool SameRow(HomeSectionTracking a, HomeSectionTracking b)
+                => !string.IsNullOrEmpty(a.SectionId) && a.SectionId == b.SectionId && HomeSectionSyncTask.NormId(a.UserId) == HomeSectionSyncTask.NormId(b.UserId);
+            var was = (old.Tags ?? new List<TagConfig>()).Where(Is).ToList();
+            var now = (incoming.Tags ?? new List<TagConfig>()).Where(Is).ToList();
+            foreach (var o in was)
+            {
+                if (now.Any(n => string.Equals(KeyOfSource(n), KeyOfSource(o), StringComparison.OrdinalIgnoreCase))) continue;
+                var renamed = now.FirstOrDefault(n =>
+                    !was.Any(x => string.Equals(KeyOfSource(x), KeyOfSource(n), StringComparison.OrdinalIgnoreCase))
+                    && (n.HomeSectionTracked ?? new List<HomeSectionTracking>()).Any(a => (o.HomeSectionTracked ?? new List<HomeSectionTracking>()).Any(b => SameRow(a, b))));
+                if (renamed != null) renames[KeyOfSource(o)] = KeyOfSource(renamed);
+            }
+            return renames;
+        }
+
         /// <summary>Remembers the user's row (its id, and what it shows now).</summary>
         internal static void Track(TagConfig t, string userId, string sectionId, ContentSection written)
         {

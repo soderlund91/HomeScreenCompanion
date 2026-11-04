@@ -246,11 +246,12 @@ namespace HomeScreenCompanion
                 if (NormId(other) == NormId(userId)) continue;
                 try
                 {
-                    var secs = userManager.GetHomeSections(userManager.GetInternalId(other), cancellationToken)?.Sections ?? Array.Empty<ContentSection>();
+                    var otherId = userManager.GetInternalId(other);
+                    var secs = userManager.GetHomeSections(otherId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>();
                     int at = Array.FindIndex(secs, s => IsTopListRow(s, ownIds));
                     if (at < 0) continue;
                     HomeScreenCompanionTask.PlaceNewRow(userManager, userInternalId, sectionId,
-                        at == 0 ? "top" : "after:" + HomeScreenCompanionTask.SectionKey(secs[at - 1]), cancellationToken);
+                        at == 0 ? "top" : "after:" + HomeScreenCompanionTask.PositionKeysOf(userManager, otherId, secs)(secs[at - 1]), cancellationToken);
                     return;
                 }
                 catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }

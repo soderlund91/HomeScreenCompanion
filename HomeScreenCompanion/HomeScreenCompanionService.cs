@@ -1887,9 +1887,11 @@ public class HomeScreenCompanionService : IService
 
                 var internalId = _userManager.GetInternalId(request.UserId);
                 var result = _userManager.GetHomeSections(internalId, CancellationToken.None);
+                var sections = result?.Sections ?? Array.Empty<ContentSection>();
                 return new HscUserSectionsResponse
                 {
-                    Sections = result?.Sections ?? Array.Empty<ContentSection>()
+                    Sections = sections,
+                    RotatingKeys = RotatingRow.PositionKeys(_userManager, internalId, sections)
                 };
             }
             catch (Exception ex)
