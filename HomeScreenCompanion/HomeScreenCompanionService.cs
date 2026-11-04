@@ -548,6 +548,7 @@ namespace HomeScreenCompanion
         public string? RealPosterBadge { get; set; }
         public List<string> UserIds { get; set; } = new List<string>();
         public string ContentType { get; set; } = "Movies";
+        public List<string> LibraryIds { get; set; } = new List<string>();
         public string Message { get; set; } = "";
     }
 
@@ -620,7 +621,11 @@ namespace HomeScreenCompanion
 
     [Route("/HomeScreenCompanion/TopList/AllMovies", "GET")]
     [Authenticated(Roles = "Admin")]
-    public class GetAllMoviesRequest : IReturn<GetAllMoviesResponse> { }
+    public class GetAllMoviesRequest : IReturn<GetAllMoviesResponse>
+    {
+        // Comma-separated library ids to search in ("" = all).
+        public string LibraryIds { get; set; } = "";
+    }
     public class MovieItem
     {
         public string Name   { get; set; } = "";
@@ -636,7 +641,26 @@ namespace HomeScreenCompanion
     // Series for the manual show top-list picker (same shape as AllMovies).
     [Route("/HomeScreenCompanion/TopList/AllSeries", "GET")]
     [Authenticated(Roles = "Admin")]
-    public class GetAllSeriesRequest : IReturn<GetAllMoviesResponse> { }
+    public class GetAllSeriesRequest : IReturn<GetAllMoviesResponse>
+    {
+        // Comma-separated library ids to search in ("" = all).
+        public string LibraryIds { get; set; } = "";
+    }
+
+    // The libraries a top-list can take its titles from: movies, TV shows and mixed, without HSC's own.
+    [Route("/HomeScreenCompanion/TopList/Libraries", "GET")]
+    [Authenticated(Roles = "Admin")]
+    public class GetTopListLibrariesRequest : IReturn<GetTopListLibrariesResponse> { }
+    public class TopListLibraryItem
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string CollectionType { get; set; } = "";
+    }
+    public class GetTopListLibrariesResponse
+    {
+        public List<TopListLibraryItem> Libraries { get; set; } = new List<TopListLibraryItem>();
+    }
 
     [Route("/HomeScreenCompanion/TopList/GrantLibraryAccess", "POST")]
     [Authenticated(Roles = "Admin")]
@@ -947,6 +971,8 @@ namespace HomeScreenCompanion
         public List<SourceItemRef> Items { get; set; } = new List<SourceItemRef>();
         // user id on the exporting server → name
         public Dictionary<string, string> Users { get; set; } = new Dictionary<string, string>();
+        // Manual lists: the names of the libraries its search is narrowed to (none in older copies).
+        public List<string>? LibraryNames { get; set; }
         // Export only (not part of the pasted text).
         public List<string> Notices { get; set; } = new List<string>();
     }
@@ -981,6 +1007,7 @@ namespace HomeScreenCompanion
         public List<string> UserIds { get; set; } = new List<string>();
         // Same shape as the create dialog's own picks (movies: Guid ItemId; shows: internal id).
         public List<MovieItem> Items { get; set; } = new List<MovieItem>();
+        public List<string> LibraryIds { get; set; } = new List<string>();
         public List<string> Notices { get; set; } = new List<string>();
     }
 
@@ -2788,9 +2815,16 @@ public class HomeScreenCompanionService : IService
                 var folderPath = Path.Combine(dataPath, "toplists", sanitized);
                 Directory.CreateDirectory(folderPath);
 
+                // A source's list: only its chosen libraries (as the runs do), before Max items.
+                var chosen = (Plugin.Instance.Configuration.TopLists ?? new List<TopListHomeSection>())
+                    .FirstOrDefault(t => string.Equals((t.TagName ?? "").Trim(), (request.TagName ?? "").Trim(), StringComparison.OrdinalIgnoreCase));
+                var libraries = TopListLibraries.For(chosen != null && chosen.FromSource ? chosen.LibraryIds : null, _libraryManager);
+                if (libraries.Gone)
+                    return new PrepareTopListFolderResponse { Success = false, Message = "None of the libraries chosen for this top-list exists any more. Choose others in its source." };
+
                 if (ShowTopList.IsShows(request.ContentType))
                 {
-                    var series = ShowTopList.SeriesForTag(_libraryManager, _jsonSerializer, request.TagName);
+                    var series = ShowTopList.SeriesForTag(_libraryManager, _jsonSerializer, request.TagName).Where(libraries.Contains).ToList();
                     if (request.MaxItems > 0) series = series.Take(request.MaxItems).ToList();
                     var written = WriteShowFolder(request.TagName, folderPath, series, BadgeLook.Combine(request.BadgeStyle, request.BadgeOptions));
                     return new PrepareTopListFolderResponse { Success = true, FolderPath = folderPath, FilesCreated = written };
@@ -2810,6 +2844,7 @@ public class HomeScreenCompanionService : IService
                 // one carrying the tag would otherwise become a .strm pointing at a .strm.
                 var topListsFolder = Path.Combine(dataPath, "toplists") + Path.DirectorySeparatorChar;
                 var (items, fromList) = TopListMembers.MoviesFor(request.TagName, _libraryManager, _jsonSerializer, topListsFolder);
+                items = items.Where(libraries.Contains).ToList();
 
                 // Without a saved list: sort by saved rank order from the last task run (preserves external list order)
                 var rankFile = Path.Combine(Plugin.Instance.DataFolderPath, "tag_ranks", sanitized + ".json");
@@ -2893,13 +2928,15 @@ public class HomeScreenCompanionService : IService
                     IsVirtualItem = false
                 });
                 var toplistsFolder = Path.Combine(Plugin.Instance.DataFolderPath, "toplists");
+                var libraries = SearchLibraries(request.LibraryIds);
 
                 // Deduplicate: movies with multiple versions (1080p + 4K) appear as separate
                 // library items but share the same IMDB ID — keep only one per unique title.
                 var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var movies = items
                     .Where(i => !string.IsNullOrEmpty(i.Path)
-                             && !i.Path.StartsWith(toplistsFolder, StringComparison.OrdinalIgnoreCase))
+                             && !i.Path.StartsWith(toplistsFolder, StringComparison.OrdinalIgnoreCase)
+                             && libraries.Contains(i))
                     .OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase)
                     .ThenBy(i => i.ProductionYear)
                     .Select(i => new MovieItem
@@ -2928,7 +2965,9 @@ public class HomeScreenCompanionService : IService
             try
             {
                 var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var libraries = SearchLibraries(request.LibraryIds);
                 var series = ShowTopList.AllSeries(_libraryManager)
+                    .Where(libraries.Contains)
                     .OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase)
                     .ThenBy(i => i.ProductionYear)
                     .Select(i => new MovieItem
@@ -2944,6 +2983,32 @@ public class HomeScreenCompanionService : IService
                 return new GetAllMoviesResponse { Movies = series };
             }
             catch { return new GetAllMoviesResponse { Movies = new List<MovieItem>() }; }
+        }
+
+        // A manual list's search. Its chosen libraries all gone: everything can be searched.
+        private TopListLibraries SearchLibraries(string? csv)
+        {
+            var libraries = TopListLibraries.For(SplitIds(csv), _libraryManager);
+            return libraries.Gone ? TopListLibraries.For(null, _libraryManager) : libraries;
+        }
+
+        public object Get(GetTopListLibrariesRequest request)
+        {
+            var response = new GetTopListLibrariesResponse();
+            try
+            {
+                var topListsFolder = ShowTopList.TopListsFolder ?? "";
+                var kinds = new[] { "", "movies", "tvshows", "mixed" };
+                foreach (var f in _libraryManager.GetVirtualFolders().OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase))
+                {
+                    if (string.IsNullOrEmpty(f.ItemId) || !kinds.Contains((f.CollectionType ?? "").ToLowerInvariant())) continue;
+                    if ((f.Locations ?? Array.Empty<string>()).Any(l => !string.IsNullOrEmpty(l)
+                        && ((topListsFolder.Length > 0 && l.StartsWith(topListsFolder, StringComparison.OrdinalIgnoreCase)) || RankedCollections.IsRankedPath(l)))) continue;
+                    response.Libraries.Add(new TopListLibraryItem { Id = f.ItemId, Name = f.Name ?? "", CollectionType = f.CollectionType ?? "" });
+                }
+            }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+            return response;
         }
 
         // Writes a show list's folder and updates the copies Emby has already indexed.
@@ -3664,6 +3729,7 @@ public class HomeScreenCompanionService : IService
                 {
                     Success     = true,
                     Movies      = movies,
+                    LibraryIds  = tlConfig?.LibraryIds ?? new List<string>(),
                     CustomName  = customName,
                     DisplayMode = displayMode,
                     ImageType   = imageType,
@@ -4448,6 +4514,7 @@ public class HomeScreenCompanionService : IService
             t.Name                ??= "";
             t.Tag                 ??= "";
             t.ExtraTags           ??= new List<string>();
+            t.TopListLibraryIds   ??= new List<string>();
             t.CollectionTag       ??= "";
             t.PlaylistTag         ??= "";
             t.CollectionExtraTags ??= new List<string>();
@@ -4751,6 +4818,7 @@ public class HomeScreenCompanionService : IService
                     foreach (var c in f.Criteria) AddUser(CriterionUserId(c));
 
                 AddLibrary(t.HomeSectionLibraryId);
+                foreach (var id in t.TopListLibraryIds) AddLibrary(id);
                 var settings = ParseSectionSettings(t.HomeSectionSettings);
                 foreach (var key in ExcludedLibraryKeys)
                     if (settings.TryGetValue(key, out var csv))
@@ -4909,6 +4977,14 @@ public class HomeScreenCompanionService : IService
                         if (local == null) droppedLibraries.Add(Label(libId, file.Libraries) + " (home section library, now auto)");
                         t.HomeSectionLibraryId = local ?? "auto";
                     }
+                    var mappedTopListLibraries = new List<string>();
+                    foreach (var id in t.TopListLibraryIds.Where(x => !string.IsNullOrWhiteSpace(x)))
+                    {
+                        var local = MapLibrary(id);
+                        if (local == null) droppedLibraries.Add(Label(id, file.Libraries) + " (top-list library)");
+                        else if (!mappedTopListLibraries.Contains(local)) mappedTopListLibraries.Add(local);
+                    }
+                    t.TopListLibraryIds = mappedTopListLibraries;
                     var settings = ParseSectionSettings(t.HomeSectionSettings);
                     bool settingsChanged = false;
                     foreach (var key in ExcludedLibraryKeys)
@@ -5114,6 +5190,10 @@ public class HomeScreenCompanionService : IService
                 }
                 if (file.Items.Count == 0)
                     file.Notices.Add("This manual list has no titles in its library folder – the copy has an empty list.");
+                if ((tl.LibraryIds?.Count ?? 0) > 0)
+                    file.LibraryNames = _libraryManager.GetVirtualFolders()
+                        .Where(f => tl.LibraryIds!.Contains(f.ItemId, StringComparer.OrdinalIgnoreCase) && !string.IsNullOrEmpty(f.Name))
+                        .Select(f => f.Name).ToList();
             }
             return file;
         }
@@ -5213,6 +5293,22 @@ public class HomeScreenCompanionService : IService
                         Notice($"{missing.Count} title(s) not in this server's library, left out: {string.Join(", ", missing)}.");
                     if (response.Items.Count == 0)
                         Notice($"None of the list's {(isShows ? "shows" : "movies")} are on this server – add some before you create it.");
+
+                    // Libraries for its search: by name, case-insensitive (as for sources).
+                    var libraryNames = (file.LibraryNames ?? new List<string>()).Where(n => !string.IsNullOrWhiteSpace(n)).ToList();
+                    if (libraryNames.Count > 0)
+                    {
+                        var localLibraries = _libraryManager.GetVirtualFolders();
+                        var droppedLibraries = new List<string>();
+                        foreach (var n in libraryNames)
+                        {
+                            var hit = localLibraries.FirstOrDefault(f => string.Equals(f.Name, n, StringComparison.OrdinalIgnoreCase));
+                            if (hit == null || string.IsNullOrEmpty(hit.ItemId)) droppedLibraries.Add(n);
+                            else if (!response.LibraryIds.Contains(hit.ItemId)) response.LibraryIds.Add(hit.ItemId);
+                        }
+                        if (droppedLibraries.Count > 0)
+                            Notice($"Libraries not on this server, left out of the search: {string.Join(", ", droppedLibraries)}.");
+                    }
                 }
 
                 response.Success = true;

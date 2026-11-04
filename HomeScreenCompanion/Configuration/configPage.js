@@ -4048,6 +4048,108 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // (SourceTopLists.cs) and the next run makes the library, copies and rows. Its own fields
     // are content type, max items and the badges; users, title, position and look are the Home
     // Screen tab's, whose fields the top-list sets are hidden (tl-mode). Not for Your Next Watch.
+    // ── A top-list's libraries (TopListLibraries.cs): "All libraries" or the ones ticked ─────────
+    // The field's data-libs is always its value, so it can be read before the libraries have loaded,
+    // and ids of libraries that no longer exist stay in it until the choice is changed by hand
+    // (opening a card never changes what is saved).
+    var _topListLibrariesPromise = null;
+    function loadTopListLibraries() {
+        if (_topListLibrariesPromise) return _topListLibrariesPromise;
+        var tok = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+        _topListLibrariesPromise = fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/Libraries'), { headers: { 'X-MediaBrowser-Token': tok } })
+            .then(function (r) { return r.json(); })
+            .then(function (d) { return d.Libraries || []; })
+            .catch(function () { _topListLibrariesPromise = null; return []; });
+        return _topListLibrariesPromise;
+    }
+
+    function topListLibIds(field) {
+        try { return JSON.parse(decodeURIComponent((field && field.dataset.libs) || '%5B%5D')) || []; } catch (e) { return []; }
+    }
+
+    function setTopListLibIds(field, ids) {
+        field.dataset.libs = encodeURIComponent(JSON.stringify(ids.map(String).sort()));
+    }
+
+    function topListLibFieldHtml(ids, labelHtml, description, style) {
+        var sorted = (ids || []).map(String).sort();
+        return '<div class="tl-lib-field" data-libs="' + encodeURIComponent(JSON.stringify(sorted)) + '" style="' + (style || '') + '">' +
+            labelHtml +
+            '<div class="tl-lib-host"><em style="opacity:0.5">Loading libraries...</em></div>' +
+            '<div class="tl-lib-gone fieldDescription" style="display:none;color:var(--hsc-warning-text);margin-top:6px;">None of the chosen libraries exists any more. Choose others, or tick All libraries.</div>' +
+            '<div class="fieldDescription">' + description + '</div>' +
+            '</div>';
+    }
+
+    // kind: 'Movies', 'Shows' or 'Auto': libraries that cannot hold the kind are left out, unless
+    // chosen already. dropHidden (the Content changed): such a chosen library is unticked too.
+    function renderTopListLibs(field, libs, kind, onChange, dropHidden) {
+        function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+        var fits = function (l) {
+            var t = (l.CollectionType || '').toLowerCase();
+            return kind === 'Shows' ? t !== 'movies' : kind === 'Movies' ? t !== 'tvshows' : true;
+        };
+        var ids = topListLibIds(field);
+        if (dropHidden) {
+            var kept = ids.filter(function (id) { return !libs.some(function (l) { return String(l.Id) === id && !fits(l); }); });
+            if (kept.length !== ids.length) { setTopListLibIds(field, kept); ids = kept; }
+        }
+        var chosen = function (l) { return ids.indexOf(String(l.Id)) !== -1; };
+        var list = libs.filter(function (l) { return fits(l) || chosen(l); });
+        var goneNote = field.querySelector('.tl-lib-gone');
+        var host = field.querySelector('.tl-lib-host');
+        var labelOf = function () {
+            var now = topListLibIds(field);
+            if (now.length === 0) return 'All libraries';
+            var names = libs.filter(function (l) { return now.indexOf(String(l.Id)) !== -1; }).map(function (l) { return l.Name; });
+            return names.length ? names.join(', ') : 'Chosen libraries not found';
+        };
+        var rowHtml = function (cls, value, name, checked) {
+            return '<div class="checkboxContainer" style="margin:2px 0;"><label><input type="checkbox" is="emby-checkbox" class="' + cls + '"' +
+                (value ? ' value="' + esc(value) + '"' : '') + (checked ? ' checked' : '') + '><span>' + esc(name) + '</span></label></div>';
+        };
+        host.innerHTML = '<div class="filter-dropdown-wrapper tl-lib-dropdown" style="width:100%;">' +
+            '<button type="button" class="tl-lib-btn" style="display:flex;align-items:center;width:100%;padding:6px 10px;background:var(--plugin-input-bg,rgba(128,128,128,0.08));border:1px solid var(--plugin-input-border,var(--line-color));border-radius:6px;font-size:0.9em;color:inherit;cursor:pointer;box-sizing:border-box;text-align:left;">' +
+            '<span class="tl-lib-label" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>' +
+            '<i class="md-icon tl-lib-caret" style="font-size:1em;margin-left:6px;flex-shrink:0;">expand_more</i></button>' +
+            '<div class="filter-dropdown-panel" style="min-width:220px;width:100%;box-sizing:border-box;max-height:260px;overflow-y:auto;">' +
+            rowHtml('chkTlLibAll', '', 'All libraries', ids.length === 0) +
+            '<div class="filter-dropdown-divider"></div>' +
+            list.map(function (l) { return rowHtml('chkTlLib', String(l.Id), l.Name, chosen(l)); }).join('') +
+            '</div></div>';
+
+        var btn = host.querySelector('.tl-lib-btn'), panel = host.querySelector('.filter-dropdown-panel');
+        var lbl = host.querySelector('.tl-lib-label'), caret = host.querySelector('.tl-lib-caret');
+        var all = host.querySelector('.chkTlLibAll');
+        lbl.textContent = labelOf();
+        goneNote.style.display = ids.length > 0 && !libs.some(chosen) ? 'block' : 'none';
+        btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            caret.textContent = panel.classList.toggle('open') ? 'expand_less' : 'expand_more';
+        });
+        document.addEventListener('click', function closeLibDrop(e) {
+            if (!panel.isConnected) { document.removeEventListener('click', closeLibDrop); return; }
+            if (!panel.contains(e.target) && !btn.contains(e.target)) {
+                panel.classList.remove('open');
+                caret.textContent = 'expand_more';
+            }
+        });
+        // Runs before the change reaches the card or form, so their dirty checks read the new value.
+        panel.addEventListener('change', function (e) {
+            var boxes = Array.from(panel.querySelectorAll('.chkTlLib'));
+            if (e.target === all) {
+                if (all.checked) boxes.forEach(function (c) { c.checked = false; });
+                else if (!boxes.some(function (c) { return c.checked; })) all.checked = true;   // never "none"
+            } else {
+                all.checked = !boxes.some(function (c) { return c.checked; });
+            }
+            setTopListLibIds(field, boxes.filter(function (c) { return c.checked; }).map(function (c) { return c.value; }));
+            lbl.textContent = labelOf();
+            goneNote.style.display = 'none';
+            if (onChange) onChange();
+        });
+    }
+
     function buildTopListTabHtml(tc) {
         var on = !!tc.EnableTopList;
         // A list that is off starts as Auto when ticked (Movies was only the old default).
@@ -4073,14 +4175,17 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     '</select>' +
                     '<div class="fieldDescription">Only titles of this kind are ranked. Switching it later makes the list again (a new library).</div>' +
                 '</div>' +
+                topListLibFieldHtml(tc.TopListLibraryIds, '<label class="selectLabel">Libraries</label>',
+                    'Only titles in these libraries are ranked, and Max titles for top-list below counts them. Max items in the Source tab is counted first, across all libraries: raise it if the list gets too short. Tag and collection are not affected. Applies from the next run.',
+                    'margin-bottom:12px;') +
                 '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">' +
-                    '<label style="font-size:0.9em;white-space:nowrap;margin:0;">Max items</label>' +
+                    '<label style="font-size:0.9em;white-space:nowrap;margin:0;">Max titles for top-list</label>' +
                     '<input is="emby-input" class="txtTopListMax" type="number" value="' + (Math.max(0, tc.TopListMaxItems || 0)) + '" min="0" style="width:90px;" />' +
                     '<span style="font-size:0.8em;opacity:0.5;">0 = all</span>' +
                 '</div>' +
                 '<div class="tl-badge-host"><em style="opacity:0.5">Loading badges...</em></div>' +
                 '<div class="hsc-callout warning" style="margin-top:6px;"><i class="md-icon">warning</i>' +
-                    '<span><strong>Library access is not checked per title.</strong> A top-list gets a library of its own, and every user it is shown to gets access to that library. Its titles can come from any library on the server, so those users can see and play them even from libraries they otherwise have no access to.</span>' +
+                    '<span><strong>Library access is not checked per title.</strong> A top-list gets a library of its own, and every user it is shown to gets access to that library. Its titles come from the libraries you choose, so those users can see and play them even if they otherwise have no access to those libraries.</span>' +
                 '</div>' +
             '</div>' +
             '</div>';
@@ -4255,12 +4360,21 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         tab.dataset.tlLoaded = '1';
         initBadgePicker(host, ((row.querySelector('.txtTagName') || {}).value || '').trim());
         updateTopListTab(row);
+        refreshTopListLibs(row, false);
     }
 
-    // Movies ↔ TV Shows: the badge previews are drawn for the kind (the chosen look is kept).
+    function refreshTopListLibs(row, dropHidden) {
+        var field = row.querySelector('.toplist-tab .tl-lib-field');
+        if (!field) return;
+        loadTopListLibraries().then(function (libs) { renderTopListLibs(field, libs, topListContentOf(row), null, dropHidden); });
+    }
+
+    // Movies ↔ TV Shows: the badge previews are drawn for the kind (the chosen look is kept), and the
+    // libraries follow it.
     function onTopListContentChanged(row) {
         var tab = row.querySelector('.toplist-tab');
         if (!tab || tab.dataset.tlLoaded !== '1') return;
+        refreshTopListLibs(row, true);
         var host = tab.querySelector('.tl-badge-host');
         var values = topListBadgeValues(tab);
         host.innerHTML = topListBadgeHtml(row, values);
@@ -4302,7 +4416,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             TopListMaxItems: Math.max(0, parseInt((tab.querySelector('.txtTopListMax') || {}).value, 10) || 0),
             TopListBadgeStyle: b.style || 'neutral',
             TopListBadgeOptions: b.options || '',
-            TopListRealPoster: b.realPoster || ''
+            TopListRealPoster: b.realPoster || '',
+            TopListLibraryIds: topListLibIds(tab.querySelector('.tl-lib-field'))
         };
     }
 
@@ -7661,6 +7776,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     EnableTopList: !!t.EnableTopList, TopListContentType: (t.TopListContentType === 'Shows' || t.TopListContentType === 'Movies') ? t.TopListContentType : 'Auto',
                     TopListMaxItems: t.TopListMaxItems || 0, TopListBadgeStyle: t.TopListBadgeStyle || 'neutral',
                     TopListBadgeOptions: t.TopListBadgeOptions || '', TopListRealPoster: t.TopListRealPoster || '',
+                    TopListLibraryIds: t.TopListLibraryIds || [],
                     LastRuns: [],
                 };
             }
@@ -9642,6 +9758,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     existing.HomeSectionTracked = existing.HomeSectionTracked || [];
                     existing.MaxItems = maxItems;
                     existing.ContentType = isShows ? 'Shows' : 'Movies';
+                    // Callers without the field keep the list's saved libraries.
+                    if (ui.libraryIds) existing.LibraryIds = ui.libraryIds;
                 } else {
                     topLists.push({
                         TagName: tagName,
@@ -9650,7 +9768,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         HomeSectionLibraryId: ctx.libraryItemId || 'auto',
                         HomeSectionSettings: hseSettings,
                         HomeSectionTracked: [],
-                        ContentType: isShows ? 'Shows' : 'Movies'
+                        ContentType: isShows ? 'Shows' : 'Movies',
+                        LibraryIds: ui.libraryIds || []
                     });
                 }
                 config.TopLists = topLists;
@@ -9890,7 +10009,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             // The tile's big numeral has room for 1-10 (BadgeRenderer.RenderRanked).
             '<div class="tl-badge-top10-note fieldDescription" style="margin:2px 0 6px;' + (tileSel ? '' : 'display:none;') + '">' +
                 '<i class="md-icon" style="font-size:1.15em;vertical-align:-3px;margin-right:4px;color:var(--hsc-info-text);">info</i>' +
-                'The Top 10 tile has room for 10 titles. From number 11 on, titles get a round number badge instead: set Max items to 10 to keep the whole row as tiles.</div>' +
+                'The Top 10 tile has room for 10 titles. From number 11 on, titles get a round number badge instead: set Max titles for top-list to 10 to keep the whole row as tiles.</div>' +
             buildRealPosterHtml(realPoster, contentKind) +
             '</div>';
     }
@@ -10623,7 +10742,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 buildBadgePickerHtml(preset ? preset.badgeStyle : 'neutral', preset ? preset.badgeOptions : '', preset ? preset.realPoster : '', isShows ? 'shows' : 'movies') +
 
                 '<div style="' + fieldStyle + '">' +
-                '<label style="' + labelStyle + '">Max items <span style="font-weight:400;text-transform:none;letter-spacing:0;opacity:0.7;">(0 = all)</span></label>' +
+                '<label style="' + labelStyle + '">Max titles for top-list <span style="font-weight:400;text-transform:none;letter-spacing:0;opacity:0.7;">(0 = all)</span></label>' +
                 '<input type="number" class="tlm-max-items" min="0" step="1" style="' + inputStyle + '" placeholder="0" />' +
                 '</div>' +
 
@@ -10708,11 +10827,25 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
 
     // What a manual top-list can rank: movies or, for a show top-list, series (top-list copies left out).
-    function loadTopListCandidates(isShows, tok) {
-        return fetch(window.ApiClient.getUrl(isShows ? 'HomeScreenCompanion/TopList/AllSeries' : 'HomeScreenCompanion/TopList/AllMovies'), {
-            headers: { 'X-MediaBrowser-Token': tok }
-        }).then(function (r) { return r.json(); });
+    function loadTopListCandidates(isShows, tok, libraryIds) {
+        var url = window.ApiClient.getUrl(isShows ? 'HomeScreenCompanion/TopList/AllSeries' : 'HomeScreenCompanion/TopList/AllMovies');
+        if (libraryIds && libraryIds.length) url += (url.indexOf('?') === -1 ? '?' : '&') + 'LibraryIds=' + encodeURIComponent(libraryIds.join(','));
+        return fetch(url, { headers: { 'X-MediaBrowser-Token': tok } }).then(function (r) { return r.json(); });
     }
+
+    // A manual list's Libraries field: narrows its search box, titles already added stay.
+    function wireManualTopListLibs(root, libs, isShows, tok, onCandidates) {
+        var field = root.querySelector('.tl-lib-field');
+        var latest = 0;
+        renderTopListLibs(field, libs, isShows ? 'Shows' : 'Movies', function () {
+            var mine = ++latest;
+            loadTopListCandidates(isShows, tok, topListLibIds(field)).then(function (r) {
+                if (mine === latest) onCandidates(r.Movies || []);
+            }).catch(function () { });
+        });
+    }
+
+    var MANUAL_LIBS_HINT = 'Narrows the search below. Titles you have already added stay in the list.';
 
     // existingData = { listName, customName, displayMode, imageType, userIds: [], movies: [{ItemId,ImdbId,Name,Year}] }
     // contentType: 'Movies' (default) or 'Shows' — for shows, "movies" below are series.
@@ -10746,15 +10879,17 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
         var tok = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
 
-        var loadCandidates = loadTopListCandidates(isShows, tok);
+        var loadCandidates = loadTopListCandidates(isShows, tok, preset && preset.libraryIds);
 
         Promise.all([
             loadCandidates,
-            getHseUsers()
+            getHseUsers(),
+            loadTopListLibraries()
         ])
         .then(function (results) {
             var allMovies = (results[0].Movies || []);
             var users     = results[1];
+            var topListLibs = results[2];
 
             var presetUserIds = (preset && preset.userIds) || [];
 
@@ -10835,6 +10970,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<div style="flex:1;min-width:0;padding-left:20px;">' +
                 '<div style="' + colHeaderStyle + '"><i class="md-icon" style="font-size:0.9em;vertical-align:middle;margin-right:5px;">format_list_numbered</i>' + (isShows ? 'Show List' : 'Movie List') + '</div>' +
 
+                topListLibFieldHtml(preset && preset.libraryIds, '<label style="' + labelStyle + '">Libraries</label>', MANUAL_LIBS_HINT, fieldStyle) +
+
                 '<div style="' + fieldStyle + '">' +
                 '<label style="' + labelStyle + '">' + (isShows ? 'Add Show' : 'Add Movie') + '</label>' +
                 '<div style="position:relative;">' +
@@ -10860,6 +10997,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
             initBadgePicker(modal);
             wireUserMultiSelect(modal);
+            wireManualTopListLibs(modal, topListLibs, isShows, tok, function (list) { allMovies = list; });
             wirePositionField(modal);
             refreshAdvanced(modal);
             fillPositionRows(modal, presetUserIds[0] || ((users || [])[0] || {}).Id, function () {
@@ -11011,7 +11149,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     if (isShows && !prepareResult.FilesCreated) throw new Error('None of the selected shows has episode files.');
                     executeTopListCreationSteps(
                         listName, customNameVal, selectedUserIds, displayMode, customNameVal, imageType, 0,
-                        prepareResult, { saveBtn: createBtn, errEl: errEl, modal: modal, badgeStyle: badgeStyle, badgeOptions: badgeOptions, realPoster: realPoster, cardSizeOffset: cardSize, contentType: isShows ? 'Shows' : 'Movies' }, function () {
+                        prepareResult, { libraryIds: topListLibIds(modal.querySelector('.tl-lib-field')), saveBtn: createBtn, errEl: errEl, modal: modal, badgeStyle: badgeStyle, badgeOptions: badgeOptions, realPoster: realPoster, cardSizeOffset: cardSize, contentType: isShows ? 'Shows' : 'Movies' }, function () {
                             document.removeEventListener('keydown', onEsc);
                             if (typeof onSuccess === 'function') onSuccess();
                         }
@@ -11093,7 +11231,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<div class="hsc-callout" style="margin-bottom:12px;"><i class="md-icon">info</i><span>Set in the <strong>Home Screen</strong> tab of the source <strong>' + escHtml(d.sourceName || d.tagName) + '</strong> (<em>Create as top-list</em>), with its users, title and position.</span></div>' +
                 (d.noLibrary ? '<div class="hsc-callout warning" style="margin-bottom:12px;"><i class="md-icon">schedule</i><span>Not made yet: the next run of the source (or a full sync) makes its library and rows.</span></div>' : '') +
                 line('Content', d.contentType === 'Shows' ? 'TV Shows' : 'Movies') +
-                line('Max items', d.maxItems && d.maxItems !== '0' ? escHtml(d.maxItems) : 'All') +
+                line('Max titles for top-list', d.maxItems && d.maxItems !== '0' ? escHtml(d.maxItems) : 'All') +
                 line('Users', names.length ? escHtml(names.join(', ')) : '<em style="opacity:0.6;">none</em>') +
                 line('Show', displayModeLabel) +
                 '<div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:16px;border-top:1px solid var(--line-color);padding-top:10px;flex-wrap:wrap;">' +
@@ -11141,11 +11279,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 getHseUsers(),
                 fetch(window.ApiClient.getUrl('HomeScreenCompanion/TopList/ManualItems') + '?ListName=' + encodeURIComponent(tagName), {
                     headers: { 'X-MediaBrowser-Token': tok }
-                }).then(function (r) { return r.json(); })
+                }).then(function (r) { return r.json(); }),
+                loadTopListLibraries()
             ]).then(function (res) {
                 var allMovies = res[0].Movies || [];
                 var users     = res[1];
                 var data      = res[2];
+                var topListLibs = res[3];
 
                 if (!data.Success) {
                     body.innerHTML = '<div style="color:var(--hsc-danger-text);padding:8px 0;">Failed to load: ' + escHtml(data.Message || 'Unknown error') + '</div>';
@@ -11213,6 +11353,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     '<div style="flex:1;min-width:0;padding-left:20px;">' +
                     '<div style="' + colHeaderStyle + '"><i class="md-icon" style="font-size:0.9em;vertical-align:middle;margin-right:5px;">format_list_numbered</i>' + (isShows ? 'Show List' : 'Movie List') + '</div>' +
 
+                    topListLibFieldHtml(data.LibraryIds, '<label style="' + labelStyle + '">Libraries</label>', MANUAL_LIBS_HINT, fieldStyle) +
+
                     '<div style="' + fieldStyle + '">' +
                     '<label style="' + labelStyle + '">' + (isShows ? 'Add Show' : 'Add Movie') + '</label>' +
                     '<div style="position:relative;">' +
@@ -11238,7 +11380,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 body.appendChild(wrapper);
                 initBadgePicker(body, tagName);
                 wireUserMultiSelect(wrapper);
+                wireManualTopListLibs(wrapper, topListLibs, isShows, tok, function (list) { allMovies = list; });
                 refreshAdvanced(wrapper);
+                // The search list above was loaded before the list's libraries were known.
+                if ((data.LibraryIds || []).length) {
+                    loadTopListCandidates(isShows, tok, data.LibraryIds).then(function (r) { allMovies = r.Movies || []; }).catch(function () { });
+                }
 
                 var selectedMovies = presetMovies.slice();
                 var originalManualState;
@@ -11336,6 +11483,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         badgeOptions: readBadgeOptions(body),
                         realPoster: readRealPoster(body),
                         userIds: Array.from(wrapper.querySelectorAll('.chkMtlUser:checked')).map(function (c) { return c.value; }).sort(),
+                        libraryIds: topListLibIds(wrapper.querySelector('.tl-lib-field')),
                         movies: selectedMovies.map(function (m) { return m.ItemId; })
                     });
                 }
@@ -11381,7 +11529,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             var errEl = wrapper.querySelector('.mtl-error');
                             executeTopListCreationSteps(
                                 tagName, customNameVal, userIds, displayMode, customNameVal, imageType, 0,
-                                prepareResult, { saveBtn: fakeBtn, errEl: errEl, modal: body, innerBox: wrapper, badgeStyle: badgeStyle, badgeOptions: badgeOptions, realPoster: realPoster, cardSizeOffset: cardSize, closeHandler: resolve, silent: true, contentType: contentType },
+                                prepareResult, { libraryIds: topListLibIds(wrapper.querySelector('.tl-lib-field')), saveBtn: fakeBtn, errEl: errEl, modal: body, innerBox: wrapper, badgeStyle: badgeStyle, badgeOptions: badgeOptions, realPoster: realPoster, cardSizeOffset: cardSize, closeHandler: resolve, silent: true, contentType: contentType },
                                 resolve
                             );
                         })
@@ -11443,7 +11591,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     buildBadgePickerHtml(presetBadgeStyle, presetBadgeOptions, presetRealPoster, isShows ? 'shows' : 'movies') +
 
                     '<div style="' + fieldStyle + '">' +
-                    '<label style="' + labelStyle + '">Max items <span style="font-weight:400;text-transform:none;letter-spacing:0;opacity:0.7;">(0 = all)</span></label>' +
+                    '<label style="' + labelStyle + '">Max titles for top-list <span style="font-weight:400;text-transform:none;letter-spacing:0;opacity:0.7;">(0 = all)</span></label>' +
                     '<input type="number" class="tlm-max-items" min="0" step="1" style="' + inputStyle + '" placeholder="0" />' +
                     '</div>' +
 
@@ -11585,7 +11733,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 // A top-list is a library of its own, and every user it is shown to gets access to it.
                 '<div class="hsc-callout warning" style="margin-top:20px;">' +
                 '<i class="md-icon">warning</i>' +
-                '<span><strong>Library access is not checked per title.</strong> A top-list gets a library of its own, and every user you show it to gets access to that library. Its ' + (isShows ? 'shows' : 'movies') + ' can come from any library on the server, so those users can see and play them even from libraries they otherwise have no access to.</span>' +
+                '<span><strong>Library access is not checked per title.</strong> A top-list gets a library of its own, and every user you show it to gets access to that library. Its ' + (isShows ? 'shows' : 'movies') + ' come from the libraries you choose, so those users can see and play them even if they otherwise have no access to those libraries.</span>' +
                 '</div>' +
                 '</div>';
 
@@ -12292,6 +12440,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             realPoster:     r.RealPosterBadge || '',
             maxItems:       String(r.MaxItems || '0'),
             movies:         r.Items || [],
+            libraryIds:     r.LibraryIds || [],
             notices:        r.Notices || []
         };
         if (r.IsManual) showManualTopListModal(onSuccess, null, isShows ? 'Shows' : '', { prefill: prefill });
@@ -14642,6 +14791,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             opts = opts || {};
             var leave = opts.leaveState || null;
             var ui = leave ? null : captureUi();
+            _topListLibrariesPromise = null;
             _hseLibraryCachePromise = null; // återställ cache så nya bibliotek (t.ex. ny top-list) hämtas
             preFetchLibraryData();          // starta hämtning direkt vid sidladdning
             view._hscLoading = true;

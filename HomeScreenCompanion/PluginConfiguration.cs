@@ -368,6 +368,8 @@ namespace HomeScreenCompanion
         public string TopListBadgeStyle { get; set; } = "neutral";
         public string TopListBadgeOptions { get; set; } = "";
         public string TopListRealPoster { get; set; } = "";
+        // The libraries the top-list takes its titles from (empty = all, see TopListLibraries).
+        public List<string> TopListLibraryIds { get; set; } = new List<string>();
 
         public DateTime LastModified { get; set; } = DateTime.MinValue;
     }
@@ -391,6 +393,9 @@ namespace HomeScreenCompanion
         public string ContentType { get; set; } = "Movies";
         // Made by a source's Create as top-list (SourceTopLists): edited there, not in the Top-Lists tab.
         public bool FromSource { get; set; } = false;
+        // The libraries its titles come from (empty = all, see TopListLibraries). A source's list gets
+        // them from its source; a manual list keeps what its search is narrowed to.
+        public List<string> LibraryIds { get; set; } = new List<string>();
 
         // Legacy, for migration only (stoep-labs fork, see LegacyForkCleanup): the fork's tag-based
         // show lists.

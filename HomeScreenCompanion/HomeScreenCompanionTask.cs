@@ -7979,6 +7979,17 @@ namespace HomeScreenCompanion
                 // PrepareTopListFolderRequest handler.
                 var (items, fromList) = TopListMembers.MoviesFor(tl.TagName, _libraryManager, _jsonSerializer, topListsFolder);
 
+                // Its chosen libraries, before Max items. None of them left: it keeps what it has.
+                var libraries = TopListLibraries.ForRun(tl, _libraryManager);
+                if (libraries.Gone)
+                {
+                    _log.Warn($"Top-list '{tl.TagName}': none of its chosen libraries exists any more — it keeps its titles until you choose others in its source");
+                    continue;
+                }
+                bool hadItems = items.Count > 0;
+                items = items.Where(libraries.Contains).ToList();
+                if (hadItems && items.Count == 0) _log.Skip($"Top-list '{tl.TagName}': none of the source's titles are in its chosen libraries");
+
                 var rankFile = Path.Combine(dataPath, "tag_ranks", sanitized + ".json");
                 if (!fromList && File.Exists(rankFile))
                 {
@@ -8210,7 +8221,19 @@ namespace HomeScreenCompanion
 
                     List<BaseItem> series;
                     if (managedTagNames.Contains(tl.TagName))
+                    {
+                        // Its chosen libraries, before Max items. None of them left: it keeps what it has.
+                        var libraries = TopListLibraries.ForRun(tl, _libraryManager);
+                        if (libraries.Gone)
+                        {
+                            _log.Warn($"Top-list '{tl.TagName}': none of its chosen libraries exists any more — it keeps its titles until you choose others in its source");
+                            continue;
+                        }
                         series = ShowTopList.SeriesForTag(_libraryManager, _jsonSerializer, tl.TagName);
+                        bool hadSeries = series.Count > 0;
+                        series = series.Where(libraries.Contains).ToList();
+                        if (hadSeries && series.Count == 0) _log.Skip($"Top-list '{tl.TagName}': none of the source's titles are in its chosen libraries");
+                    }
                     else
                     {
                         // Manual list: its series are the ones in the folder's manifest.

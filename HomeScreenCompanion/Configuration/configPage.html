@@ -2960,13 +2960,17 @@
                     <div><strong>Content</strong> — in a source's <em>Create as top-list</em>, <em>Auto (based on the source)</em> makes a movie or TV show list from what the source returns (an episode counts as its show); <em>Movies</em> or <em>TV Shows</em> fixes it.</div>
                 </div>
                 <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">video_library</i>
+                    <div><strong>Libraries</strong> — a list from a source ranks only the titles in the libraries you choose (<em>All libraries</em> by default, which also takes in libraries added later). <em>Max titles for top-list</em> counts the chosen libraries, but <em>Max items</em> in the Source tab is counted first, across all libraries, so raise it if the list gets too short. In a manual list the choice narrows the search box; titles already added stay.</div>
+                </div>
+                <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">edit_note</i>
                     <div><strong>Manual top-list</strong> — Click <em>Create manual top-list</em> to hand-pick and order movies yourself, without needing an existing tag. Search your library, put the items in the order you want with the ▲ ▼ buttons, and save. Choose <em>TV Shows</em> in the <em>Create Top-List</em> dialog to rank shows instead.</div>
                 </div>
                 <div class="src-cards" style="grid-template-columns: repeat(3, 1fr);">
                     <div class="src-card">
-                        <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">palette</i> Badge style &amp; Max items</div>
-                        Pick how the rank number looks, for movie and show lists alike: a number badge in one of six colours (<em>Neutral</em>, <em>Slate grey</em>, <em>Emby green</em>, <em>Ocean blue</em>, <em>Soft red</em>, <em>Violet</em>), <em>No number</em>, or <em>Top 10 tile</em>. <em>Top 10 tile</em> draws a big outlined number beside the poster on a flat background in the colour of Emby's dark theme, so the row reads as one strip, like Netflix. On a lighter or black theme the tile edges show faintly. <strong>Max items</strong> limits how many titles the list shows (0 = all). <strong>Card size</strong> works as on the Home Screen tab: <em>Smaller</em> fits more tiles on screen.
+                        <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">palette</i> Badge style &amp; Max titles</div>
+                        Pick how the rank number looks, for movie and show lists alike: a number badge in one of six colours (<em>Neutral</em>, <em>Slate grey</em>, <em>Emby green</em>, <em>Ocean blue</em>, <em>Soft red</em>, <em>Violet</em>), <em>No number</em>, or <em>Top 10 tile</em>. <em>Top 10 tile</em> draws a big outlined number beside the poster on a flat background in the colour of Emby's dark theme, so the row reads as one strip, like Netflix. On a lighter or black theme the tile edges show faintly. <strong>Max titles for top-list</strong> limits how many titles the list shows (0 = all). <strong>Card size</strong> works as on the Home Screen tab: <em>Smaller</em> fits more tiles on screen.
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">tune</i> Customise the Top 10 tile</div>
@@ -3006,7 +3010,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">lock_open</i>
-                    <div><strong>Library access</strong> — every user a top-list is shown to gets access to its library. The list's titles can come from any library on the server, so those users can see and play them even from libraries they otherwise have no access to. Only pick users who may see everything the list can hold.</div>
+                    <div><strong>Library access</strong> — every user a top-list is shown to gets access to its library. The list's titles come from the libraries you choose, so those users can see and play them even if they otherwise have no access to those libraries. Only pick users who may see everything the list can hold.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">block</i>
