@@ -47,8 +47,8 @@ namespace HomeScreenCompanion
         /// <summary>The source has its own plain home row (not when its row is a top-list).</summary>
         internal static bool PlainRow(TagConfig tc) => tc.EnableHomeSection && !IsOn(tc);
 
-        /// <summary>Create as top-list is on (never for Your Next Watch: its row is each user's own playlist).</summary>
-        internal static bool IsOn(TagConfig tc) => tc.EnableTopList && !string.Equals(tc.SourceType, "NextWatch", StringComparison.OrdinalIgnoreCase);
+        /// <summary>Create as top-list is on (never for Your Next Watch: its row is each user's own playlist; nor for a rotating source: it only makes its row).</summary>
+        internal static bool IsOn(TagConfig tc) => tc.EnableTopList && !string.Equals(tc.SourceType, "NextWatch", StringComparison.OrdinalIgnoreCase) && !RotatingRow.Is(tc);
 
         /// <summary>Content is Auto (also anything that is not Movies or TV Shows).</summary>
         internal static bool IsAuto(TagConfig tc) =>
@@ -228,6 +228,7 @@ namespace HomeScreenCompanion
                 ? (src.HomeSectionUserIds ?? new List<string>()).Where(u => !string.IsNullOrWhiteSpace(u)).ToList()
                 : new List<string>();
             tl.MaxItems = max;
+            tl.LibraryIds = (src.TopListLibraryIds ?? new List<string>()).ToList();
             tl.ContentType = shows ? Shows : Movies;
             tl.FromSource = true;
             tl.HomeSectionTracked ??= new List<HomeSectionTracking>();
@@ -524,6 +525,9 @@ namespace HomeScreenCompanion
                 if (!owners.TryGetValue(tag, out var owner) || !IsAuto(owner)) continue;
                 var ids = TopListMembers.LoadIds(tag, Json);
                 if (ids == null || ids.Count == 0) continue;
+                // Only what the list can hold counts: the titles in its chosen libraries.
+                var libraries = TopListLibraries.ForRun(tl, libraryManager);
+                if (libraries.Gone) continue;
 
                 int movies = 0;
                 var shows = new HashSet<long>();
@@ -531,10 +535,10 @@ namespace HomeScreenCompanion
                 {
                     if (!Guid.TryParse(id, out var g)) continue;
                     var item = libraryManager.GetItemById(g);
-                    if (item is MediaBrowser.Controller.Entities.Movies.Movie) movies++;
+                    if (item is MediaBrowser.Controller.Entities.Movies.Movie) { if (libraries.Contains(item)) movies++; }
                     else if ((item as MediaBrowser.Controller.Entities.TV.Series
                         ?? (item as MediaBrowser.Controller.Entities.TV.Season)?.Series
-                        ?? (item as MediaBrowser.Controller.Entities.TV.Episode)?.Series) is BaseItem series) shows.Add(series.InternalId);
+                        ?? (item as MediaBrowser.Controller.Entities.TV.Episode)?.Series) is BaseItem series && libraries.Contains(series)) shows.Add(series.InternalId);
                 }
                 if (movies == 0 && shows.Count == 0) continue;
 

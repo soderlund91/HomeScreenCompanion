@@ -227,6 +227,7 @@ namespace HomeScreenCompanion
                     }
                 }
                 live.HomeSyncAdditions = (config.HomeSyncAdditions ?? new List<HomeSyncAddition>()).ToList();
+                RotatingRow.CarryTracking(config);
                 _log.Debug("Settings were saved during the run: its changes to source and top-list users were carried over");
             }
             plugin.SaveUsersAndRows();
@@ -412,7 +413,7 @@ namespace HomeScreenCompanion
                 }
                 if (mirror) continue;
                 // (Not a copied playlist row that shows another user's playlist.)
-                if (managed.PlaylistRow(s) != null && managed.PlaylistOwners.TryGetValue(s.ParentId, out var plOwner) && plOwner != targetKey) continue;
+                if (managed.RotatingRowOf(s, targetKey) == null && managed.PlaylistRow(s) != null && managed.PlaylistOwners.TryGetValue(s.ParentId, out var plOwner) && plOwner != targetKey) continue;
                 var tc = managed.SourceRow(config, s, targetKey);
                 if (tc != null && !managed.MasterHasSourceRow(config, tc, sourceKey, masterSections) && !kept.Any(k => k.Source == tc))
                     kept.Add(new KeptRow { Index = idx, Row = s, Source = tc, PositionKey = SourceRowKey(tc) });
@@ -434,10 +435,13 @@ namespace HomeScreenCompanion
             int copiedHere = 0;
             foreach (var section in masterSections)
             {
-                var copy = PrepareCopy(managed, section, targetKey, targetName, notCopied);
+                var copy = PrepareCopy(config, managed, section, sourceKey, targetIdStr, targetKey, targetName, notCopied);
                 if (copy == null) continue;
-                _log.Debug($"  {targetName}: + [{section.SectionType}] \"{section.CustomName ?? section.Name}\"");
+                _log.Debug($"  {targetName}: + [{section.SectionType}] \"{copy.CustomName ?? copy.Name}\"");
+                var rotating = managed.RotatingRowOf(section, sourceKey);
+                var beforeAdd = rotating != null ? _userManager.GetHomeSections(targetInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>() : null;
                 _userManager.AddHomeSection(targetInternalId, copy, cancellationToken);
+                if (rotating != null && TrackRotatingRow(rotating, beforeAdd!, copy, targetIdStr, targetInternalId, cancellationToken)) totals.ConfigChanged = true;
                 totals.Copied++;
                 copiedHere++;
             }
@@ -458,6 +462,8 @@ namespace HomeScreenCompanion
                     if (row == null) continue;
                     HomeScreenCompanionTask.RestoreRowPosition(_userManager, _jsonSerializer, k.PositionKey, targetIdStr, targetInternalId, row.Id, cancellationToken);
                     copiedHere++;
+                    // A kept rotating row has a new id now, and is known only by its id.
+                    if (RotatingRow.Is(k.Source)) { RotatingRow.Track(k.Source!, managed.SourceUserId(k.Source!, targetKey) ?? targetIdStr, row.Id, row); totals.ConfigChanged = true; }
                 }
                 _log.Debug($"  {targetName}: = '{row.CustomName ?? row.Name}' kept ({(k.Source != null ? "source row; the master is not one of its users" : "top-list row")})");
             }
@@ -478,9 +484,10 @@ namespace HomeScreenCompanion
             var done = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var (section, key) in wanted)
             {
-                var copy = PrepareCopy(managed, section, targetKey, targetName, notCopied);
+                var copy = PrepareCopy(config, managed, section, sourceKey, targetIdStr, targetKey, targetName, notCopied);
                 if (copy == null) continue;
-                string label = section.CustomName ?? section.Name ?? section.SectionType ?? "";
+                var rotating = managed.RotatingRowOf(section, sourceKey);
+                string label = copy.CustomName ?? copy.Name ?? section.SectionType ?? "";
                 var current = _userManager.GetHomeSections(targetInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>();
                 // A row of no source or top-list, or of a source the user is not on, is known only
                 // by the row Copy & Sync added (its record): a row of the user's own with the same
@@ -516,6 +523,7 @@ namespace HomeScreenCompanion
                     typeof(ContentSection).GetProperty("Id")?.SetValue(copy, match.Id);
                     _userManager.UpdateHomeSection(targetInternalId, copy, cancellationToken);
                     done.Add(match.Id ?? "");
+                    if (rotating != null) { RotatingRow.Track(rotating, managed.SourceUserId(rotating, targetKey) ?? targetIdStr, match.Id ?? "", copy); totals.ConfigChanged = true; }
                     _log.Debug($"  {targetName}: = '{label}' updated");
                 }
                 else
@@ -526,11 +534,12 @@ namespace HomeScreenCompanion
                     if (added != null)
                     {
                         done.Add(added.Id);
+                        if (rotating != null) { RotatingRow.Track(rotating, managed.SourceUserId(rotating, targetKey) ?? targetIdStr, added.Id, copy); totals.ConfigChanged = true; }
                         // Below the row that is above it on the master's home screen. When this user
                         // does not have that row, PlaceNewRow looks on the master's screen (the
                         // reference user) for the nearest row above it that this user has; else the top.
                         int at = Array.FindIndex(masterSections, s => s.Id == section.Id);
-                        string position = at > 0 ? "after:" + HomeScreenCompanionTask.SectionKey(masterSections[at - 1]) : "top";
+                        string position = at > 0 ? "after:" + HomeScreenCompanionTask.PositionKeysOf(_userManager, _userManager.GetInternalId(profile.SourceUserId), masterSections)(masterSections[at - 1]) : "top";
                         HomeScreenCompanionTask.PlaceNewRow(_userManager, targetInternalId, added.Id, position, cancellationToken,
                             new[] { profile.SourceUserId }, copy.CustomName);
                         // Remembered (with the row's id), so it is updated next time and unticking
@@ -551,10 +560,30 @@ namespace HomeScreenCompanion
 
         // The copy of a master row for this user; null when they do not get it (said in notCopied).
         // Per-user HSC playlist rows show the user's own playlist, top-list rows go only to the
-        // list's own users; every other row is copied as it is.
-        private ContentSection? PrepareCopy(ManagedRows managed, ContentSection section, string targetKey, string targetName, List<string> notCopied)
+        // list's own users, a rotating row only to the source's own users (with what that user may
+        // see; a copy for anyone else would never move on); every other row is copied as it is.
+        private ContentSection? PrepareCopy(PluginConfiguration config, ManagedRows managed, ContentSection section, string masterKey, string targetIdStr, string targetKey, string targetName, List<string> notCopied)
         {
             var copy = CopySection(section);
+            var rotating = managed.RotatingRowOf(section, masterKey);
+            if (rotating != null)
+            {
+                string title = section.CustomName ?? section.Name ?? "";
+                if (managed.SourceUserId(rotating, targetKey) == null)
+                {
+                    _log.Debug($"  {targetName}: – '{title}' skipped (rotating row for other users)");
+                    notCopied.Add($"'{title}' (rotating row: not one of its users)");
+                    return null;
+                }
+                var pick = RotatingRow.PickFor(rotating, targetIdStr, RotatingRow.Turn(rotating, _userManager, _libraryManager, _jsonSerializer), _userManager, _libraryManager, _jsonSerializer);
+                if (pick == null)
+                {
+                    _log.Debug($"  {targetName}: – '{title}' skipped (rotating row: nothing in its list they may see)");
+                    notCopied.Add($"'{title}' (rotating row: nothing in its list they may see)");
+                    return null;
+                }
+                return RotatingRow.Build(rotating, pick, config, _libraryManager, _jsonSerializer, copy);
+            }
             var row = managed.PlaylistRow(section);
             if (row != null)
             {
@@ -575,6 +604,18 @@ namespace HomeScreenCompanion
                 return null;
             }
             return copy;
+        }
+
+        // A rotating row just added for the user: tracked by its new id, right away (it has no title
+        // the source could find it by later).
+        private bool TrackRotatingRow(TagConfig rotating, ContentSection[] before, ContentSection written, string targetIdStr, long targetInternalId, CancellationToken cancellationToken)
+        {
+            var added = (_userManager.GetHomeSections(targetInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>())
+                .FirstOrDefault(s => !string.IsNullOrEmpty(s.Id) && !before.Any(b => b.Id == s.Id));
+            if (added == null) return false;
+            string targetKey = NormId(targetIdStr);
+            RotatingRow.Track(rotating, (rotating.HomeSectionUserIds ?? new List<string>()).FirstOrDefault(u => NormId(u) == targetKey) ?? targetIdStr, added.Id, written);
+            return true;
         }
 
         // The user on the sources and top-lists of the rows they get from the master (remembered
@@ -765,7 +806,9 @@ namespace HomeScreenCompanion
             {
                 if (key.StartsWith(SrcPrefix, StringComparison.Ordinal))
                 {
-                    foreach (var tc in (config.Tags ?? new List<TagConfig>()).Where(t => string.Equals(SourceKey(t.Name, t.Tag), key, StringComparison.OrdinalIgnoreCase)))
+                    // (A rotating row stays tracked: as a plain copy it would never move on, so the
+                    // full sync removes it now that they are off the source.)
+                    foreach (var tc in (config.Tags ?? new List<TagConfig>()).Where(t => !RotatingRow.Is(t) && string.Equals(SourceKey(t.Name, t.Tag), key, StringComparison.OrdinalIgnoreCase)))
                         tc.HomeSectionTracked?.RemoveAll(t => NormId(t.UserId) == userKey);
                 }
                 else if (key.StartsWith(TlPrefix, StringComparison.Ordinal))
@@ -1046,6 +1089,7 @@ namespace HomeScreenCompanion
                 foreach (var tc in config.Tags ?? new List<TagConfig>())
                 {
                     if (!tc.Active || !SourceTopLists.PlainRow(tc) || (tc.HomeSectionUserIds?.Count ?? 0) == 0) continue;
+                    if (RotatingRow.Is(tc)) { m._rotating.Add(tc); continue; }
                     var settings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                     try
                     {
@@ -1118,6 +1162,8 @@ namespace HomeScreenCompanion
             // (title, else type and library). A source's row is known as such only for its users.
             public string RowKey(PluginConfiguration config, ContentSection s, string user)
             {
+                var rotating = RotatingRowOf(s, user);
+                if (rotating != null) return SourceKey(rotating.Name, rotating.Tag);
                 var tl = TopListRow(s);
                 if (tl != null) return TopListKey(tl.TagName);
                 var pr = PlaylistRow(s);
@@ -1137,6 +1183,8 @@ namespace HomeScreenCompanion
             public TagConfig? SourceRow(PluginConfiguration config, ContentSection s, string user)
             {
                 if (string.IsNullOrEmpty(s.Id)) return null;
+                var rotating = RotatingRowOf(s, user);
+                if (rotating != null) return rotating;
                 var users = _sources.Where(tc => SourceUserId(tc, user) != null).ToList();
                 bool Tracks(TagConfig tc) => (tc.HomeSectionTracked ?? new List<HomeSectionTracking>()).Any(t => NormId(t.UserId) == user && t.SectionId == s.Id);
 
@@ -1157,6 +1205,12 @@ namespace HomeScreenCompanion
                 var group = SourceKey(byTitle[0].Name, byTitle[0].Tag);
                 return byTitle.All(tc => string.Equals(SourceKey(tc.Name, tc.Tag), group, StringComparison.OrdinalIgnoreCase)) ? byTitle[0] : null;
             }
+
+            // The rotating source whose row this is: only the row it tracks for this user. Its title
+            // and content change with its turn and can be the same as any other row's.
+            public TagConfig? RotatingRowOf(ContentSection s, string user)
+                => string.IsNullOrEmpty(s.Id) ? null : _rotating.FirstOrDefault(tc =>
+                    (tc.HomeSectionTracked ?? new List<HomeSectionTracking>()).Any(t => NormId(t.UserId) == user && t.SectionId == s.Id));
 
             // The tag ids (Query.TagIds) and the parent (ParentId) a row shows.
             private static HashSet<string> RowShows(ContentSection s)
@@ -1183,6 +1237,7 @@ namespace HomeScreenCompanion
                 return _sourceTitles.TryGetValue(tc, out var title) && HomeScreenCompanionTask.SameTitle(s.CustomName, title);
             }
 
+            private readonly List<TagConfig> _rotating = new List<TagConfig>();
             private readonly List<TagConfig> _sources = new List<TagConfig>();
             private readonly Dictionary<TagConfig, string> _sourceTitles = new Dictionary<TagConfig, string>();
             private readonly Dictionary<TagConfig, string[]> _sourceShows = new Dictionary<TagConfig, string[]>();   // see Build

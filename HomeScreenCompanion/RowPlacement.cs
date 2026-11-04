@@ -99,6 +99,49 @@ namespace HomeScreenCompanion
             catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
         }
 
+        // "after:src:<old>" with the source's new key; null when it does not point at a renamed source.
+        private static string? Renamed(string position, Dictionary<string, string> moved)
+        {
+            foreach (var mode in new[] { "before:", "after:" })
+                if (position.StartsWith(mode, StringComparison.Ordinal)
+                    && moved.TryGetValue(position.Substring(mode.Length), out var to)) return mode + to;
+            return null;
+        }
+
+        /// <summary>
+        /// Sources renamed (old row key to new): a Position pointing at one follows it. The rows stay
+        /// where they are: the position put into effect follows too, so it does not count as a change.
+        /// </summary>
+        internal static void FollowRenamedSources(PluginConfiguration config, Dictionary<string, string> moved)
+        {
+            if (moved.Count == 0) return;
+            try
+            {
+                string Follow(string? settings)
+                {
+                    var position = PositionIn(settings);
+                    var now = Renamed(position, moved);
+                    return now == null ? settings ?? "" : settings!.Replace(position, now);
+                }
+                foreach (var t in config.Tags ?? new List<TagConfig>()) t.HomeSectionSettings = Follow(t.HomeSectionSettings);
+                foreach (var t in config.TopLists ?? new List<TopListHomeSection>()) t.HomeSectionSettings = Follow(t.HomeSectionSettings);
+                lock (_lock)
+                {
+                    var applied = Applied();
+                    bool changed = false;
+                    foreach (var key in applied.Keys.ToList())
+                    {
+                        var now = Renamed(applied[key], moved);
+                        if (now == null) continue;
+                        applied[key] = now;
+                        changed = true;
+                    }
+                    if (changed) Save();
+                }
+            }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+        }
+
         /// <summary>
         /// True when the rows already there should move to <paramref name="position"/>: the setting
         /// changed since it was last put into effect. The first time a source or top-list is seen
