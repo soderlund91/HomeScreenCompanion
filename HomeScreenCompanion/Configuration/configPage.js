@@ -706,7 +706,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         return `
             <div class="url-row" style="display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-bottom:10px;">
                 <div style="flex-grow:1;">
-                    <input is="emby-input" class="txtTagUrl" type="text" label="Trakt/MDBList/TMDb URL" value="${val}" />
+                    <input is="emby-input" class="txtTagUrl" type="text" label="Trakt/MDBList/TMDb/JSON URL" value="${val}" />
                 </div>
                 <div style="width:110px; position:relative;">
                     <input is="emby-input" class="txtUrlLimit" type="number" label="Max (0=All)" value="${lim}" min="0" />
@@ -747,20 +747,23 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // A source's Max 0 reads a list only up to its provider's limit, so a forgotten Max never starts
     // an endless read. The notes under Max say what that limit is. The limits are read from the
     // Settings fields, so a change there shows before Save: 0 = the whole list, empty = 1000.
-    var LIST_CAP_NAMES = { Trakt: 'Trakt', Mdblist: 'MDBList', Tmdb: 'TMDb' };
+    var LIST_CAP_NAMES = { Trakt: 'Trakt', Mdblist: 'MDBList', Tmdb: 'TMDb', Json: 'JSON list' };
     // Each provider's default (ListFetcher.Default*Max): Trakt and MDBList read the whole list,
-    // TMDb (a request per title) and the AI stop at 1000.
-    var LIST_CAP_DEFAULTS = { Trakt: 0, Mdblist: 0, Tmdb: 1000, Ai: 1000 };
+    // TMDb (a request per title), JSON lists and the AI stop at 1000.
+    var LIST_CAP_DEFAULTS = { Trakt: 0, Mdblist: 0, Tmdb: 1000, Json: 1000, Ai: 1000 };
     function listCap(p) {
         var v = activeView();
         var n = parseInt((((v && v.querySelector('#num' + p + 'MaxItems')) || {}).value || '').trim(), 10);
         return n >= 0 ? n : LIST_CAP_DEFAULTS[p];
     }
-    // Which limit a URL falls under: the same test as the server (ListFetcher.CapForUrl).
+    // Which limit a URL falls under: the same test as the server (ListFetcher.ListProvider).
     function urlCapProvider(url) {
         url = (url || '').trim();
         if (!url) return '';
-        return url.indexOf('mdblist.com') >= 0 ? 'Mdblist' : url.indexOf('themoviedb.org') >= 0 ? 'Tmdb' : 'Trakt';
+        if (url.indexOf('mdblist.com') >= 0) return 'Mdblist';
+        if (url.indexOf('themoviedb.org') >= 0) return 'Tmdb';
+        if (/trakt\.tv/i.test(url) || !/^https?:\/\/[^\s\/]/i.test(url)) return 'Trakt';
+        return 'Json';
     }
     function urlLimitNote(url, max) {
         var p = urlCapProvider(url), cap = p ? listCap(p) : 0;
@@ -3508,7 +3511,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         <select is="emby-select" class="selSourceType" style="width:100%;">
                             <option value="" ${!sourceType ? 'selected' : ''}>-- Select source type --</option>
                             <option value="AI" ${sourceType === 'AI' ? 'selected' : ''}>AI created lists</option>
-                            <option value="External" ${sourceType === 'External' ? 'selected' : ''}>External List (Trakt/MDBList/TMDb)</option>
+                            <option value="External" ${sourceType === 'External' ? 'selected' : ''}>External List (Trakt/MDBList/TMDb/JSON)</option>
                             <option value="LocalCollection" ${sourceType === 'LocalCollection' ? 'selected' : ''}>Local Collection</option>
                             <option value="MediaInfo" ${sourceType === 'MediaInfo' ? 'selected' : ''}>Local Media Information (Smart Playlist)</option>
                             <option value="LocalPlaylist" ${sourceType === 'LocalPlaylist' ? 'selected' : ''}>Local Playlist</option>
@@ -7162,6 +7165,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             TraktMaxItems: listCapField(view, 'Trakt'),
             MdblistMaxItems: listCapField(view, 'Mdblist'),
             TmdbMaxItems: listCapField(view, 'Tmdb'),
+            JsonMaxItems: listCapField(view, 'Json'),
             AiMaxItems: listCapField(view, 'Ai'),
             OpenAiApiKey: (view.querySelector('#txtOpenAiApiKey') || {}).value || '',
             OpenAiModel: fieldOr('#txtOpenAiModel', 'gpt-4o-mini'),
@@ -7376,7 +7380,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // { settings: [label], sources: [{ name, what }] } for the unsaved-changes popup.
     var _settingLabels = {
         TraktMaxItems: 'Trakt: max entries per list', MdblistMaxItems: 'MDBList: max entries per list',
-        TmdbMaxItems: 'TMDb: max entries per list', AiMaxItems: 'Max titles per AI list',
+        TmdbMaxItems: 'TMDb: max entries per list', JsonMaxItems: 'JSON lists: max entries per list', AiMaxItems: 'Max titles per AI list',
         OpenAiModel: 'OpenAI model', GeminiModel: 'Gemini model', ClaudeModel: 'Claude model',
         OllamaBaseUrl: 'Ollama URL', OllamaModel: 'Ollama model', AiConnections: 'OpenAI-compatible connections', AiSystemPrompt: 'AI system prompt',
         ExtendedConsoleOutput: 'Extended log', LogMissingItems: 'Log missing movies and shows',
@@ -13512,7 +13516,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
           target: function (view) { var row = tourDemoRow(view); var hint = row && row.querySelector('.source-type-hint'); return hint && hint.parentElement; },
           icon: 'category', title: 'Source tab: source type',
           html: '<p><strong>Source Type</strong> is where the titles come from:</p>' +
-                '<ul><li><strong>External List</strong>: a list on Trakt, MDBList or TMDb.</li>' +
+                '<ul><li><strong>External List</strong>: a list on Trakt, MDBList or TMDb, or a JSON list from another site.</li>' +
                 '<li><strong>Local Collection / Playlist</strong>: one you already have in Emby.</li>' +
                 '<li><strong>Local Media Information</strong>: filters on your own library (a smart playlist).</li>' +
                 '<li><strong>Manual List</strong>: titles you pick by hand.</li>' +
@@ -14881,7 +14885,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var clmElInit = view.querySelector('#txtClaudeModel'); if (clmElInit) clmElInit.value = config.ClaudeModel || 'claude-haiku-4-5-20251001';
                 var olElInit = view.querySelector('#txtOllamaBaseUrl'); if (olElInit) olElInit.value = config.OllamaBaseUrl || 'http://localhost:11434';
                 var omElInit = view.querySelector('#txtOllamaModel'); if (omElInit) omElInit.value = config.OllamaModel || '';
-                ['Trakt', 'Mdblist', 'Tmdb', 'Ai'].forEach(function (p) {
+                ['Trakt', 'Mdblist', 'Tmdb', 'Json', 'Ai'].forEach(function (p) {
                     var capEl = view.querySelector('#num' + p + 'MaxItems');
                     if (capEl) capEl.value = config[p + 'MaxItems'] >= 0 ? config[p + 'MaxItems'] : LIST_CAP_DEFAULTS[p];
                 });

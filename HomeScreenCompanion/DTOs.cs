@@ -257,4 +257,42 @@ namespace HomeScreenCompanion
     {
         public string? imdb_id { get; set; }
     }
+
+    // One entry of a plain JSON list (any other http(s) URL): the usual field names, all read as
+    // text so a number or a string both work.
+    public class JsonListItem
+    {
+        public string? id { get; set; }
+        public string? imdb_id { get; set; }
+        public string? imdb { get; set; }
+        public string? imdbId { get; set; }
+        public string? tmdb_id { get; set; }
+        public string? tmdb { get; set; }
+        public string? tmdbId { get; set; }
+        public JsonListIds? ids { get; set; }
+        public string? title { get; set; }
+        public string? name { get; set; }
+        public string? year { get; set; }
+        public string? release_year { get; set; }
+        public string? release_date { get; set; }
+        public string? first_air_date { get; set; }
+        public string? type { get; set; }
+        public string? media_type { get; set; }
+    }
+
+    public class JsonListIds
+    {
+        public string? imdb { get; set; }
+        public string? tmdb { get; set; }
+    }
+
+    // A JSON object around the list: the first of these that has entries.
+    public class JsonListWrapper
+    {
+        public List<JsonListItem>? items { get; set; }
+        public List<JsonListItem>? results { get; set; }
+        public List<JsonListItem>? movies { get; set; }
+        public List<JsonListItem>? shows { get; set; }
+        public List<JsonListItem>? data { get; set; }
+    }
 }

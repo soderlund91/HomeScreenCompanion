@@ -781,6 +781,7 @@ namespace HomeScreenCompanion
         public int? TraktMaxItems { get; set; }
         public int? MdblistMaxItems { get; set; }
         public int? TmdbMaxItems { get; set; }
+        public int? JsonMaxItems { get; set; }
         public int? AiMaxItems { get; set; }
     }
 
@@ -4021,6 +4022,7 @@ public class HomeScreenCompanionService : IService
                     TraktMaxItems             = config.TraktMaxItems,
                     MdblistMaxItems           = config.MdblistMaxItems,
                     TmdbMaxItems              = config.TmdbMaxItems,
+                    JsonMaxItems              = config.JsonMaxItems,
                     AiMaxItems                = config.AiMaxItems
                 };
                 file.Sections.Add("Settings");
@@ -4172,6 +4174,7 @@ public class HomeScreenCompanionService : IService
                     if (s.TraktMaxItems != null) config.TraktMaxItems = s.TraktMaxItems.Value;
                     if (s.MdblistMaxItems != null) config.MdblistMaxItems = s.MdblistMaxItems.Value;
                     if (s.TmdbMaxItems != null) config.TmdbMaxItems = s.TmdbMaxItems.Value;
+                    if (s.JsonMaxItems != null) config.JsonMaxItems = s.JsonMaxItems.Value;
                     if (s.AiMaxItems != null) config.AiMaxItems = s.AiMaxItems.Value;
                     if (s.ShowMissingTitles != null) config.ShowMissingTitles = s.ShowMissingTitles.Value;
                     if (s.MissingIncludeGaps != null) config.MissingIncludeGaps = s.MissingIncludeGaps.Value;

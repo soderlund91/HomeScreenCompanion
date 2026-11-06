@@ -7071,10 +7071,14 @@ namespace HomeScreenCompanion
                 case "AI":              return "AI · " + (string.IsNullOrWhiteSpace(tc.AiProvider) ? "unknown provider" : AiConnection.Label(tc.AiProvider));
                 default:
                     var url = tc.Url ?? "";
-                    if (url.IndexOf("mdblist.com", StringComparison.OrdinalIgnoreCase) >= 0) return "MDBList";
-                    if (url.IndexOf("themoviedb.org", StringComparison.OrdinalIgnoreCase) >= 0) return "TMDb";
-                    if (url.IndexOf("trakt", StringComparison.OrdinalIgnoreCase) >= 0) return "Trakt";
-                    return "External list";
+                    if (string.IsNullOrWhiteSpace(url)) return "External list";
+                    switch (ListFetcher.ListProvider(url))
+                    {
+                        case "Mdblist": return "MDBList";
+                        case "Tmdb": return "TMDb";
+                        case "Trakt": return "Trakt";
+                        default: return "JSON list";
+                    }
             }
         }
 
