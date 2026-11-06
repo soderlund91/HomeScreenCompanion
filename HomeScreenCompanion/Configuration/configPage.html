@@ -2775,6 +2775,7 @@
                             <li>The copies sit in a hidden library "&lt;collection&gt; (ranked)" that is hidden from My Media and Latest like the top-list libraries (setting <em>Hide HSC libraries</em>). It is also always added to the excluded libraries of every user's other home rows (Continue Watching, library rows and so on, also rows made before it), so the copies never show twice; collection and playlist rows are left as they are.</li>
                             <li>When the list order changes, only the ranks of the copies change: a copy is added only for a new film and removed only when its film leaves the list, so nothing is rebuilt on a reorder.</li>
                             <li>Only movies are ranked: shows in the list keep their normal place after the ranked movies.</li>
+                            <li>The collection holds only its ranked copies, also with <em>Show collections on top-list items</em> on: a film that is also on a top-list keeps its normal poster here, never the rank-badge one.</li>
                             <li>Untick it (or switch the feature off) and the next sync puts the real films back and removes the copies and their library. This is experimental.</li>
                         </ul></div>
                 </div>
@@ -3114,7 +3115,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">collections_bookmark</i>
-                    <div><strong>Show collections on top-list items</strong> <span style="opacity:0.6;">(Top-lists)</span> — Adds each top-list movie to the same collections as the original, so "Included in &lt;collection&gt;" also shows when a movie is opened from a top-list. Depending on the collection's sort order, it may then show the top-list version with its rank-badge poster.</div>
+                    <div><strong>Show collections on top-list items</strong> <span style="opacity:0.6;">(Top-lists)</span> — Adds each top-list movie to the same collections as the original, so "Included in &lt;collection&gt;" also shows when a movie is opened from a top-list. Depending on the collection's sort order, it may then show the top-list version with its rank-badge poster. A ranked collection (<em>Keep the list order</em>) is left out: it keeps its own copies.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">share</i>

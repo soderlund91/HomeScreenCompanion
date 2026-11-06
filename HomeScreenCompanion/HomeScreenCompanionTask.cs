@@ -1566,8 +1566,9 @@ namespace HomeScreenCompanion
                         }
                         else
                         {
-                            // Top-list copies are managed by TopListCollectionMirror — never remove them here.
-                            var currentMembers = _libraryManager.GetItemList(new InternalItemsQuery { CollectionIds = new[] { existingColl.InternalId }, Recursive = true, IsVirtualItem = false }).Where(i => !TopListCollectionMirror.IsTopListItem(i)).Select(i => i.InternalId).ToHashSet();
+                            // Top-list copies are managed by TopListCollectionMirror — never remove them here,
+                            // except from a ranked collection: it holds only its own copies.
+                            var currentMembers = _libraryManager.GetItemList(new InternalItemsQuery { CollectionIds = new[] { existingColl.InternalId }, Recursive = true, IsVirtualItem = false }).Where(i => _ranked || !TopListCollectionMirror.IsTopListItem(i)).Select(i => i.InternalId).ToHashSet();
                             var toAdd = desiredIds.Where(id => !currentMembers.Contains(id)).ToList();
                             var toRemove = currentMembers.Where(id => !desiredIds.Contains(id)).ToList();
                             if (toAdd.Count > 0 && !dryRun)
@@ -3163,8 +3164,9 @@ namespace HomeScreenCompanion
                     }
                     else
                     {
-                        // Top-list copies are managed by TopListCollectionMirror — never remove them here.
-                        var currentMembers = _libraryManager.GetItemList(new InternalItemsQuery { CollectionIds = new[] { existingColl.InternalId }, Recursive = true, IsVirtualItem = false }).Where(i => !TopListCollectionMirror.IsTopListItem(i)).Select(i => i.InternalId).ToHashSet();
+                        // Top-list copies are managed by TopListCollectionMirror — never remove them here,
+                        // except from a ranked collection: it holds only its own copies.
+                        var currentMembers = _libraryManager.GetItemList(new InternalItemsQuery { CollectionIds = new[] { existingColl.InternalId }, Recursive = true, IsVirtualItem = false }).Where(i => _ranked || !TopListCollectionMirror.IsTopListItem(i)).Select(i => i.InternalId).ToHashSet();
                         var toAdd = desiredIds.Where(id => !currentMembers.Contains(id)).ToList();
                         var toRemove = currentMembers.Where(id => !desiredIds.Contains(id)).ToList();
                         if (toAdd.Count > 0) await _collectionManager.AddToCollection(existingColl.InternalId, toAdd.ToArray());

@@ -29,7 +29,9 @@ namespace HomeScreenCompanion
     /// items stay as they are and sort after the ranked movies.
     ///
     /// Copies live outside the top-list folder on purpose: TopListCollectionMirror keeps top-list
-    /// copies out of collections, which would undo this.
+    /// copies out of collections, which would undo this. It never mirrors a ranked copy either,
+    /// and the sync takes any top-list copy out of a ranked collection: Emby shows merged versions
+    /// as one entry, which would otherwise be the rank-badged top-list copy.
     /// </summary>
     internal static class RankedCollections
     {
