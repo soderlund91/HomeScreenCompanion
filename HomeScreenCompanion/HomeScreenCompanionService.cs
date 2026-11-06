@@ -123,6 +123,18 @@ namespace HomeScreenCompanion
         public string LibraryName { get; set; } = "";
         public int? LibraryYear { get; set; }
         public string ItemType { get; set; } = "";
+        // From the list, for the poster of a title not in the library (MissingPosters).
+        public string Tmdb { get; set; } = "";
+        public string ListType { get; set; } = "";   // "movie", "show" or "" (the list does not say)
+    }
+
+    // Posters (and year / type) of list titles not in the library, for the source test popup.
+    // Asked of TMDb with the TMDb key in Settings, else of Emby's metadata search; the key stays here.
+    [Route("/HomeScreenCompanion/MissingPosters", "POST")]
+    [Authenticated(Roles = "Admin")]
+    public class MissingPostersRequest : IReturn<List<MissingPosters.Result>>
+    {
+        public List<MissingPosters.Title> Titles { get; set; } = new List<MissingPosters.Title>();
     }
 
     public class StatusResponse
@@ -1252,6 +1264,13 @@ public class HomeScreenCompanionService : IService
             }
         }
 
+        public async Task<object> Post(MissingPostersRequest request)
+        {
+            var key = (Plugin.Instance?.Configuration?.TmdbApiKey ?? "").Trim();
+            return await MissingPosters.LookUpAsync(request.Titles ?? new List<MissingPosters.Title>(), key,
+                _providerManager, _httpClient, _jsonSerializer, CancellationToken.None).ConfigureAwait(false);
+        }
+
         public async Task<object> Get(TestUrlRequest request)
         {
             var config = Plugin.Instance?.Configuration;
@@ -1270,7 +1289,13 @@ public class HomeScreenCompanionService : IService
                 }
 
                 var library = BuildTestLibraryIndex();
-                var results = items.Select(i => MatchTestItem(library, i.Name, null, i.Imdb, false)).ToList();
+                var results = items.Select(i =>
+                {
+                    var r = MatchTestItem(library, i.Name, i.Year, i.Imdb, false);
+                    r.Tmdb = i.Tmdb ?? "";
+                    r.ListType = i.Type ?? "";
+                    return r;
+                }).ToList();
                 int inLibrary = results.Count(r => r.InLibrary);
 
                 return new TestUrlResponse
@@ -1855,7 +1880,13 @@ public class HomeScreenCompanionService : IService
 
                 var library = BuildTestLibraryIndex();
                 var results = aiItems.Where(i => !string.IsNullOrWhiteSpace(i.title))
-                    .Select(i => MatchTestItem(library, i.title, i.year, i.imdb_id, true)).ToList();
+                    .Select(i =>
+                    {
+                        var r = MatchTestItem(library, i.title, i.year, i.imdb_id, true);
+                        var t = (i.type ?? "").Trim().ToLowerInvariant();
+                        r.ListType = t == "movie" ? "movie" : t == "show" || t == "series" || t == "tv" ? "show" : "";
+                        return r;
+                    }).ToList();
                 int inLibrary = results.Count(r => r.InLibrary);
 
                 return new TestAiSourceResponse

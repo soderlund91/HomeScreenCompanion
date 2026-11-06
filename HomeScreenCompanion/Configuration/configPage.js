@@ -5509,19 +5509,23 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var filter = 'all';
 
             function rowHtml(item, idx) {
+                // A missing title's poster, year and type come from lookUpMissing (TMDb or Emby's metadata search).
                 var poster = item.InLibrary && item.LibraryItemId
                     ? '<div class="stm-poster" style="background-image:url(&quot;' + esc(window.ApiClient.getImageUrl(item.LibraryItemId, { type: 'Primary', maxHeight: 100 })) + '&quot;)"></div>'
-                    : '<div class="stm-poster"><i class="md-icon">movie</i></div>';
-                var year = item.Year || item.LibraryYear;
+                    : item._poster
+                        ? '<div class="stm-poster" style="background-image:url(&quot;' + esc(item._poster) + '&quot;)"></div>'
+                        : '<div class="stm-poster"><i class="md-icon">movie</i></div>';
+                var year = item.Year || item.LibraryYear || item._year;
+                var type = item.ItemType || (item.ListType === 'show' || item._type === 'show' ? 'Series' : item.ListType === 'movie' || item._type === 'movie' ? 'Movie' : '');
                 var meta = [];
                 if (year) meta.push(year);
-                if (item.ItemType) meta.push(item.ItemType === 'Series' ? 'Series' : 'Movie');
+                if (type) meta.push(type === 'Series' ? 'Series' : 'Movie');
                 if (item.Imdb) meta.push('<a href="https://www.imdb.com/title/' + encodeURIComponent(item.Imdb) + '/" target="_blank" rel="noopener">' + esc(item.Imdb) + '</a>');
                 else meta.push('no IMDb id');
                 if (item.MatchedByTitle) meta.push('matched by title');
                 if (item.InLibrary && item.LibraryName && item.LibraryName.toLowerCase() !== (item.Name || '').toLowerCase())
                     meta.push('as “' + esc(item.LibraryName) + '”');
-                return '<div class="stm-row ' + (item.InLibrary ? 'found' : 'missing') + '" style="animation-delay:' + Math.min(idx * 15, 400) + 'ms">' +
+                return '<div class="stm-row ' + (item.InLibrary ? 'found' : 'missing') + '" data-idx="' + idx + '" style="animation-delay:' + Math.min(idx * 15, 400) + 'ms">' +
                     '<div class="stm-rank">' + (idx + 1) + '</div>' +
                     poster +
                     '<div class="stm-info">' +
@@ -5534,6 +5538,46 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '</div>';
             }
 
+            // Posters (and a missing year / type) of the titles not in the library, asked of the server
+            // in list order, 25 at a time, after the list is drawn. Each answer is kept on the item, so the
+            // rows keep it when a filter chip redraws the list.
+            function lookUpMissing(items) {
+                var todo = items.filter(function (i) { return !i.InLibrary && (i.Imdb || i.Tmdb); });
+                function redraw(item) {
+                    var idx = items.indexOf(item);
+                    var el = body.querySelector('.stm-row[data-idx="' + idx + '"]');
+                    if (!el) return;
+                    var tmp = document.createElement('div');
+                    tmp.innerHTML = rowHtml(item, idx);
+                    var fresh = tmp.firstChild;
+                    fresh.style.animation = 'none';
+                    el.parentNode.replaceChild(fresh, el);
+                }
+                function next() {
+                    if (!todo.length || !document.body.contains(overlay)) return;
+                    var chunk = todo.splice(0, 25);
+                    window.ApiClient.ajax({
+                        type: 'POST',
+                        url: window.ApiClient.getUrl('HomeScreenCompanion/MissingPosters'),
+                        data: JSON.stringify({ Titles: chunk.map(function (i) { return { Imdb: i.Imdb || '', Tmdb: i.Tmdb || '', Type: i.ListType || '', Name: i.Name || '' }; }) }),
+                        contentType: 'application/json',
+                        dataType: 'json'
+                    }).then(function (answers) {
+                        (answers || []).forEach(function (a) {
+                            chunk.forEach(function (i) {
+                                if ((a.Imdb && a.Imdb === i.Imdb) || (!a.Imdb && !i.Imdb && a.Tmdb && a.Tmdb === i.Tmdb)) {
+                                    if (a.ImageUrl) i._poster = a.ImageUrl;
+                                    if (a.Year) i._year = a.Year;
+                                    if (a.Type) i._type = a.Type;
+                                    redraw(i);
+                                }
+                            });
+                        });
+                        next();
+                    }).catch(function () { });
+                }
+                next();
+            }
             function renderList() {
                 var html = '';
                 items.forEach(function (item, idx) {
@@ -5568,6 +5612,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 renderList();
             });
             renderList();
+            lookUpMissing(items);
             requestAnimationFrame(function () {
                 requestAnimationFrame(function () { body.querySelector('.stm-bar-fill').style.width = pct + '%'; });
             });
