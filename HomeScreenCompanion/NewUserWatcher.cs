@@ -70,6 +70,8 @@ namespace HomeScreenCompanion
                     .Any(t => !string.IsNullOrEmpty(t.HomeSectionLibraryId) && t.HomeSectionLibraryId != "auto")
                     || RankedCollections.LibraryIds(_libraryManager).Any();
                 if (!any) return;
+                // Dry run: the next top-list section sync after it is switched off hides them.
+                if (DryRun.On) { _logger.Info($"[Dry run] New user '{userName}': HSC libraries would be {(config.HideTopListLibraries ? "hidden from" : "shown in")} My Media and Latest"); return; }
                 int changed = TopListSyncTask.HideLibraries(config, _userManager, _libraryManager, _logger, m => _logger.Warn(m));
                 if (changed > 0)
                     _logger.Info($"New user '{userName}': HSC libraries {(config.HideTopListLibraries ? "hidden from" : "shown in")} My Media and Latest");

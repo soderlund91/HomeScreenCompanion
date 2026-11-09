@@ -83,9 +83,19 @@ namespace HomeScreenCompanion
             try
             {
                 _log.Info($"» Merging top-list versions with library  ·  {startTime:yyyy-MM-dd HH:mm}");
-                var merged = MergeAll(_libraryManager, _providerManager, _fileSystem, cancellationToken);
+                bool dry = Plugin.Instance?.Configuration?.DryRunMode == true;
+                if (dry) _log.Warn(DryRun.Header);
+                var merged = MergeAll(_libraryManager, _providerManager, _fileSystem, cancellationToken, dry);
                 // Bring collection memberships of all copies in line with the setting (mirror or clear).
-                var collChanges = TopListCollectionMirror.SyncAll(cancellationToken).GetAwaiter().GetResult();
+                var collChanges = TopListCollectionMirror.SyncAll(cancellationToken, dry).GetAwaiter().GetResult();
+                if (dry)
+                {
+                    LastRunStatus = $"Dry run — {merged} item(s) would be linked.";
+                    _log.Ok($"Dry run: {RunLog.Plural(merged, "top-list item")} would be linked to library movies  ·  {RunLog.Elapsed(DateTime.Now - startTime)}");
+                    if (collChanges > 0)
+                        _log.Ok($"Dry run: {RunLog.Plural(collChanges, "collection membership")} would be updated on top-list items");
+                    return Task.CompletedTask;
+                }
                 LastRunStatus = $"Done — {merged} item(s) linked.";
                 _log.Ok($"{RunLog.Plural(merged, "top-list item")} linked to library movies  ·  {RunLog.Elapsed(DateTime.Now - startTime)}");
                 if (collChanges > 0)
@@ -103,7 +113,8 @@ namespace HomeScreenCompanion
             return Task.CompletedTask;
         }
 
-        internal static int MergeAll(ILibraryManager libraryManager, IProviderManager providerManager, IFileSystem fileSystem, CancellationToken cancellationToken)
+        // dry: counts (and logs) the copies that are not linked yet, without linking or probing.
+        internal static int MergeAll(ILibraryManager libraryManager, IProviderManager providerManager, IFileSystem fileSystem, CancellationToken cancellationToken, bool dry = false)
         {
             var dataPath = Plugin.Instance?.DataFolderPath;
             if (string.IsNullOrEmpty(dataPath)) return 0;
@@ -153,6 +164,14 @@ namespace HomeScreenCompanion
                 if (string.IsNullOrEmpty(imdb)) continue;
                 if (!origLookup.TryGetValue(imdb, out var primary)) continue;
                 if (li.Id == primary.Id) continue;
+
+                if (dry)
+                {
+                    if (primary is Video pv && pv.GetAlternateVersionIds().Contains(li.InternalId)) continue;
+                    merged++;
+                    _log.Debug($"  [Dry run] '{li.Name}' would be linked to '{primary.Name}'");
+                    continue;
+                }
 
                 try
                 {

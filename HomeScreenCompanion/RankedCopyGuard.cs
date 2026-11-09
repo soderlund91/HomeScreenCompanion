@@ -112,9 +112,11 @@ namespace HomeScreenCompanion
                         }
                     }
                     var fixedIds = new List<long>();
+                    // Dry run: only logged; nothing is fixed, so there is no recheck either.
+                    bool dry = DryRun.On;
                     foreach (var id in ids)
                     {
-                        try { if (Heal(id)) fixedIds.Add(id); }
+                        try { if (Heal(id, dry)) fixedIds.Add(id); }
                         catch (Exception ex) { _logger?.Warn($"[Ranked] Ranked copy {id} could not be checked: {ex.Message}"); }
                     }
                     if (fixedIds.Count > 0)
@@ -127,8 +129,8 @@ namespace HomeScreenCompanion
 
         // Puts one copy back in its collection, merges it with its film and gives it the film's
         // images again when needed.
-        // True when something was fixed.
-        private static bool Heal(long copyId)
+        // True when something was fixed. dry: logs what it would fix and changes nothing (false).
+        private static bool Heal(long copyId, bool dry)
         {
             var lm = _libraryManager!;
             var copy = lm.GetItemById(copyId);
@@ -175,7 +177,9 @@ namespace HomeScreenCompanion
                         AnyProviderIdEquals = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>("Imdb", filmImdb!) }
                     }).Where(t => TopListCollectionMirror.IsTopListItem(t) && !group.Contains(t.InternalId)
                                && string.Equals(t.GetProviderId("Imdb"), filmImdb, StringComparison.OrdinalIgnoreCase)));
-                if (parts.Count > 1)
+                if (parts.Count > 1 && dry)
+                    _logger?.Info($"[Ranked] [Dry run] '{copy.Name}': {RunLog.Plural(parts.Count - 1, "version")} would be merged with the film again");
+                else if (parts.Count > 1)
                 {
                     lm.MergeItems(parts.ToArray());
                     _logger?.Info($"[Ranked] '{copy.Name}': {RunLog.Plural(parts.Count - 1, "version")} merged with the film again");
@@ -191,7 +195,9 @@ namespace HomeScreenCompanion
                 var coll = lm.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = collName, Recursive = true })
                     .OfType<BoxSet>().FirstOrDefault();
                 var fresh = lm.GetItemById(copyId) ?? copy;
-                if (coll != null && !(fresh.Collections ?? Array.Empty<MediaBrowser.Model.Dto.LinkedItemInfo>()).Any(c => c != null && c.Id == coll.InternalId))
+                if (coll != null && dry && !(fresh.Collections ?? Array.Empty<MediaBrowser.Model.Dto.LinkedItemInfo>()).Any(c => c != null && c.Id == coll.InternalId))
+                    _logger?.Info($"[Ranked] [Dry run] '{copy.Name}' is not in collection '{collName}': would be added again");
+                else if (coll != null && !(fresh.Collections ?? Array.Empty<MediaBrowser.Model.Dto.LinkedItemInfo>()).Any(c => c != null && c.Id == coll.InternalId))
                 {
                     _collectionManager!.AddToCollection(coll.InternalId, new[] { copyId }).GetAwaiter().GetResult();
                     _logger?.Info($"[Ranked] '{copy.Name}' was no longer in collection '{collName}': added again");
@@ -209,7 +215,10 @@ namespace HomeScreenCompanion
             {
                 var freshCopy = lm.GetItemById(copyId);
                 var freshFilm = lm.GetItemById(film.InternalId) ?? film;
-                if (freshCopy != null && RankedCollections.MatchFilmImages(freshCopy, freshFilm))
+                // (MatchFilmImages only changes the object read here; it is saved below, never in a dry run.)
+                if (freshCopy != null && dry && RankedCollections.MatchFilmImages(freshCopy, freshFilm))
+                    _logger?.Info($"[Ranked] [Dry run] '{copy.Name}': images would be restored from the film");
+                else if (freshCopy != null && !dry && RankedCollections.MatchFilmImages(freshCopy, freshFilm))
                 {
                     lm.UpdateItem(freshCopy, freshCopy.Parent, ItemUpdateType.MetadataEdit, null);
                     _logger?.Info($"[Ranked] '{copy.Name}': images restored from the film");

@@ -47,6 +47,8 @@ namespace HomeScreenCompanion
             {
                 var config = Plugin.Instance?.Configuration;
                 if (config?.TopLists == null || config.TopLists.Count == 0) return;
+                // Dry run: the next top-list section sync after it is switched off does it.
+                if (config.DryRunMode) { _logger.Info($"[LibraryAccess] [Dry run] Top-list library access would be checked after '{libName}' was added"); return; }
                 try
                 {
                     TopListSyncTask.GrantTopListLibraryAccess(config.TopLists, _userManager, _libraryManager, _logger);

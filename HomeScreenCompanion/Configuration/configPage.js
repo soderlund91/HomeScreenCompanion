@@ -14228,7 +14228,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
 
             if (!view.querySelector('.dry-run-warning')) {
-                view.insertAdjacentHTML('afterbegin', '<div class="dry-run-warning"><i class="md-icon" style="font-size:1.4em;color:var(--hsc-warning-text);"></i>DRY RUN MODE IS ACTIVE - NO CHANGES WILL BE SAVED</div>');
+                view.insertAdjacentHTML('afterbegin', '<div class="dry-run-warning"><i class="md-icon" style="font-size:1.4em;color:var(--hsc-warning-text);"></i>DRY RUN MODE IS ACTIVE - SYNCS AND TASKS CHANGE NOTHING</div>');
             }
 
             var btnSave = view.querySelector('.btn-save');

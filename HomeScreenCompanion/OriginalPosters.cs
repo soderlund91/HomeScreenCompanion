@@ -157,7 +157,8 @@ namespace HomeScreenCompanion
 
         // False when the run was stopped for a restore (it is started again).
         internal static async Task<bool> RunAsync(PluginConfiguration config, ILibraryManager libraryManager, IProviderManager providerManager,
-            IFileSystem fileSystem, IHttpClient http, IJsonSerializer json, RunLog log, IProgress<double>? progress, CancellationToken cancellationToken)
+            IFileSystem fileSystem, IHttpClient http, IJsonSerializer json, RunLog log, IProgress<double>? progress, CancellationToken cancellationToken,
+            bool dryRun = false)
         {
             await Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -165,7 +166,7 @@ namespace HomeScreenCompanion
             _interrupted = false;
             try
             {
-                await RunLockedAsync(config, libraryManager, providerManager, fileSystem, http, json, log, progress, cts.Token).ConfigureAwait(false);
+                await RunLockedAsync(config, libraryManager, providerManager, fileSystem, http, json, log, progress, cts.Token, dryRun).ConfigureAwait(false);
                 return true;
             }
             catch (OperationCanceledException) when (_interrupted && !cancellationToken.IsCancellationRequested)
@@ -181,8 +182,11 @@ namespace HomeScreenCompanion
             }
         }
 
+        // dry: posters are looked up but not saved, nothing is restored, and only the original-language
+        // cache (state.Languages, what TMDb said) is kept; the log says what would change.
         private static async Task RunLockedAsync(PluginConfiguration config, ILibraryManager libraryManager, IProviderManager providerManager,
-            IFileSystem fileSystem, IHttpClient http, IJsonSerializer json, RunLog log, IProgress<double>? progress, CancellationToken cancellationToken)
+            IFileSystem fileSystem, IHttpClient http, IJsonSerializer json, RunLog log, IProgress<double>? progress, CancellationToken cancellationToken,
+            bool dry = false)
         {
             var wanted = Wanted(config);
             if (wanted.Count == 0) { log.Skip("No languages are chosen — nothing to do"); return; }
@@ -299,7 +303,7 @@ namespace HomeScreenCompanion
                     touched[item.Id.ToString("N")] = true;
                     try
                     {
-                        await ApplyOneAsync(item, kind, title, lang, options, applied, checkedMap, providerManager, libraryManager, directory, counts, log, cancellationToken).ConfigureAwait(false);
+                        await ApplyOneAsync(item, kind, title, lang, options, applied, checkedMap, providerManager, libraryManager, directory, counts, log, cancellationToken, dry).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex)
@@ -328,6 +332,7 @@ namespace HomeScreenCompanion
                             progress?.Report(30.0 + 70.0 * done / Math.Max(1, targets.Count));
                         }
                     })).ConfigureAwait(false);
+                    if (dry) continue;
                     state.Applied = applied.Values.ToList();
                     state.Checked = checkedMap.Values.ToList();
                     Save(state, json);
@@ -339,8 +344,15 @@ namespace HomeScreenCompanion
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var item = libraryManager.GetItemById(Guid.ParseExact(a.ItemId, "N"));
+                    if (item == null && dry) continue;
                     if (item == null) { DropBackup(a); applied.TryRemove(a.ItemId, out _); continue; }
                     if (excluded.Contains(a.ItemId) || excluded.Contains(a.SeriesId)) continue;   // restored by the user already handles it
+                    if (dry)
+                    {
+                        counts.Restored++;
+                        log.Detail($"[Dry run] {Label(item)}: original poster would be put back (no longer chosen)");
+                        continue;
+                    }
                     try
                     {
                         if (await RestoreOneAsync(item, a, providerManager, libraryManager, directory, cancellationToken).ConfigureAwait(false))
@@ -353,17 +365,28 @@ namespace HomeScreenCompanion
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex) { counts.Failed++; log.Debug($"  {Label(item)}: could not restore: {ex.Message}"); }
                 }
-                state.LastRunUtc = DateTime.UtcNow;
+                if (!dry) state.LastRunUtc = DateTime.UtcNow;
             }
             finally
             {
-                state.Applied = applied.Values.ToList();
-                state.Checked = checkedMap.Values.ToList();
-                Save(state, json);
+                if (!dry)
+                {
+                    state.Applied = applied.Values.ToList();
+                    state.Checked = checkedMap.Values.ToList();
+                    Save(state, json);
+                }
             }
 
-            if (counts.Applied > 0) log.Ok($"{RunLog.Plural(counts.Applied, "poster")} changed to the original language");
-            if (counts.Restored > 0) log.Ok($"{RunLog.Plural(counts.Restored, "original poster")} put back");
+            if (dry)
+            {
+                if (counts.Applied > 0) log.Ok($"Dry run: {RunLog.Plural(counts.Applied, "poster")} would be changed to the original language");
+                if (counts.Restored > 0) log.Ok($"Dry run: {RunLog.Plural(counts.Restored, "original poster")} would be put back");
+            }
+            else
+            {
+                if (counts.Applied > 0) log.Ok($"{RunLog.Plural(counts.Applied, "poster")} changed to the original language");
+                if (counts.Restored > 0) log.Ok($"{RunLog.Plural(counts.Restored, "original poster")} put back");
+            }
             log.Info($"  {RunLog.Plural(counts.Kept, "poster")} already in place  ·  {counts.NotFound} with no poster in the language" +
                      (counts.Failed > 0 ? $"  ·  {counts.Failed} failed (see the debug log)" : ""));
         }
@@ -381,7 +404,7 @@ namespace HomeScreenCompanion
         private static async Task ApplyOneAsync(BaseItem item, string kind, BaseItem title, string lang, LibraryOptions options,
             ConcurrentDictionary<string, Applied> applied, ConcurrentDictionary<string, Checked> checkedMap,
             IProviderManager providerManager, ILibraryManager libraryManager, IDirectoryService directory,
-            Counts counts, RunLog log, CancellationToken cancellationToken)
+            Counts counts, RunLog log, CancellationToken cancellationToken, bool dry = false)
         {
             var id = item.Id.ToString("N");
             var current = item.GetImageInfo(ImageType.Primary, 0);
@@ -392,6 +415,12 @@ namespace HomeScreenCompanion
                 {
                     if (had.TitleInternalId == 0) had.TitleInternalId = title.InternalId;
                     Interlocked.Increment(ref counts.Kept);
+                    return;
+                }
+                if (dry)
+                {
+                    Interlocked.Increment(ref counts.Applied);
+                    log.Detail($"[Dry run] {Label(item)}: the {LanguageName(lang)} poster was replaced — would be put back");
                     return;
                 }
                 // Replaced since (an image refresh): the same poster goes back, without asking the providers again.
@@ -416,6 +445,12 @@ namespace HomeScreenCompanion
                 return;
             }
             checkedMap.TryRemove(checkKey, out _);
+            if (dry)
+            {
+                Interlocked.Increment(ref counts.Applied);
+                log.Detail($"[Dry run] {Label(item)}: would get the {LanguageName(lang)} poster ({pick.ProviderName})");
+                return;
+            }
             await SaveAsync(item, pick.Url, pick.ProviderName ?? "", kind, title, lang, current, options, applied, providerManager, libraryManager, directory, cancellationToken, keepBackup: had != null).ConfigureAwait(false);
             Interlocked.Increment(ref counts.Applied);
             log.Detail($"{Label(item)}: {LanguageName(lang)} poster ({pick.ProviderName})");

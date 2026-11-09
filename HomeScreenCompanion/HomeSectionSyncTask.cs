@@ -112,6 +112,25 @@ namespace HomeScreenCompanion
                 _log.Info($"Home Screen Sync  ·  {startTime:yyyy-MM-dd HH:mm}");
                 _log.Rule();
 
+                // Dry run: the whole run works on a copy of the settings (memberships, tracking and
+                // HomeSyncAdditions change only there and are never saved), every write to Emby is
+                // only logged, and a rotating row's turn is not moved on.
+                _dry = config.DryRunMode;
+                if (_dry)
+                {
+                    _log.Warn(DryRun.Header);
+                    PluginConfiguration? copy = null;
+                    try { copy = _jsonSerializer.DeserializeFromString<PluginConfiguration>(_jsonSerializer.SerializeToString(config)); }
+                    catch (Exception ex) { _log.Debug($"  Settings could not be copied: {ex.Message}"); }
+                    if (copy == null)
+                    {
+                        _log.Error("Dry run: the settings could not be copied for the simulation — nothing done");
+                        LastSyncResult = "Dry run failed.";
+                        return Task.CompletedTask;
+                    }
+                    config = copy;
+                }
+
                 if (!config.HomeSyncEnabled)
                 {
                     _log.Skip("Home Screen Sync is disabled in Settings — nothing to do");
@@ -160,13 +179,17 @@ namespace HomeScreenCompanion
 
                 int usersDone = totals.Targets - totals.Skipped - totals.Failed;
                 int sourceCount = sourceKeys.Count;   // several profiles may share a source user
-                LastSectionsCopied = totals.Copied;
-                LastSyncTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
-                LastSyncResult = $"OK — {totals.Copied} section(s) copied to {totals.Targets - totals.Skipped} user(s)"
+                if (!_dry)
+                {
+                    LastSectionsCopied = totals.Copied;
+                    LastSyncTime = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
+                }
+                LastSyncResult = (_dry ? $"Dry run — {totals.Copied} section(s) would be copied to {totals.Targets - totals.Skipped} user(s)"
+                                       : $"OK — {totals.Copied} section(s) copied to {totals.Targets - totals.Skipped} user(s)")
                     + (sourceCount > 1 ? $" from {sourceCount} source users." : ".");
                 _log.Rule();
-                _log.Info("Summary");
-                _log.Info($"  Sections:      {totals.Copied} copied to {RunLog.Plural(usersDone, "user")}{(sourceCount > 1 ? $" from {RunLog.Plural(sourceCount, "source user")}" : "")}{(totals.Failed > 0 ? $", {RunLog.Plural(totals.Failed, "user")} failed" : "")}");
+                _log.Info(_dry ? "Summary (dry run: nothing was changed)" : "Summary");
+                _log.Info($"  Sections:      {totals.Copied} {(_dry ? "would be copied" : "copied")} to {RunLog.Plural(usersDone, "user")}{(sourceCount > 1 ? $" from {RunLog.Plural(sourceCount, "source user")}" : "")}{(totals.Failed > 0 ? $", {RunLog.Plural(totals.Failed, "user")} failed" : "")}");
                 if (userStatus.SummaryLine() is string disabledLine) _log.Info("  " + disabledLine);
                 _log.Info($"  Done in {RunLog.Elapsed(DateTime.Now - startTime)}  ·  {(totals.Failed > 0 ? "✖ Completed with " + RunLog.Plural(totals.Failed, "error") : "✔ Completed")}");
                 _log.Rule();
@@ -206,12 +229,20 @@ namespace HomeScreenCompanion
         }
         private readonly List<MemberOp> _memberOps = new List<MemberOp>();
 
+        // This run is a dry run (set at its start; see ExecuteCore).
+        private bool _dry;
+
+        // A log line about a change: marked when the run only simulates it.
+        private string D(string text) => _dry ? "[Dry run] " + text : text;
+
         // Saves what this run changed. The run works on the settings it started with: when they
         // were saved on the page meanwhile, the server holds a new copy, so the run's membership
         // changes and its record of them (HomeSyncAdditions) are carried over to it first. Row
         // tracking is not: the next run finds the rows again.
         private void SaveRunChanges(PluginConfiguration config)
         {
+            // Dry run: the changes were made on a copy of the settings and go nowhere.
+            if (_dry) { _log.Debug("Dry run — the settings are not saved"); return; }
             var plugin = Plugin.Instance;
             if (plugin == null) return;
             var live = plugin.Configuration;
@@ -330,6 +361,12 @@ namespace HomeScreenCompanion
                         if (!managed.IsTopListUser(tl, targetKey)) continue;
                         var before = _userManager.GetHomeSections(targetInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>();
                         var row = before.FirstOrDefault(s => managed.TopListRow(s) == tl);
+                        if (row == null && _dry)
+                        {
+                            _log.Debug($"  [Dry run] {targetName}: + top-list row of '{tl.TagName}' would be added (they have none)");
+                            copiedHere++;
+                            continue;
+                        }
                         if (row == null)
                         {
                             _userManager.AddHomeSection(targetInternalId, managed.NewTopListRow(tl, _jsonSerializer, _libraryManager), cancellationToken);
@@ -355,7 +392,7 @@ namespace HomeScreenCompanion
                     if (TrackSourceRows(config, managed, targetIdStr, targetInternalId, cancellationToken))
                         totals.ConfigChanged = true;
 
-                    _log.Ok($"{targetName}: {RunLog.Plural(copiedHere, selectedOnly ? "selected row" : "section")} copied"
+                    _log.Ok($"{targetName}: {RunLog.Plural(copiedHere, selectedOnly ? "selected row" : "section")} {(_dry ? "would be copied" : "copied")}"
                         + (notCopied.Count > 0 ? $"  ·  not copied: {string.Join(", ", notCopied)}" : ""));
                 }
                 catch (Exception ex)
@@ -418,10 +455,13 @@ namespace HomeScreenCompanion
                 if (tc != null && !managed.MasterHasSourceRow(config, tc, sourceKey, masterSections) && !kept.Any(k => k.Source == tc))
                     kept.Add(new KeptRow { Index = idx, Row = s, Source = tc, PositionKey = SourceRowKey(tc) });
             }
-            foreach (var k in kept)
-                HomeScreenCompanionTask.RememberRowPosition(_userManager, _jsonSerializer, k.PositionKey, targetIdStr, targetInternalId, k.Row.Id, cancellationToken);
+            if (!_dry)
+                foreach (var k in kept)
+                    HomeScreenCompanionTask.RememberRowPosition(_userManager, _jsonSerializer, k.PositionKey, targetIdStr, targetInternalId, k.Row.Id, cancellationToken);
 
-            if (existingSections.Length > 0)
+            if (existingSections.Length > 0 && _dry)
+                _log.Debug($"  [Dry run] {targetName}: {existingSections.Length} existing sections would be replaced");
+            else if (existingSections.Length > 0)
             {
                 _log.Debug($"  {targetName}: replacing {existingSections.Length} existing sections");
                 var idsToDelete = existingSections
@@ -437,7 +477,8 @@ namespace HomeScreenCompanion
             {
                 var copy = PrepareCopy(config, managed, section, sourceKey, targetIdStr, targetKey, targetName, notCopied);
                 if (copy == null) continue;
-                _log.Debug($"  {targetName}: + [{section.SectionType}] \"{copy.CustomName ?? copy.Name}\"");
+                _log.Debug(D($"  {targetName}: + [{section.SectionType}] \"{copy.CustomName ?? copy.Name}\""));
+                if (_dry) { totals.Copied++; copiedHere++; continue; }
                 var rotating = managed.RotatingRowOf(section, sourceKey);
                 var beforeAdd = rotating != null ? _userManager.GetHomeSections(targetInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>() : null;
                 _userManager.AddHomeSection(targetInternalId, copy, cancellationToken);
@@ -454,6 +495,8 @@ namespace HomeScreenCompanion
                 ContentSection? row = k.Source != null
                     ? before.FirstOrDefault(s => managed.TopListRow(s) == null && managed.SourceRow(config, s, targetKey) == k.Source)
                     : null;
+                // Dry run: nothing was replaced, so the kept row is still there as it was.
+                if (_dry) { _log.Debug($"  [Dry run] {targetName}: = '{k.Row.CustomName ?? k.Row.Name}' would be kept ({(k.Source != null ? "source row; the master is not one of its users" : "top-list row")})"); continue; }
                 if (row == null)
                 {
                     _userManager.AddHomeSection(targetInternalId, CopySection(k.Row), cancellationToken);
@@ -518,7 +561,13 @@ namespace HomeScreenCompanion
                     }
                 }
                 else match = current.FirstOrDefault(s => !done.Contains(s.Id ?? "") && IsRow(config, managed, s, key, targetKey, sourceKey));
-                if (match != null)
+                if (_dry)
+                {
+                    if (match != null) done.Add(match.Id ?? "");
+                    _log.Debug(match != null ? $"  [Dry run] {targetName}: = '{label}' would be updated"
+                                             : $"  [Dry run] {targetName}: + [{section.SectionType}] \"{label}\" would be added");
+                }
+                else if (match != null)
                 {
                     typeof(ContentSection).GetProperty("Id")?.SetValue(copy, match.Id);
                     _userManager.UpdateHomeSection(targetInternalId, copy, cancellationToken);
@@ -575,7 +624,7 @@ namespace HomeScreenCompanion
                     notCopied.Add($"'{title}' (rotating row: not one of its users)");
                     return null;
                 }
-                var pick = RotatingRow.PickFor(rotating, targetIdStr, RotatingRow.Turn(rotating, _userManager, _libraryManager, _jsonSerializer), _userManager, _libraryManager, _jsonSerializer);
+                var pick = RotatingRow.PickFor(rotating, targetIdStr, RotatingRow.Turn(rotating, _userManager, _libraryManager, _jsonSerializer, save: !_dry), _userManager, _libraryManager, _jsonSerializer);
                 if (pick == null)
                 {
                     _log.Debug($"  {targetName}: – '{title}' skipped (rotating row: nothing in its list they may see)");
@@ -660,7 +709,9 @@ namespace HomeScreenCompanion
                     var goneKeys = new HashSet<string>(removed.Where(a => !ById(a)).Select(a => a.Key), StringComparer.OrdinalIgnoreCase);
                     var rows = (_userManager.GetHomeSections(targetInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>())
                         .Where(s => !string.IsNullOrEmpty(s.Id) && (goneIds.Contains(s.Id) || goneKeys.Any(k => IsRow(config, managed, s, k, targetKey, sourceKey)))).ToList();
-                    if (rows.Count > 0)
+                    if (rows.Count > 0 && _dry)
+                        foreach (var s in rows) _log.Skip($"[Dry run] {targetName}: '{s.CustomName ?? s.Name}' row would be removed (no longer selected)");
+                    else if (rows.Count > 0)
                     {
                         _userManager.DeleteHomeSections(targetInternalId, rows.Select(s => s.Id).ToArray(), cancellationToken);
                         foreach (var s in rows) _log.Skip($"{targetName}: removed '{s.CustomName ?? s.Name}' row (no longer selected)");
@@ -669,7 +720,7 @@ namespace HomeScreenCompanion
                 foreach (var a in gone)
                 {
                     if (a.List != HomeSyncAddition.Row && RemoveMember(config, managed, a.Key, a.List, targetKey, untrack: true))
-                        _log.Info($"  {targetName}: taken off {ListLabel(a.Key, a.List)} again (no longer gets that row through Copy & Sync)");
+                        _log.Info(D($"  {targetName}: taken off {ListLabel(a.Key, a.List)} again (no longer gets that row through Copy & Sync)"));
                     additions.Remove(a);
                 }
                 changed = true;
@@ -707,7 +758,7 @@ namespace HomeScreenCompanion
                         continue;
                     }
                     if (RemoveMember(config, managed, key, HomeSyncAddition.Home, targetKey, untrack: true))
-                        _log.Info($"  {targetName}: taken off {ListLabel(key, HomeSyncAddition.Home)} (exact copy of {sourceName}'s home screen)");
+                        _log.Info(D($"  {targetName}: taken off {ListLabel(key, HomeSyncAddition.Home)} (exact copy of {sourceName}'s home screen)"));
                     additions.RemoveAll(a => NormId(a.UserId) == targetKey && string.Equals(a.Key, key, StringComparison.OrdinalIgnoreCase));
                     changed = true;
                 }
@@ -778,7 +829,7 @@ namespace HomeScreenCompanion
                 var additions = config.HomeSyncAdditions ??= new List<HomeSyncAddition>();
                 if (!HasAddition(additions, list, key, userKey))
                     additions.Add(new HomeSyncAddition { List = list, Key = key, UserId = userId });
-                _log.Info($"  {targetName}: added to {ListLabel(key, list)} (gets that row from {sourceName})");
+                _log.Info(D($"  {targetName}: added to {ListLabel(key, list)} (gets that row from {sourceName})"));
                 changed = true;
             }
             if (changed)
@@ -913,7 +964,7 @@ namespace HomeScreenCompanion
                 var u = NormId(a.UserId);
                 bool keepRow = !ownPlaylist.Contains(u + "|" + a.Key);
                 if (a.List != HomeSyncAddition.Row && RemoveMember(config, managed, a.Key, a.List, u, untrack: keepRow))
-                    _log.Info($"  {UserName(u)}: taken off {ListLabel(a.Key, a.List)} again (Copy & Sync added them){(keepRow && a.List == HomeSyncAddition.Home ? " — their row stays" : "")}");
+                    _log.Info(D($"  {UserName(u)}: taken off {ListLabel(a.Key, a.List)} again (Copy & Sync added them){(keepRow && a.List == HomeSyncAddition.Home ? " — their row stays" : "")}"));
                 additions.Remove(a);
             }
             totals.ConfigChanged = true;
@@ -1031,6 +1082,7 @@ namespace HomeScreenCompanion
                         if (targetUser == null) continue;
                         var targetConf = _userManager.GetUserConfiguration(targetUser);
                         if (targetConf == null) continue;
+                        if (_dry) { _log.Ok($"[Dry run] {targetName}: library order would be copied"); continue; }
                         targetConf.OrderedViews = sourceConf.OrderedViews;
                         _userManager.UpdateConfiguration(_userManager.GetInternalId(targetIdStr), targetConf);
                         _log.Ok($"{targetName}: library order copied");

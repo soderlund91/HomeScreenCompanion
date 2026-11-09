@@ -37,7 +37,8 @@ namespace HomeScreenCompanion
     internal static class TopListLibraryVisibility
     {
         // Returns the users whose My Media / Latest visibility changed; ranked rows are reported through info.
-        public static int Apply(PluginConfiguration config, IUserManager userManager, ILibraryManager libraryManager, Action<string>? log = null, Action<string>? info = null)
+        // dry: counts the users and rows that would change, without changing them.
+        public static int Apply(PluginConfiguration config, IUserManager userManager, ILibraryManager libraryManager, Action<string>? log = null, Action<string>? info = null, bool dry = false)
         {
             var withLibrary = (config.TopLists ?? new List<TopListHomeSection>())
                 .Where(t => !string.IsNullOrEmpty(t.HomeSectionLibraryId) && t.HomeSectionLibraryId != "auto")
@@ -84,7 +85,8 @@ namespace HomeScreenCompanion
                                   ?? Merge(cfg.MyMediaExcludes, mediaIds, false);
                     var latest = Merge(Merge(cfg.LatestItemsExcludes, libIds, false) ?? cfg.LatestItemsExcludes, libGuids, hide)
                                  ?? Merge(cfg.LatestItemsExcludes, libIds, false);
-                    if (myMedia != null || latest != null)
+                    if ((myMedia != null || latest != null) && dry) changed = true;
+                    else if (myMedia != null || latest != null)
                     {
                         if (myMedia != null) cfg.MyMediaExcludes = myMedia;
                         if (latest != null) cfg.LatestItemsExcludes = latest;
@@ -110,9 +112,10 @@ namespace HomeScreenCompanion
                             if (withRanked != null) { excluded = withRanked; rankedRows++; }
                         }
                         if (excluded == null) continue;
+                        if (visibilityChanged) changed = true;
+                        if (dry) continue;
                         section.ExcludedFolders = excluded;
                         userManager.UpdateHomeSection(user.InternalId, section, CancellationToken.None);
-                        if (visibilityChanged) changed = true;
                     }
 
                     if (changed) changedUsers++;
@@ -123,7 +126,8 @@ namespace HomeScreenCompanion
                 }
             }
             if (rankedRows > 0)
-                info?.Invoke($"Ranked-collection libraries kept out of {RunLog.Plural(rankedRows, "home row")}");
+                info?.Invoke(dry ? $"[Dry run] Ranked-collection libraries would be kept out of {RunLog.Plural(rankedRows, "home row")}"
+                                 : $"Ranked-collection libraries kept out of {RunLog.Plural(rankedRows, "home row")}");
             return changedUsers;
         }
 

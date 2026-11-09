@@ -245,10 +245,13 @@ namespace HomeScreenCompanion
             if (tagsFound.Count > 0)
             {
                 bool changed = false;
+                // Dry run: said, not done (the next sync tags the title once it is switched off).
+                bool dry = DryRun.On;
                 foreach (var tag in tagsFound)
                 {
                     if (!item.Tags.Contains(tag, System.StringComparer.OrdinalIgnoreCase))
                     {
+                        if (dry) { _logger.Info($"[Real-Time] [Dry run] '{item.Name}' would be tagged with '{tag}'"); continue; }
                         item.AddTag(tag);
                         changed = true;
                         _logger.Info($"[Real-Time] Automatically tagged '{item.Name}' with '{tag}'");
@@ -273,6 +276,10 @@ namespace HomeScreenCompanion
 
                 var imdb = item.GetProviderId("Imdb");
                 if (string.IsNullOrEmpty(imdb)) return; // metadata not resolved yet — a later ItemUpdated will carry it
+
+                // Dry run: not linked, and not marked as done, so a later event links it once it is
+                // switched off (the merge task does it too).
+                if (DryRun.On) { _logger.Debug("[TopList] [Dry run] '" + item.Name + "' would be linked to its film and probed"); return; }
 
                 // Process each .strm item once (guards against re-entrancy from our own MergeItems/probe events).
                 lock (_strmLock)
@@ -345,6 +352,8 @@ namespace HomeScreenCompanion
         // check keep that from looping.
         private void ProcessShowCopy(BaseItem item)
         {
+            // Dry run: a later event (or the next top-list sync) updates it once it is switched off.
+            if (DryRun.On) { _logger.Debug("[TopList] [Dry run] Show copy '" + item.Name + "' would be updated"); return; }
             var internalId = item.InternalId;
             lock (_strmLock)
             {
