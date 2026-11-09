@@ -25,6 +25,8 @@
             --hsc-tint-3: rgba(128,128,128,0.15);
             --hsc-hairline: var(--line-color, rgba(128,128,128,0.2));
             --hsc-hairline-strong: rgba(128,128,128,0.3);
+            --hsc-seg-on-bg: rgba(255,255,255,0.10);  /* selected item in a segmented control: lifted above the track */
+            --hsc-seg-on-shadow: 0 1px 2px rgba(0,0,0,0.4);
             --hsc-focus: rgba(82,181,75,0.5);
             --hsc-shadow-float: 0 4px 16px rgba(0,0,0,0.35);
             --hsc-shadow-modal: 0 24px 48px rgba(0,0,0,0.45);
@@ -54,6 +56,8 @@
             --hsc-danger-text: #cc3333;
             --hsc-shadow-float: 0 4px 16px rgba(0,0,0,0.18);
             --hsc-shadow-modal: 0 24px 48px rgba(0,0,0,0.25);
+            --hsc-seg-on-bg: #ffffff;
+            --hsc-seg-on-shadow: 0 1px 2px rgba(0,0,0,0.12);
             --hsc-cat-tag: #6b7580;
             --hsc-cat-collection: #6f45b5;
             --hsc-cat-playlist: #1f8c74;
@@ -976,7 +980,7 @@
         }
 
         /* Tabs: page tabs, Home Screen sub-tabs and the tabs inside a source card share one look */
-        .page-tab-nav, .hsc-sub-tab-nav, .tag-tabs {
+        .page-tab-nav, .hsc-sub-tab-nav, .subtab-nav, .tag-tabs {
             display: flex;
             gap: 0;
             border-bottom: 1px solid var(--hsc-hairline);
@@ -984,10 +988,10 @@
             background: transparent;
         }
         .page-tab-nav { margin-bottom: 24px; }
-        .hsc-sub-tab-nav { margin-bottom: 24px; }
+        .hsc-sub-tab-nav, .subtab-nav { margin-bottom: 24px; }
         .tag-tabs { margin-bottom: 16px; }
 
-        .page-tab-btn, .hsc-sub-tab-btn, .tag-tab {
+        .page-tab-btn, .hsc-sub-tab-btn, .subtab-btn, .tag-tab {
             background: transparent;
             border: none;
             border-bottom: 2px solid transparent;
@@ -1011,8 +1015,8 @@
         }
         .tag-tab { padding: 8px 12px; }
         .page-tab-btn .tab-icon { font-size: 1.15em !important; }
-        .page-tab-btn:hover, .hsc-sub-tab-btn:hover, .tag-tab:hover { color: var(--theme-text-primary); }
-        .page-tab-btn.active, .hsc-sub-tab-btn.active, .tag-tab.active {
+        .page-tab-btn:hover, .hsc-sub-tab-btn:hover, .subtab-btn:hover, .tag-tab:hover { color: var(--theme-text-primary); }
+        .page-tab-btn.active, .hsc-sub-tab-btn.active, .subtab-btn.active, .tag-tab.active {
             color: var(--theme-text-primary);
             border-bottom-color: var(--hsc-primary);
         }
@@ -1530,6 +1534,7 @@
         .hsc-no-missing #btnMissingTab { display: none !important; }
 
         /* Missing tab */
+        .mt-tab-count { margin-left: 6px; opacity: 0.6; font-weight: 400; }
         .mt-row { border-bottom: 1px solid var(--line-color); }
         .mt-head { display: flex; align-items: center; gap: 10px; padding: 9px 4px; min-width: 0; }
         .mt-head.mt-toggle { cursor: pointer; }
@@ -2092,18 +2097,19 @@
 
             <div id="tabMissing" class="page-tab-content" style="display:none;">
                 <div style="max-width:900px;">
-                <div style="display:flex;align-items:center;gap:12px;margin:2em 0 1em;">
-                    <h2 class="sectionTitle" style="margin:0;margin-right:auto;">Missing titles</h2>
-                    <button type="button" class="btnMtRefresh btnTcRefresh" title="Reload" style="background:transparent;color:var(--theme-text-secondary);border:1px solid var(--hsc-hairline-strong);border-radius:6px;padding:4px 8px;cursor:pointer;"><i class="md-icon" style="font-size:1em;vertical-align:middle;">refresh</i></button>
+                <div class="subtab-nav">
+                    <button type="button" class="subtab-btn mt-sub-tab-btn" data-mt-tab="movies">Movies<span class="mt-tab-count" data-count="movies"></span></button>
+                    <button type="button" class="subtab-btn mt-sub-tab-btn" data-mt-tab="shows">Shows &amp; episodes<span class="mt-tab-count" data-count="shows"></span></button>
+                    <button type="button" class="subtab-btn mt-sub-tab-btn hsc-adv" data-adv="export" data-mt-tab="export">Export<span class="hsc-adv-badge">Advanced</span></button>
+                    <button type="button" class="btnMtRefresh btnTcRefresh" title="Reload" style="margin-left:auto;align-self:center;background:transparent;color:var(--theme-text-secondary);border:1px solid var(--hsc-hairline-strong);border-radius:6px;padding:4px 8px;cursor:pointer;"><i class="md-icon" style="font-size:1em;vertical-align:middle;">refresh</i></button>
                 </div>
-                <div id="mtIntro"></div>
-                <div id="mtExportPanel" class="advanced-section settings-panel hsc-adv" data-adv="export" style="margin:0 0 20px;">
-                    <div class="advanced-header settings-panel-toggle">
-                        <i class="md-icon hsc-panel-icon">download</i>
-                        <span class="hsc-title">Export<span class="hsc-adv-badge">Advanced</span></span>
-                        <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s;">expand_more</i>
-                    </div>
-                    <div class="advanced-body settings-panel-body" style="display:none;">
+                <div id="mtListPane">
+                    <div id="mtIntro"></div>
+                    <div id="mtContainer"></div>
+                </div>
+                <div id="mtExportPanel" style="display:none;">
+                    <p class="textMuted" style="font-size:0.9em;margin:0 0 16px;">Download the missing titles, or keep them in a file on the server.</p>
+                    <div>
                         <div class="hsc-eyebrow" style="margin-top: 4px; margin-bottom: 8px;">Download</div>
                         <div style="display:flex; gap:10px; flex-wrap:wrap;">
                             <button is="emby-button" type="button" class="raised btn-neutral btnMtDownload" data-format="json"><i class="md-icon" style="margin-right:5px;">download</i>JSON</button>
@@ -2143,7 +2149,6 @@
                     </div>
                 </div>
                 </div>
-                <div id="mtContainer" style="max-width:900px;"></div>
             </div>
 
             <div id="tabTopLists" class="page-tab-content" style="display:none;">
