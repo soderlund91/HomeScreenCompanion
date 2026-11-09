@@ -15,6 +15,7 @@ namespace HomeScreenCompanion
         public int TraktMaxItems { get; set; } = ListFetcher.DefaultTraktMax;
         public int MdblistMaxItems { get; set; } = ListFetcher.DefaultMdblistMax;
         public int TmdbMaxItems { get; set; } = ListFetcher.DefaultTmdbMax;
+        public int JsonMaxItems { get; set; } = ListFetcher.DefaultJsonMax;
         public int AiMaxItems { get; set; } = ListFetcher.DefaultAiMax;
         public string OpenAiApiKey { get; set; } = "";
         public string OpenAiModel { get; set; } = "gpt-4o-mini";

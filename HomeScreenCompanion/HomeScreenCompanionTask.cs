@@ -738,6 +738,8 @@ namespace HomeScreenCompanion
                                 CountsTowardLimit(imdbLookup, blacklist, passesFilters));
                             fetchTimer.Stop();
                             fetchError = fetcher.LastError;
+                            // Entries of a JSON list left out (see ListFetcher.LastNote): a warning, not a failure.
+                            if (fetcher.LastNote != null) gs.Warnings.Add($"{tagConfig.Url!.Trim()}: {fetcher.LastNote}");
                             // Empty with "Preserve…" on: the URL's last good entries stand in for it (see LastGoodLists).
                             if (items.Count > 0) { if (!dryRun) LastGoodLists.Save(tagConfig.Url!, items, _jsonSerializer); }
                             else if (config.PreserveTagsOnEmptyResult && LastGoodLists.Load(tagConfig.Url!, _jsonSerializer) is var _lastGood && _lastGood != null)
@@ -2436,6 +2438,8 @@ namespace HomeScreenCompanion
                         var items = await fetcher.FetchItems(src.Url, srcLimit, config.TraktClientId, config.MdblistApiKey, config.TmdbApiKey, cancellationToken,
                             CountsTowardLimit(imdbLookup, blacklist, passesFilters));
                         fetchTimer.Stop();
+                        // Entries of a JSON list left out (see ListFetcher.LastNote): a warning, not a failure.
+                        if (fetcher.LastNote != null) gs.Warnings.Add($"{src.Url.Trim()}: {fetcher.LastNote}");
                         // Empty with "Preserve…" on: the URL's last good entries stand in for it (see LastGoodLists).
                         if (items.Count > 0) { if (_preview == null && !dryRun) LastGoodLists.Save(src.Url, items, _jsonSerializer); }
                         else if (_preview == null && config.PreserveTagsOnEmptyResult && LastGoodLists.Load(src.Url, _jsonSerializer) is var _lastGood && _lastGood != null)
@@ -7085,10 +7089,14 @@ namespace HomeScreenCompanion
                 case "AI":              return "AI · " + (string.IsNullOrWhiteSpace(tc.AiProvider) ? "unknown provider" : AiConnection.Label(tc.AiProvider));
                 default:
                     var url = tc.Url ?? "";
-                    if (url.IndexOf("mdblist.com", StringComparison.OrdinalIgnoreCase) >= 0) return "MDBList";
-                    if (url.IndexOf("themoviedb.org", StringComparison.OrdinalIgnoreCase) >= 0) return "TMDb";
-                    if (url.IndexOf("trakt", StringComparison.OrdinalIgnoreCase) >= 0) return "Trakt";
-                    return "External list";
+                    if (string.IsNullOrWhiteSpace(url)) return "External list";
+                    switch (ListFetcher.ListProvider(url))
+                    {
+                        case "Mdblist": return "MDBList";
+                        case "Tmdb": return "TMDb";
+                        case "Trakt": return "Trakt";
+                        default: return "JSON list";
+                    }
             }
         }
 

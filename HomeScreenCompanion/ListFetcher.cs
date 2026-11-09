@@ -28,9 +28,24 @@ namespace HomeScreenCompanion
         // How many list entries are read from a list, per provider (Settings: TraktMaxItems,
         // MdblistMaxItems, TmdbMaxItems; AiMaxItems for the AI). Trakt and MDBList send a whole list
         // in one or a few requests, so they read it all by default; TMDb needs a request per title,
-        // so it and the AI stop at 1000 unless Settings say otherwise.
+        // so it and the AI stop at 1000 unless Settings say otherwise. A JSON list (JsonMaxItems) can be
+        // any site and may need a TMDb request per title, so it stops at 1000 too.
         internal const int DefaultMaxScan = 1000;
-        internal const int DefaultTraktMax = 0, DefaultMdblistMax = 0, DefaultTmdbMax = DefaultMaxScan, DefaultAiMax = DefaultMaxScan;
+        internal const int DefaultTraktMax = 0, DefaultMdblistMax = 0, DefaultTmdbMax = DefaultMaxScan, DefaultAiMax = DefaultMaxScan,
+            DefaultJsonMax = DefaultMaxScan;
+
+        /// <summary>Which provider reads a list URL: "Mdblist", "Tmdb", "Trakt" (a trakt.tv URL or a bare
+        /// Trakt API path such as "users/x/lists/y") or "Json" (any other http(s) URL that returns JSON).</summary>
+        internal static string ListProvider(string url)
+        {
+            url = url ?? "";
+            if (url.Contains("mdblist.com")) return "Mdblist";
+            if (url.Contains("themoviedb.org")) return "Tmdb";
+            if (url.IndexOf("trakt.tv", StringComparison.OrdinalIgnoreCase) >= 0
+                || !Uri.TryCreate(url.Trim(), UriKind.Absolute, out var other) || (other.Scheme != "http" && other.Scheme != "https"))
+                return "Trakt";
+            return "Json";
+        }
 
         // The cap Settings give a provider: 0 = no cap (the whole list), below 0 = its default.
         // A config saved before the setting gets the default from PluginConfiguration.
@@ -39,13 +54,21 @@ namespace HomeScreenCompanion
 
         internal static int CapForUrl(string url, PluginConfiguration? config)
         {
-            if (url.Contains("mdblist.com")) return Cap(config?.MdblistMaxItems ?? DefaultMdblistMax, DefaultMdblistMax);
-            if (url.Contains("themoviedb.org")) return Cap(config?.TmdbMaxItems ?? DefaultTmdbMax, DefaultTmdbMax);
-            return Cap(config?.TraktMaxItems ?? DefaultTraktMax, DefaultTraktMax);
+            switch (ListProvider(url))
+            {
+                case "Mdblist": return Cap(config?.MdblistMaxItems ?? DefaultMdblistMax, DefaultMdblistMax);
+                case "Tmdb": return Cap(config?.TmdbMaxItems ?? DefaultTmdbMax, DefaultTmdbMax);
+                case "Json": return Cap(config?.JsonMaxItems ?? DefaultJsonMax, DefaultJsonMax);
+                default: return Cap(config?.TraktMaxItems ?? DefaultTraktMax, DefaultTraktMax);
+            }
         }
 
         /// <summary>Why the last fetch returned nothing (e.g. "HTTP 403 Forbidden"); null when it did not fail.</summary>
         public string? LastError { get; private set; }
+
+        /// <summary>Something the run log should say about a list that was read (a warning, not a failure):
+        /// e.g. JSON-list entries left out because they could not be told apart. Null when there is none.</summary>
+        public string? LastNote { get; private set; }
 
         // A failed request as the log should show it: the HTTP status when there is one.
         private static string Describe(Exception ex)
@@ -90,6 +113,7 @@ namespace HomeScreenCompanion
             Func<ExternalItemDto, bool>? countsTowardLimit = null)
         {
             LastError = null;
+            LastNote = null;
             if (string.IsNullOrWhiteSpace(url)) return new List<ExternalItemDto>();
 
             // No more than the provider's cap is read, however high (or unset) Max items is.
@@ -100,24 +124,21 @@ namespace HomeScreenCompanion
             int fetchLimit = hits != null ? cap : limit;
 
             List<ExternalItemDto> all;
-            if (url.Contains("mdblist.com"))
+            switch (ListProvider(url))
             {
-                all = await FetchMdblist(url, mdbApiKey, fetchLimit, hits, cancellationToken);
-            }
-            else if (url.Contains("themoviedb.org"))
-            {
-                all = await FetchTmdb(url, tmdbApiKey, fetchLimit, hits, cancellationToken);
-            }
-            else if (url.IndexOf("trakt.tv", StringComparison.OrdinalIgnoreCase) >= 0
-                || !Uri.TryCreate(url.Trim(), UriKind.Absolute, out var other) || (other.Scheme != "http" && other.Scheme != "https"))
-            {
-                // A trakt.tv URL, or a bare Trakt API path ("users/x/lists/y").
-                all = await FetchTrakt(url, traktClientId, fetchLimit, cancellationToken);
-            }
-            else
-            {
-                LastError = "not a Trakt, MDBList or TMDb list URL";
-                return new List<ExternalItemDto>();
+                case "Mdblist":
+                    all = await FetchMdblist(url, mdbApiKey, fetchLimit, hits, cancellationToken);
+                    break;
+                case "Tmdb":
+                    all = await FetchTmdb(url, tmdbApiKey, fetchLimit, hits, cancellationToken);
+                    break;
+                case "Trakt":
+                    // A trakt.tv URL, or a bare Trakt API path ("users/x/lists/y").
+                    all = await FetchTrakt(url, traktClientId, fetchLimit, cancellationToken);
+                    break;
+                default:
+                    all = await FetchJsonList(url, tmdbApiKey, fetchLimit, hits, cancellationToken);
+                    break;
             }
             all = Distinct(all);
             // MDBList is read 1000 entries a page, so its last page can go past the cap.
@@ -481,6 +502,218 @@ namespace HomeScreenCompanion
                 }
             }
             catch { return null; }
+        }
+
+        // A plain JSON list from any other site: a top-level array, or an object with the list in
+        // items / results / movies / shows / data. Each entry gives an IMDb id and/or a TMDb id ("id"
+        // counts as the TMDb id unless it is an IMDb id). Entries with a TMDb id only get their IMDb
+        // id from TMDb when there is a TMDb key; a TMDb id without a type is tried as a movie first.
+        private async Task<List<ExternalItemDto>> FetchJsonList(string url, string tmdbApiKey, int limit, HitCounter? hits, CancellationToken cancellationToken)
+        {
+            string body;
+            try
+            {
+                var options = new HttpRequestOptions { Url = url.Trim(), CancellationToken = cancellationToken };
+                options.RequestHeaders.Add("Accept", "application/json");
+                using (var stream = await _httpClient.Get(options))
+                using (var reader = new StreamReader(stream))
+                    body = await reader.ReadToEndAsync();
+            }
+            catch (Exception ex)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                LastError = Describe(ex);
+                return new List<ExternalItemDto>();
+            }
+
+            var entries = new List<(JsonListItem Item, string? Type)>();
+            var text = (body ?? "").TrimStart('﻿', ' ', '\t', '\r', '\n');
+            try
+            {
+                if (text.StartsWith("["))
+                {
+                    foreach (var i in _jsonSerializer.DeserializeFromString<List<JsonListItem>>(text) ?? new List<JsonListItem>())
+                        entries.Add((i, null));
+                }
+                else if (text.StartsWith("{"))
+                {
+                    var w = _jsonSerializer.DeserializeFromString<JsonListWrapper>(text);
+                    var lists = new[] { (w?.items, (string?)null), (w?.results, null), (w?.data, null), (w?.movies, "movie"), (w?.shows, "show") };
+                    // movies and shows are read together (MDBList's shape); the others on their own.
+                    var first = lists.Take(3).FirstOrDefault(l => l.Item1 != null && l.Item1.Count > 0);
+                    if (first.Item1 != null) entries.AddRange(first.Item1.Select(i => (i, first.Item2)));
+                    else foreach (var l in lists.Skip(3)) if (l.Item1 != null) entries.AddRange(l.Item1.Select(i => (i, l.Item2)));
+                    if (entries.Count == 0 && lists.All(l => l.Item1 == null))
+                    {
+                        LastError = "the JSON has no list in it (a top-level array, or items, results, movies, shows or data)";
+                        return new List<ExternalItemDto>();
+                    }
+                }
+                else
+                {
+                    LastError = "the URL did not return JSON";
+                    return new List<ExternalItemDto>();
+                }
+            }
+            catch (Exception ex)
+            {
+                PluginLog.Swallowed(ex);
+                LastError = "the URL did not return a JSON list HSC can read";
+                return new List<ExternalItemDto>();
+            }
+
+            var all = new List<ExternalItemDto>();
+            foreach (var (item, listType) in entries)
+            {
+                if (item == null) continue;
+                var dto = FromJsonListItem(item, listType);
+                if (dto != null) all.Add(dto);
+            }
+            if (all.Count == 0)
+            {
+                if (entries.Count > 0) LastError = "the JSON list has no IMDb or TMDb ids";
+                return all;
+            }
+            if (all.Count > limit) all = all.Take(limit).ToList();
+
+            bool hasKey = !string.IsNullOrWhiteSpace(tmdbApiKey);
+            if (!hasKey)
+            {
+                if (all.All(i => string.IsNullOrEmpty(i.Imdb)))
+                {
+                    LastError = "the JSON list gives TMDb ids only, and these need a TMDb API key in Settings";
+                    return new List<ExternalItemDto>();
+                }
+                // Some entries have a TMDb id only: said in the run log instead of left out without a word.
+                int tmdbOnly = all.Count(i => string.IsNullOrEmpty(i.Imdb));
+                if (tmdbOnly > 0)
+                    LastNote = $"{RunLog.Plural(tmdbOnly, "entry", "entries")} with a TMDb id only left out: they need a TMDb API key in Settings";
+                return all;
+            }
+
+            // The IMDb ids of TMDb-only entries are asked 20 at a time, in list order, so a Max that
+            // counts hits stops asking once it has them.
+            int ambiguous = 0;
+            var result = new List<ExternalItemDto>();
+            try
+            {
+                for (int start = 0; start < all.Count; start += 20)
+                {
+                    var chunk = all.Skip(start).Take(20).ToList();
+                    var told = await Task.WhenAll(chunk.Where(i => string.IsNullOrEmpty(i.Imdb) && !string.IsNullOrEmpty(i.Tmdb))
+                        .Select(i => FillImdbFromTmdb(i, tmdbApiKey, cancellationToken)));
+                    ambiguous += told.Count(ok => !ok);
+                    foreach (var dto in chunk)
+                    {
+                        result.Add(dto);
+                        if (hits != null && hits.See(dto)) return result;
+                    }
+                }
+                return result;
+            }
+            finally
+            {
+                if (ambiguous > 0)
+                    LastNote = $"{RunLog.Plural(ambiguous, "entry", "entries")} with a TMDb id only and no type left out: TMDb has a movie and a show with that id, "
+                        + "and the list's title and year did not tell which one it means. Give the entries a type (\"type\": \"movie\" or \"show\")";
+            }
+        }
+
+        private static ExternalItemDto? FromJsonListItem(JsonListItem i, string? listType)
+        {
+            string? Clean(string? s) { s = s?.Trim(); return string.IsNullOrEmpty(s) || s == "0" || s == "null" ? null : s; }
+            bool IsImdb(string? s) => s != null && s.StartsWith("tt", StringComparison.OrdinalIgnoreCase) && s.Length > 2 && s.Skip(2).All(char.IsDigit);
+            bool IsNumber(string? s) => s != null && s.All(char.IsDigit);
+
+            var id = Clean(i.id);
+            var imdb = new[] { i.imdb_id, i.imdb, i.imdbId, i.ids?.imdb }.Select(Clean).FirstOrDefault(IsImdb)
+                ?? (IsImdb(id) ? id : null);
+            var tmdb = new[] { i.tmdb_id, i.tmdb, i.tmdbId, i.ids?.tmdb }.Select(Clean).FirstOrDefault(IsNumber)
+                ?? (IsNumber(id) ? id : null);
+            if (imdb == null && tmdb == null) return null;
+
+            int? year = null;
+            foreach (var s in new[] { i.year, i.release_year, i.release_date, i.first_air_date })
+            {
+                var v = Clean(s);
+                if (v != null && v.Length >= 4 && int.TryParse(v.Substring(0, 4), out var y) && y > 1800) { year = y; break; }
+            }
+
+            string? type = listType;
+            var t = (Clean(i.media_type) ?? Clean(i.type))?.ToLowerInvariant();
+            if (t == "movie" || t == "movies" || t == "film") type = "movie";
+            else if (t == "show" || t == "shows" || t == "tv" || t == "series" || t == "tvshow" || t == "tv_show") type = "show";
+
+            return new ExternalItemDto
+            {
+                Name = (Clean(i.title) ?? Clean(i.name) ?? imdb ?? ("TMDb " + tmdb))!,
+                Imdb = imdb!,
+                Tmdb = tmdb,
+                Type = type,
+                Year = year
+            };
+        }
+
+        // The IMDb id of an entry with a TMDb id only. With a type: that movie's or show's. Without one:
+        // TMDb numbers movies and shows apart, so one id can be a film and an unrelated show. Both are
+        // asked; when only one exists it is taken, when both do the one whose title (2 points) and year
+        // (1 point) agree better with the list's own is taken. A tie (also: the list gives neither) is
+        // left out, so a list of shows never tags the film that has the same number.
+        // False when the entry was left out for that reason (said in LastNote); true otherwise.
+        private async Task<bool> FillImdbFromTmdb(ExternalItemDto dto, string apiKey, CancellationToken cancellationToken)
+        {
+            var key = apiKey.Trim();
+            if (dto.Type == "show" || dto.Type == "movie")
+            {
+                try
+                {
+                    var ids = await MissingTitles.TmdbGet<TmdbExternalIds>($"{(dto.Type == "show" ? "tv" : "movie")}/{dto.Tmdb}/external_ids", key, _httpClient, _jsonSerializer, cancellationToken);
+                    if (!string.IsNullOrEmpty(ids?.imdb_id)) dto.Imdb = ids!.imdb_id!;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch { }
+                return true;
+            }
+
+            async Task<TmdbTitleWithIds?> Ask(string kind)
+            {
+                try { return await MissingTitles.TmdbGet<TmdbTitleWithIds>($"{kind}/{dto.Tmdb}?append_to_response=external_ids", key, _httpClient, _jsonSerializer, cancellationToken); }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch { return null; }   // not found (404) or not answered: as if there were none
+            }
+            var movie = await Ask("movie");
+            var show = await Ask("tv");
+            if (movie == null && show == null) return true;   // TMDb knows neither: the entry stays without an IMDb id
+
+            // The list gave a title of its own (else Name is the "TMDb <id>" stand-in, see FromJsonListItem).
+            bool hasTitle = !string.Equals(dto.Name, "TMDb " + dto.Tmdb, StringComparison.Ordinal);
+            string Norm(string? s) => new string((s ?? "").Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+            int Score(TmdbTitleWithIds? x, bool isShow)
+            {
+                if (x == null) return -1;
+                int score = 0;
+                if (hasTitle)
+                {
+                    var listTitle = Norm(dto.Name);
+                    var names = isShow ? new[] { x.name, x.original_name } : new[] { x.title, x.original_title };
+                    if (listTitle.Length > 0 && names.Any(n => Norm(n) == listTitle)) score += 2;
+                }
+                var date = isShow ? x.first_air_date : x.release_date;
+                if (dto.Year != null && date != null && date.Length >= 4 && int.TryParse(date.Substring(0, 4), out var y) && y == dto.Year) score += 1;
+                return score;
+            }
+            int movieScore = Score(movie, false), showScore = Score(show, true);
+            TmdbTitleWithIds? pick;
+            bool pickShow;
+            if (movie == null) { pick = show; pickShow = true; }
+            else if (show == null) { pick = movie; pickShow = false; }
+            else if (movieScore > showScore) { pick = movie; pickShow = false; }
+            else if (showScore > movieScore) { pick = show; pickShow = true; }
+            else return false;   // cannot be told apart: left out
+
+            if (!string.IsNullOrEmpty(pick!.external_ids?.imdb_id)) dto.Imdb = pick.external_ids!.imdb_id!;
+            dto.Type = pickShow ? "show" : "movie";
+            return true;
         }
 
         private async Task<List<ExternalItemDto>> FetchTrakt(string rawUrl, string clientId, int limit, CancellationToken cancellationToken)
