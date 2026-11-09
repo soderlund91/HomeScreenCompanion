@@ -109,7 +109,7 @@ components:
   card:                { backgroundColor: "{colors.surface-1}", border: "1px solid {colors.hairline}", rounded: "{rounded.md}", padding: "{spacing.lg}" }
   collapsible-row:     { backgroundColor: "{colors.surface-1}", border: "1px solid {colors.hairline}", rounded: "{rounded.md}", headerPadding: "12px 16px", bodyBackground: "{colors.canvas}", bodyPadding: "{spacing.md} {spacing.lg}" }
   page-tab:            { textColor: "{colors.ink-muted}", activeTextColor: "{colors.ink}", activeIndicator: "2px {colors.primary} underline", typography: "{typography.tab}", padding: "10px 16px" }
-  segmented-control:   { backgroundColor: "{colors.tint-1}", border: "1px solid {colors.hairline}", rounded: "{rounded.md}", padding: 2px, itemSelected: "{colors.surface-2} + {colors.ink}" }
+  segmented-control:   { backgroundColor: "{colors.tint-1}", border: "1px solid {colors.hairline}", rounded: "{rounded.md}", padding: 2px, itemSelected: "--hsc-seg-on-bg + 1px inset {colors.hairline-strong} + --hsc-seg-on-shadow, {colors.ink} at 600, icon in {colors.primary} (light: {colors.primary-text-light})" }
   status-pill:         { backgroundColor: "<status color> at 15%", textColor: "<status color>", typography: "{typography.caption} 500", rounded: "{rounded.pill}", padding: "2px 8px" }
   status-dot:          { size: 8px, rounded: "{rounded.pill}" }
   filter-chip:         { backgroundColor: transparent, border: "1px solid {colors.hairline}", rounded: "{rounded.pill}", padding: "4px 12px", selected: "{colors.tint-3} + {colors.ink}" }
@@ -132,7 +132,7 @@ Based on Linear's design language (dense, calm, one accent, depth through surfac
 2. **Theme-relative, never hard-coded surfaces.** Every background, border and text colour uses Emby's theme variables (`--theme-background-level1..3`, `--line-color`, `--theme-text-primary/secondary`) or neutral grey tints (`rgba(128,128,128,a)`), which work in both themes. Popups use the `--plugin-popup-*` variables set in `configPage.js`. Only accent and semantic colours are fixed hex values.
 3. **One accent, used sparingly.** Emby green marks *the* primary action (Save), the active tab, focus, enabled states and success. It is not a decoration colour: no green section titles, no green gradient headers, no green left-borders on every row.
 4. **Blue means "something is happening".** Emby blue is reserved for running/in-progress state, the Run action and live activity. It is not a second decorative accent.
-5. **Depth = surface ladder + hairlines.** canvas → surface-1 → surface-2, each with a 1px `--line-color` border. Shadows only on things that float (modals, FABs, dropdowns).
+5. **Depth = surface ladder + hairlines.** canvas → surface-1 → surface-2, each with a 1px `--line-color` border. Shadows only on things that float (modals, FABs, dropdowns), plus the small lift shadow on the selected item of a segmented control.
 6. **Quiet type.** Sentence case for titles, tabs and buttons. Weight 600 for headings, 500 for labels and buttons, 400 for body. UPPERCASE is reserved for the small `eyebrow` style (group labels above a list), never for tabs or section titles.
 7. **Density with air.** A 4px grid. 24px inside cards, 16px between related controls, 24–32px between cards.
 
@@ -166,7 +166,7 @@ Consolidation: the page currently uses several near-duplicates (`#e0a800`, `#e8a
 |---|---|---|
 | `canvas` | `--theme-background-level1` | Page; bodies of expanded rows |
 | `surface-1` | `--theme-background-level2` | Cards, collapsible rows |
-| `surface-2` | `--theme-background-level3` | Hovered headers, selected segment |
+| `surface-2` | `--theme-background-level3` | Hovered headers |
 | `tint-1/2/3` | grey at 4% / 8% / 15% | Header strips / hover / selected |
 | `hairline` | `--line-color` | All 1px borders and dividers |
 | `ink` | `--theme-text-primary` | Titles, body |
@@ -204,7 +204,7 @@ Headings get a slight negative tracking (-0.1 to -0.3px); everything else 0.
 |---|---|---|
 | 0 | none | Page, text |
 | 1 | `surface-1` + 1px `hairline` | Cards, collapsible rows |
-| 2 | `surface-2` + 1px `hairline-strong` | Hovered or expanded headers, selected segment |
+| 2 | `surface-2` + 1px `hairline-strong` | Hovered or expanded headers |
 | Float | shadow `0 4px 16px rgba(0,0,0,.35)` | FABs, dropdowns, speed-dial menu |
 | Modal | shadow `0 24px 48px rgba(0,0,0,.45)` + backdrop `rgba(0,0,0,.6)` | Dialogs |
 | Focus | 2px `primary` outline at 50%, 2px offset | Keyboard focus on custom controls |
@@ -223,7 +223,7 @@ Cards and rows have **no** drop shadow.
 
 ### Tabs
 - **Page tabs and sub-tabs**: sentence case, weight 500, `ink-muted`. The active tab gets `ink` text and a 2px green underline. Hover gives `ink` text with no underline. A 1px `hairline` sits under the whole bar.
-- **Segmented control** (small 2–4 choice toggles): a tinted track with a 2px inset; the selected item is lifted to `surface-2`.
+- **Segmented control** (small 2–4 choice toggles): a tinted track with a 2px inset. The selected item is lifted above the track: `--hsc-seg-on-bg` (white at 10% in dark, plain white in light), a 1px inset `hairline-strong` ring and `--hsc-seg-on-shadow` (0 1px 2px). Its text is `ink` at weight 600 and only its icon is Emby green (`primary`, `primary-text-light` on the light theme, via `--hsc-primary-text`). Unselected items are transparent at 70% opacity. Never fill the selected item with green. A choice that switches between lists or views is a sub-tab row, not a segmented control.
 
 ### Cards and collapsible rows
 - **Card**: `surface-1`, hairline border, 8px radius, 24px padding. The title is `section-title` in `ink`; an optional `ink-muted` one-line description sits under it.

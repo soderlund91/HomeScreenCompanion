@@ -827,8 +827,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var num = el.querySelector('input[type="number"]');
             return !!num && num.value.trim() !== '' && String(parseInt(num.value, 10)) !== (el.getAttribute('data-adv-def') || '');
         }
-        // The Missing tab's Export panel: in use when it writes a file or adds shows with gaps.
-        if (kind === 'export') return !!el.querySelector('#chkMissingExportToFile:checked, #chkMissingIncludeGaps:checked');
+        // The Missing tab's Export sub-tab: in use when it writes a file or adds shows with gaps.
+        if (kind === 'export') return !!(el.closest('#tabMissing') || el).querySelector('#chkMissingExportToFile:checked, #chkMissingIncludeGaps:checked');
         if (kind === 'tag-art') {
             var poster = el.querySelector('.coll-style-picker[data-kind="poster"] input:checked');
             var bg = el.querySelector('.coll-style-picker[data-kind="background"] input:checked');
@@ -858,6 +858,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             if (hide && el.classList.contains('tag-tab') && el.classList.contains('active')) {
                 var first = el.parentElement.querySelector('.tag-tab[data-tab="general"]');
                 if (first) first.click();
+            }
+            // The Missing tab's Export sub-tab hidden while open: show Movies instead.
+            if (hide && el.classList.contains('mt-sub-tab-btn') && el.classList.contains('active')) {
+                var mtTab = el.closest('#tabMissing');
+                if (mtTab) showMissingSubTab(mtTab, 'movies', false);
             }
         });
     }
@@ -8544,6 +8549,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     function loadMissingTab(view) {
         var container = view.querySelector('#mtContainer');
         if (!container) return;
+        // First visit: open the sub-tab picked last time in this browser.
+        if (!view.querySelector('#tabMissing .mt-sub-tab-btn.active')) showMissingSubTab(view, savedMissingSubTab(), false);
         container.innerHTML = '<div style="padding:20px;color:var(--theme-text-secondary);display:flex;align-items:center;gap:10px;">Loading <span class="tc-dot-loader"><span></span><span></span><span></span></span></div>';
         fetch(window.ApiClient.getUrl('HomeScreenCompanion/MissingTitles'), { headers: { 'X-MediaBrowser-Token': window.ApiClient.accessToken() } })
             .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
@@ -8551,6 +8558,29 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             .catch(function (err) {
                 container.innerHTML = '<div class="hsc-callout danger"><i class="md-icon">error</i><span>The missing titles could not be loaded (' + escapeHtml(err.message) + ').</span></div>';
             });
+    }
+
+    // Shows one of the Missing tab's sub-tabs (movies, shows, export). Export is Advanced: while its
+    // tab is hidden the Movies list shows instead. remember = store the choice in this browser.
+    function showMissingSubTab(root, key, remember) {
+        var tab = root.id === 'tabMissing' ? root : root.querySelector('#tabMissing');
+        if (!tab) return;
+        var btn = tab.querySelector('.mt-sub-tab-btn[data-mt-tab="' + key + '"]');
+        if (!btn || btn.classList.contains('hsc-adv-hidden')) { key = 'movies'; btn = tab.querySelector('.mt-sub-tab-btn[data-mt-tab="movies"]'); }
+        tab.querySelectorAll('.mt-sub-tab-btn').forEach(function (b) { b.classList.toggle('active', b === btn); });
+        tab.querySelector('#mtListPane').style.display = key === 'export' ? 'none' : '';
+        tab.querySelector('#mtExportPanel').style.display = key === 'export' ? '' : 'none';
+        var movies = tab.querySelector('#mtMovies'), shows = tab.querySelector('#mtShows');
+        if (movies) movies.style.display = key === 'movies' ? '' : 'none';
+        if (shows) shows.style.display = key === 'shows' ? '' : 'none';
+        var container = tab.querySelector('#mtContainer');
+        if (container && container._mtApplySearch && movies) container._mtApplySearch();
+        if (remember) { try { localStorage.setItem('HomeScreenCompanion_MissingList', key); } catch (e) { } }
+    }
+    function savedMissingSubTab() {
+        var k = 'movies';
+        try { k = localStorage.getItem('HomeScreenCompanion_MissingList') || 'movies'; } catch (e) { }
+        return ['movies', 'shows', 'export'].indexOf(k) >= 0 ? k : 'movies';
     }
 
     // The file options show only with "Keep the list in a file" on.
@@ -8598,8 +8628,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     function renderMissingTab(view, container, data) {
         renderMissingExportStatus(view, data);
         var movies = data.Movies || [], shows = data.Shows || [];
-        var shown = 'movies';
-        try { if (localStorage.getItem('HomeScreenCompanion_MissingList') === 'shows') shown = 'shows'; } catch (e) { }
 
         function plural(n, one) { return n + ' ' + (n === 1 ? one : one + 's'); }
         function yearHtml(y) { return y ? '<span class="mt-year">(' + y + ')</span>' : ''; }
@@ -8655,13 +8683,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '</div>';
         }
 
-        var segBase = 'flex:1;cursor:pointer;border:none;border-radius:6px;padding:8px 12px;font-family:inherit;font-size:0.9em;font-weight:500;display:flex;align-items:center;justify-content:center;gap:6px;color:inherit;';
-        var segOn = segBase + 'background:var(--plugin-popup-bg2, var(--theme-background-level3));';
-        var segOff = segBase + 'background:transparent;opacity:0.7;';
-        var sections = [
-            { key: 'movies', label: 'Movies', icon: 'movie', count: movies.length },
-            { key: 'shows', label: 'Shows & episodes', icon: 'tv', count: shows.length }
-        ];
 
         var updated = data.UpdatedUtc ? new Date(data.UpdatedUtc) : null;
         var intro = !data.HasData
@@ -8674,23 +8695,23 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             : '';
 
         view.querySelector('#mtIntro').innerHTML = intro;
+        view.querySelectorAll('#tabMissing .mt-tab-count').forEach(function (c) {
+            c.textContent = '(' + (c.dataset.count === 'shows' ? shows.length : movies.length) + ')';
+        });
         container.innerHTML =
-            '<div style="display:flex;border:1px solid var(--plugin-popup-border,rgba(255,255,255,0.12));border-radius:8px;overflow:hidden;margin-bottom:16px;padding:2px;gap:2px;background:var(--hsc-tint-1);max-width:560px;">' +
-            sections.map(function (s) {
-                return '<button type="button" class="btnMtList" data-key="' + s.key + '" style="' + (s.key === shown ? segOn : segOff) + '"><i class="md-icon" style="font-size:1.1em;">' + s.icon + '</i>' + s.label + ' <span style="opacity:0.7;">(' + s.count + ')</span></button>';
-            }).join('') + '</div>' +
             '<div style="margin-bottom:12px;"><input type="text" id="mtSearch" placeholder="Search titles or lists…" style="background:rgba(128,128,128,0.08);border:1px solid var(--line-color);border-radius:6px;padding:5px 10px;font-size:0.9em;color:inherit;width:400px;max-width:100%;" /></div>' +
-            '<div id="mtMovies" style="display:' + (shown === 'movies' ? '' : 'none') + ';">' +
+            '<div id="mtMovies">' +
             (movies.length ? movies.map(movieRow).join('') : '<div style="color:var(--theme-text-secondary);padding:8px 0;">' + (data.HasData ? 'Every movie on your lists is in your library.' : '') + '</div>') +
             '</div>' +
-            '<div id="mtShows" style="display:' + (shown === 'shows' ? '' : 'none') + ';">' + noKey +
+            '<div id="mtShows" style="display:none;">' + noKey +
             (shows.length ? shows.map(showRow).join('') : '<div style="color:var(--theme-text-secondary);padding:8px 0;">' + (data.HasData ? 'No shows or episodes are missing.' : '') + '</div>') +
             '</div>' +
             '<div id="mtNoHits" style="display:none;color:var(--theme-text-secondary);padding:8px 0;">No titles match the search.</div>';
 
         function applySearch() {
             var q = (container.querySelector('#mtSearch').value || '').trim().toLowerCase();
-            var list = container.querySelector(shown === 'movies' ? '#mtMovies' : '#mtShows');
+            var moviesEl = container.querySelector('#mtMovies');
+            var list = moviesEl.style.display !== 'none' ? moviesEl : container.querySelector('#mtShows');
             var hits = 0;
             container.querySelectorAll('.mt-row').forEach(function (r) {
                 var hit = !q || r.dataset.search.indexOf(q) >= 0;
@@ -8700,6 +8721,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             container.querySelector('#mtNoHits').style.display = q && hits === 0 ? '' : 'none';
         }
         container.querySelector('#mtSearch').addEventListener('input', applySearch);
+        container._mtApplySearch = applySearch;
+        var activeMt = view.querySelector('#tabMissing .mt-sub-tab-btn.active');
+        showMissingSubTab(view, activeMt ? activeMt.dataset.mtTab : savedMissingSubTab(), false);
 
         container.onclick = function (e) {
             var nav = e.target.closest('.mt-nav');
@@ -8710,16 +8734,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 return;
             }
             if (e.target.closest('.mt-links a')) return;
-            var pick = e.target.closest('.btnMtList');
-            if (pick) {
-                shown = pick.dataset.key;
-                try { localStorage.setItem('HomeScreenCompanion_MissingList', shown); } catch (err) { }
-                container.querySelectorAll('.btnMtList').forEach(function (b) { b.setAttribute('style', b.dataset.key === shown ? segOn : segOff); });
-                container.querySelector('#mtMovies').style.display = shown === 'movies' ? '' : 'none';
-                container.querySelector('#mtShows').style.display = shown === 'shows' ? '' : 'none';
-                applySearch();
-                return;
-            }
             var head = e.target.closest('.mt-toggle');
             if (!head) return;
             var box = head.parentElement;
@@ -8968,7 +8982,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<span>Include extras</span>' +
                 '</label>';
 
-            // One list at a time, picked with the segmented control at the top (remembered in this browser).
+            // One list at a time, picked with the sub-tabs at the top (same look as the Home Screen sub-tabs, remembered in this browser).
             var tcSections = [
                 { key: 'tags', label: 'Tags',        icon: 'label',              id: 'tcTagSection' },
                 { key: 'coll', label: 'Collections', icon: 'video_library',      id: 'tcCollSection' },
@@ -8980,13 +8994,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 if (tcSections.some(function (s) { return s.key === savedShown; })) shownSection = savedShown;
             } catch (e) {}
 
-            var tcSegBase = 'flex:1;cursor:pointer;border:none;border-radius:6px;padding:8px 12px;font-family:inherit;font-size:0.9em;font-weight:500;display:flex;align-items:center;justify-content:center;gap:6px;color:inherit;';
-            var tcSegOn  = tcSegBase + 'background:var(--plugin-popup-bg2, var(--theme-background-level3));';
-            var tcSegOff = tcSegBase + 'background:transparent;opacity:0.7;';
             var listPickerHtml =
-                '<div id="tcListPicker" style="display:flex;border:1px solid var(--plugin-popup-border,rgba(255,255,255,0.12));border-radius:8px;overflow:hidden;margin-bottom:16px;padding:2px;gap:2px;background:var(--hsc-tint-1);max-width:560px;">' +
+                '<div id="tcListPicker" class="subtab-nav">' +
                 tcSections.map(function (s) {
-                    return '<button type="button" class="btnTcList" data-key="' + s.key + '" style="' + (s.key === shownSection ? tcSegOn : tcSegOff) + '"><i class="md-icon" style="font-size:1.1em;">' + s.icon + '</i>' + s.label + '</button>';
+                    return '<button type="button" class="subtab-btn btnTcList' + (s.key === shownSection ? ' active' : '') + '" data-key="' + s.key + '">' + s.label + '</button>';
                 }).join('') +
                 '</div>';
 
@@ -9020,7 +9031,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     if (el) el.style.display = s.key === shownSection ? '' : 'none';
                 });
                 container.querySelectorAll('.btnTcList').forEach(function (btn) {
-                    btn.style.cssText = btn.dataset.key === shownSection ? tcSegOn : tcSegOff;
+                    btn.classList.toggle('active', btn.dataset.key === shownSection);
                 });
             }
             applyShownSection();
@@ -11705,8 +11716,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         function renderStep1() {
             var isShows = contentType === 'Shows';
             var segBase = 'flex:1;cursor:pointer;border:none;border-radius:6px;padding:8px 12px;font-family:inherit;font-size:0.9em;font-weight:500;display:flex;align-items:center;justify-content:center;gap:6px;';
-            var segOn  = segBase + 'background:var(--plugin-popup-bg2, var(--theme-background-level3));color:inherit;';
+            // Selected type: lifted above the track (lighter surface, hairline ring, small shadow), full-ink text
+            // at weight 600, and only the icon in Emby green. See DESIGN.md, segmented control.
+            var segOn  = segBase + 'background:var(--hsc-seg-on-bg);color:var(--theme-text-primary, inherit);font-weight:600;box-shadow:inset 0 0 0 1px var(--hsc-hairline-strong), var(--hsc-seg-on-shadow);';
             var segOff = segBase + 'background:transparent;color:inherit;opacity:0.7;';
+            function segIcon(name, on) { return '<i class="md-icon" style="font-size:1.1em;' + (on ? 'color:var(--hsc-primary-text);' : '') + '">' + name + '</i>'; }
             modal.innerHTML =
                 '<div style="' + innerStyle + '">' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;">' +
@@ -11714,8 +11728,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 '<button type="button" class="btnChooserClose hsc-x" aria-label="Close" title="Close" style="background:transparent;border:none;color:inherit;cursor:pointer;padding:2px;opacity:0.6;line-height:1;border-radius:8px;"><i class="md-icon">close</i></button>' +
                 '</div>' +
                 '<div style="display:flex;border:1px solid var(--plugin-popup-border,rgba(255,255,255,0.12));border-radius:8px;overflow:hidden;margin-bottom:20px;padding:2px;gap:2px;background:var(--hsc-tint-1);">' +
-                '<button type="button" class="btnChooseType" data-type="Movies" style="' + (isShows ? segOff : segOn) + '"><i class="md-icon" style="font-size:1.1em;">movie</i>Movies</button>' +
-                '<button type="button" class="btnChooseType" data-type="Shows" style="' + (isShows ? segOn : segOff) + '"><i class="md-icon" style="font-size:1.1em;">tv</i>TV Shows</button>' +
+                '<button type="button" class="btnChooseType" data-type="Movies" style="' + (isShows ? segOff : segOn) + '">' + segIcon('movie', !isShows) + 'Movies</button>' +
+                '<button type="button" class="btnChooseType" data-type="Shows" style="' + (isShows ? segOn : segOff) + '">' + segIcon('tv', isShows) + 'TV Shows</button>' +
                 '</div>' +
                 '<p style="margin:0 0 20px;font-size:0.9em;color:var(--theme-text-secondary);">How do you want to create this top-list?</p>' +
                 '<div style="display:flex;gap:16px;">' +
@@ -13843,6 +13857,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             mtExport.addEventListener('input',  changeHandler, { signal: _signal });
             mtExport.addEventListener('change', function () { updateMissingExportUi(view); changeHandler(); }, { signal: _signal });
             view.querySelector('.btnMtRefresh').addEventListener('click', function () { loadMissingTab(view); }, { signal: _signal });
+            view.querySelector('#tabMissing .subtab-nav').addEventListener('click', function (e) {
+                var b = e.target.closest('.mt-sub-tab-btn');
+                if (b) showMissingSubTab(view, b.dataset.mtTab, true);
+            }, { signal: _signal });
             mtExport.addEventListener('click', function (e) {
                 var btn = e.target.closest('.btnMtDownload');
                 if (btn) downloadMissingTitles(view, btn);
