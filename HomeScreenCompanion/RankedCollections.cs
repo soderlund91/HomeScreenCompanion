@@ -447,17 +447,7 @@ namespace HomeScreenCompanion
                 copy.LockedFields = locked.ToArray();
                 changed = true;
             }
-            // The film's own poster / backdrop / logo, so the collection looks the same as before.
-            var types = new[] { ImageType.Primary, ImageType.Backdrop, ImageType.Logo, ImageType.Thumb };
-            var filmImages = (film.ImageInfos ?? Array.Empty<ItemImageInfo>()).Where(i => types.Contains(i.Type)).ToList();
-            var copyImages = (copy.ImageInfos ?? Array.Empty<ItemImageInfo>()).ToList();
-            if (filmImages.Count > 0 && !filmImages.All(f => copyImages.Any(c => c.Type == f.Type && string.Equals(c.Path, f.Path, StringComparison.OrdinalIgnoreCase))))
-            {
-                copyImages.RemoveAll(c => types.Contains(c.Type));
-                copyImages.AddRange(filmImages.Select(f => new ItemImageInfo { Path = f.Path, Type = f.Type, DateModified = f.DateModified, Width = f.Width, Height = f.Height }));
-                copy.ImageInfos = copyImages.ToArray();
-                changed = true;
-            }
+            if (MatchFilmImages(copy, film)) changed = true;
             if (changed)
             {
                 try { libraryManager.UpdateItem(copy, copy.Parent, ItemUpdateType.MetadataEdit, null); }
@@ -473,6 +463,27 @@ namespace HomeScreenCompanion
             }
             catch (Exception ex) { log.Warn($"Ranked copy '{copy.Name}' could not be merged with '{film.Name}': {ex.Message}"); }
             return reranked;
+        }
+
+        private static readonly ImageType[] CopyImageTypes = { ImageType.Primary, ImageType.Backdrop, ImageType.Logo, ImageType.Thumb };
+
+        // Points the copy's poster / backdrop / logo / thumb at the film's own image files, so the
+        // collection looks the same as before (and the copy gets the film's real-poster badge).
+        // Covers a copy with no images at all and one whose image paths differ from the film's.
+        // Only changes copy.ImageInfos (the caller saves); true when they differed.
+        internal static bool MatchFilmImages(BaseItem copy, BaseItem film)
+        {
+            var filmImages = (film.ImageInfos ?? Array.Empty<ItemImageInfo>()).Where(i => CopyImageTypes.Contains(i.Type)).ToList();
+            if (filmImages.Count == 0) return false;
+            var copyImages = (copy.ImageInfos ?? Array.Empty<ItemImageInfo>()).ToList();
+            var copyOwn = copyImages.Where(c => CopyImageTypes.Contains(c.Type)).ToList();
+            if (copyOwn.Count == filmImages.Count
+                && filmImages.All(f => copyOwn.Any(c => c.Type == f.Type && string.Equals(c.Path, f.Path, StringComparison.OrdinalIgnoreCase))))
+                return false;
+            copyImages.RemoveAll(c => CopyImageTypes.Contains(c.Type));
+            copyImages.AddRange(filmImages.Select(f => new ItemImageInfo { Path = f.Path, Type = f.Type, DateModified = f.DateModified, Width = f.Width, Height = f.Height }));
+            copy.ImageInfos = copyImages.ToArray();
+            return true;
         }
 
         private static bool WriteIfChanged(string path, string content)

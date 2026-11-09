@@ -25,7 +25,7 @@ namespace HomeScreenCompanion
     /// copy taken out of a collection. They are collected and checked once they go quiet (Emby may
     /// still save the copy shortly after playback stops), and every copy that needed a fix is
     /// checked once more a little later. The check is state-based (is the copy in its collection,
-    /// is it a version of its film), so the updates it makes itself end in a check that changes
+    /// is it a version of its film, does it show its film's image files), so the updates it makes itself end in a check that changes
     /// nothing. It waits while a sync runs: the sync sets the same things itself.
     /// </summary>
     internal static class RankedCopyGuard
@@ -125,7 +125,8 @@ namespace HomeScreenCompanion
             });
         }
 
-        // Puts one copy back in its collection and merges it with its film again when needed.
+        // Puts one copy back in its collection, merges it with its film and gives it the film's
+        // images again when needed.
         // True when something was fixed.
         private static bool Heal(long copyId)
         {
@@ -199,6 +200,20 @@ namespace HomeScreenCompanion
                     if (film != null && !RankedCollections.IsRankedCopy(film)
                         && (lm.GetItemById(film.InternalId)?.Collections ?? Array.Empty<MediaBrowser.Model.Dto.LinkedItemInfo>()).Any(c => c != null && c.Id == coll.InternalId))
                         _collectionManager.RemoveFromCollection(coll, new[] { film.InternalId });
+                }
+            }
+            // Images: the copy shows its film's own image files (as the sync sets them). A save
+            // from a stale object or a refresh can leave the copy with none, and a re-merge does
+            // not bring them back. Read both again: the steps above saved them.
+            if (film != null && !RankedCollections.IsRankedCopy(film))
+            {
+                var freshCopy = lm.GetItemById(copyId);
+                var freshFilm = lm.GetItemById(film.InternalId) ?? film;
+                if (freshCopy != null && RankedCollections.MatchFilmImages(freshCopy, freshFilm))
+                {
+                    lm.UpdateItem(freshCopy, freshCopy.Parent, ItemUpdateType.MetadataEdit, null);
+                    _logger?.Info($"[Ranked] '{copy.Name}': images restored from the film");
+                    fixedAny = true;
                 }
             }
             return fixedAny;
