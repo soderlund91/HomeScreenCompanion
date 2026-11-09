@@ -28,6 +28,7 @@ namespace HomeScreenCompanion
         private readonly IItemRepository _itemRepository;
         private readonly IMediaSourceManager _mediaSourceManager;
         private readonly ITaskManager _taskManager;
+        private readonly IUserDataManager _userDataManager;
         private NewLibraryWatcher? _libraryWatcher;
 
         private readonly object _strmLock = new object();
@@ -37,7 +38,7 @@ namespace HomeScreenCompanion
         private readonly HashSet<long> _processedStrmIds = new HashSet<long>();
         private readonly HashSet<long> _showCopiesInFlight = new HashSet<long>();
 
-        public ServerEntryPoint(ILibraryManager libraryManager, ILogManager logManager, IJsonSerializer jsonSerializer, IProviderManager providerManager, IFileSystem fileSystem, ICollectionManager collectionManager, IItemRepository itemRepository, IMediaSourceManager mediaSourceManager, ITaskManager taskManager)
+        public ServerEntryPoint(ILibraryManager libraryManager, ILogManager logManager, IJsonSerializer jsonSerializer, IProviderManager providerManager, IFileSystem fileSystem, ICollectionManager collectionManager, IItemRepository itemRepository, IMediaSourceManager mediaSourceManager, ITaskManager taskManager, IUserDataManager userDataManager)
         {
             _libraryManager = libraryManager;
             _logger = PluginLog.Wrap(logManager.GetLogger("HomeScreenCompanion_RealTime"), "Real-time");
@@ -48,6 +49,7 @@ namespace HomeScreenCompanion
             _itemRepository = itemRepository;
             _mediaSourceManager = mediaSourceManager;
             _taskManager = taskManager;
+            _userDataManager = userDataManager;
         }
 
         public void Run()
@@ -62,6 +64,7 @@ namespace HomeScreenCompanion
             catch (Exception ex) { _logger.Warn($"[Migration] Top-lists could not be moved to their sources: {ex.Message}"); }
             TagCacheManager.Instance.Initialize(Plugin.Instance.DataFolderPath, _jsonSerializer);
             TopListCollectionMirror.Initialize(_libraryManager, _collectionManager, _logger);
+            RankedCopyGuard.Initialize(_libraryManager, _collectionManager, _logger);
             ShowTopList.Initialize(_itemRepository, _mediaSourceManager);
 
             // Last run logs survive a restart (shown in the log modal and "Last run").
@@ -72,10 +75,12 @@ namespace HomeScreenCompanion
             TopListSyncTask.RestoreLog();
 
             _libraryManager.ItemAdded += OnItemChanged;
+            _libraryManager.ItemAdded += OnItemAdded;
             _libraryManager.ItemUpdated += OnItemChanged;
             _collectionManager.CollectionCreated += OnCollectionCreated;
             _collectionManager.ItemsAddedToCollection += OnItemsAddedToCollection;
             _collectionManager.ItemsRemovedFromCollection += OnItemsRemovedFromCollection;
+            _userDataManager.UserDataSaved += OnUserDataSaved;
 
             // A library created in Emby later runs the Top-list section sync by itself.
             _libraryWatcher = new NewLibraryWatcher(_libraryManager, _taskManager, _jsonSerializer, _logger, Plugin.Instance.DataFolderPath);
@@ -91,8 +96,32 @@ namespace HomeScreenCompanion
         private void OnItemsAddedToCollection(object sender, CollectionModifiedEventArgs e) =>
             TopListCollectionMirror.OnCollectionChanged(e.Collection, e.ItemsChanged);
 
-        private void OnItemsRemovedFromCollection(object sender, CollectionModifiedEventArgs e) =>
+        private void OnItemsRemovedFromCollection(object sender, CollectionModifiedEventArgs e)
+        {
             TopListCollectionMirror.OnCollectionChanged(e.Collection, e.ItemsChanged);
+            // A ranked copy taken out of its collection: RankedCopyGuard checks whether it belongs there.
+            try
+            {
+                foreach (var id in e.ItemsChanged ?? new List<long>())
+                {
+                    var item = _libraryManager.GetItemById(id);
+                    if (item != null && RankedCollections.IsRankedCopy(item)) RankedCopyGuard.QueueCopy(item);
+                }
+            }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+        }
+
+        // Played / marked played: a ranked copy, or a film with ranked copies, is checked once
+        // playback has settled (RankedCopyGuard). Progress reports are skipped: the stop follows.
+        private void OnUserDataSaved(object sender, UserDataSaveEventArgs e)
+        {
+            try
+            {
+                if (e?.Item == null || e.SaveReason == UserDataSaveReason.PlaybackProgress) return;
+                RankedCopyGuard.QueueFilm(e.Item);
+            }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+        }
 
         private void RunAutoMigration()
         {
@@ -167,6 +196,14 @@ namespace HomeScreenCompanion
             ProcessItem(e.Item);
         }
 
+        // A new ranked-collection copy gets its film's real-poster badge (only on add: copies are
+        // saved often, and each rebuild of the badge map reads every movie).
+        private void OnItemAdded(object sender, ItemChangeEventArgs e)
+        {
+            if (e.Item is MediaBrowser.Controller.Entities.Movies.Movie && RankedCollections.IsRankedCopy(e.Item))
+                RealPosterBadges.RankedCopyAdded();
+        }
+
         private void ProcessItem(BaseItem item)
         {
             if (item.IsVirtualItem) return;
@@ -195,8 +232,9 @@ namespace HomeScreenCompanion
                     ProcessTopListStrmItem(item);
                     return;
                 }
-                // Ranked-collection copies: never tagged; the sync links and probes them.
-                if (RankedCollections.IsRankedPath(item.Path)) return;
+                // Ranked-collection copies: never tagged; the sync links and probes them, and
+                // RankedCopyGuard puts back a membership or merge a later save of the copy lost.
+                if (RankedCollections.IsRankedPath(item.Path)) { RankedCopyGuard.QueueCopy(item); return; }
             }
 
             var ids = item.ProviderIds;
@@ -333,10 +371,12 @@ namespace HomeScreenCompanion
         public void Dispose()
         {
             _libraryManager.ItemAdded -= OnItemChanged;
+            _libraryManager.ItemAdded -= OnItemAdded;
             _libraryManager.ItemUpdated -= OnItemChanged;
             _collectionManager.CollectionCreated -= OnCollectionCreated;
             _collectionManager.ItemsAddedToCollection -= OnItemsAddedToCollection;
             _collectionManager.ItemsRemovedFromCollection -= OnItemsRemovedFromCollection;
+            _userDataManager.UserDataSaved -= OnUserDataSaved;
             _libraryWatcher?.Dispose();
             MissingTitlesExport.Dispose();
             PluginLog.Flush();

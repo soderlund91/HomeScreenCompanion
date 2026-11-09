@@ -1293,7 +1293,7 @@ public class HomeScreenCompanionService : IService
             public List<BaseItem> Items = new List<BaseItem>();
         }
 
-        // Same matching rules as the sync task: IMDb id first, top-list .strm copies excluded,
+        // Same matching rules as the sync task: IMDb id first, top-list and ranked .strm copies excluded,
         // and title+year as a fallback for AI sources only.
         private TestLibraryIndex BuildTestLibraryIndex()
         {
@@ -1310,6 +1310,7 @@ public class HomeScreenCompanionService : IService
                 if (!string.IsNullOrEmpty(item.Path) &&
                     item.Path.StartsWith(topListsFolder, StringComparison.OrdinalIgnoreCase))
                     continue;
+                if (RankedCollections.IsRankedPath(item.Path)) continue;
                 index.Items.Add(item);
                 if (item.LocationType != LocationType.FileSystem) continue;
                 var imdb = item.GetProviderId("Imdb");

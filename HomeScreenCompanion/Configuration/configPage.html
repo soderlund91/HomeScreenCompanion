@@ -2780,6 +2780,8 @@
                             <li>The copies sit in a hidden library "&lt;collection&gt; (ranked)" that is hidden from My Media and Latest like the top-list libraries (setting <em>Hide HSC libraries</em>). It is also always added to the excluded libraries of every user's other home rows (Continue Watching, library rows and so on, also rows made before it), so the copies never show twice; collection and playlist rows are left as they are.</li>
                             <li>When the list order changes, only the ranks of the copies change: a copy is added only for a new film and removed only when its film leaves the list, so nothing is rebuilt on a reorder.</li>
                             <li>Only movies are ranked: shows in the list keep their normal place after the ranked movies.</li>
+                            <li>The collection holds only its ranked copies, also with <em>Show collections on top-list items</em> on: a film that is also on a top-list keeps its normal poster here, never the rank-badge one.</li>
+                            <li>A copy that drops out of its collection or loses its link to the real film is put back about a minute after it (or its film) is played, marked played or changed, without waiting for the next sync.</li>
                             <li>Untick it (or switch the feature off) and the next sync puts the real films back and removes the copies and their library. This is experimental.</li>
                         </ul></div>
                 </div>
@@ -2989,7 +2991,7 @@
                 <div class="hsc-eyebrow" style="margin:14px 0 8px;">More about real posters</div>
                 <div id="help-more-realposters" class="help-feature-row">
                     <i class="md-icon help-feat-icon">verified</i>
-                    <div><strong>Real posters</strong> — under <em>Badge Style</em>, tick <em>Badge the real posters too</em> to put a red TOP 10 square on each listed title's own poster everywhere in Emby: libraries, search, the item page, other rows and every app (for a show list, the series poster; for a movie, all its versions).
+                    <div><strong>Real posters</strong> — under <em>Badge Style</em>, tick <em>Badge the real posters too</em> to put a red TOP 10 square on each listed title's own poster everywhere in Emby: libraries, collections (ranked ones too), search, the item page, other rows and every app (for a show list, the series poster; for a movie, all its versions).
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li><em>Label</em>: <em>TOP 10</em>, or <em>TOP 10 #3</em> with the title's rank on a second line; <em>Size</em>: S, M or L; <em>Position</em>: top left, top right (the standard), bottom left, bottom centre or bottom right. The small poster beside them shows the result at rank 7.</li>
                             <li>A title in several lists gets one badge with its best rank.</li>
@@ -3119,7 +3121,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">collections_bookmark</i>
-                    <div><strong>Show collections on top-list items</strong> <span style="opacity:0.6;">(Top-lists)</span> — Adds each top-list movie to the same collections as the original, so "Included in &lt;collection&gt;" also shows when a movie is opened from a top-list. Depending on the collection's sort order, it may then show the top-list version with its rank-badge poster.</div>
+                    <div><strong>Show collections on top-list items</strong> <span style="opacity:0.6;">(Top-lists)</span> — Adds each top-list movie to the same collections as the original, so "Included in &lt;collection&gt;" also shows when a movie is opened from a top-list. Depending on the collection's sort order, it may then show the top-list version with its rank-badge poster. A ranked collection (<em>Keep the list order</em>) is left out: it keeps its own copies.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">share</i>

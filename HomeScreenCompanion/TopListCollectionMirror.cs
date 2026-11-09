@@ -23,6 +23,9 @@ namespace HomeScreenCompanion
     //
     // When the setting is off, copies are kept out of all collections instead.
     //
+    // Ranked-collection copies (RankedCollections) never count as originals: a ranked collection
+    // holds only those, and mirroring them would put the badge copy in its place.
+    //
     // All writes are state-based (desired vs. current membership, never replayed deltas) and
     // serialised through one lock, so concurrent or out-of-order collection events cannot
     // leave a copy in the wrong state — the next reconcile always converges.
@@ -64,6 +67,9 @@ namespace HomeScreenCompanion
             return folder != null && !string.IsNullOrEmpty(item?.Path)
                 && item!.Path.StartsWith(folder, StringComparison.OrdinalIgnoreCase);
         }
+
+        // A real library movie: neither a top-list copy nor a ranked-collection copy.
+        private static bool IsOriginal(BaseItem item) => !IsTopListItem(item) && !RankedCollections.IsRankedCopy(item);
 
         private static long[] CollectionIdsOf(BaseItem item) =>
             (item.Collections ?? Array.Empty<MediaBrowser.Model.Dto.LinkedItemInfo>())
@@ -113,7 +119,7 @@ namespace HomeScreenCompanion
                 }))
                 {
                     var imdb = m.GetProviderId("Imdb") ?? "";
-                    if (!IsTopListItem(m) && wanted.Contains(imdb)) AddTo(originals, imdb, m);
+                    if (IsOriginal(m) && wanted.Contains(imdb)) AddTo(originals, imdb, m);
                 }
             }
             return (originals, copies);
@@ -296,7 +302,7 @@ namespace HomeScreenCompanion
                         });
 
                         var originalImdbs = new HashSet<string>(
-                            members.Where(m => !IsTopListItem(m))
+                            members.Where(IsOriginal)
                                    .Select(m => m.GetProviderId("Imdb"))
                                    .Where(s => !string.IsNullOrEmpty(s)),
                             StringComparer.OrdinalIgnoreCase);
