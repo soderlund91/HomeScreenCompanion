@@ -1871,6 +1871,7 @@ namespace HomeScreenCompanion
             {
                 IsRunning = false;
                 PersistLog();
+                RealPosterBadges.QueueRebuild();   // ranked copies this run made get their film's badge
             }
         }
 

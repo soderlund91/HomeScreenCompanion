@@ -75,6 +75,7 @@ namespace HomeScreenCompanion
             TopListSyncTask.RestoreLog();
 
             _libraryManager.ItemAdded += OnItemChanged;
+            _libraryManager.ItemAdded += OnItemAdded;
             _libraryManager.ItemUpdated += OnItemChanged;
             _collectionManager.CollectionCreated += OnCollectionCreated;
             _collectionManager.ItemsAddedToCollection += OnItemsAddedToCollection;
@@ -193,6 +194,14 @@ namespace HomeScreenCompanion
         private void OnItemChanged(object sender, ItemChangeEventArgs e)
         {
             ProcessItem(e.Item);
+        }
+
+        // A new ranked-collection copy gets its film's real-poster badge (only on add: copies are
+        // saved often, and each rebuild of the badge map reads every movie).
+        private void OnItemAdded(object sender, ItemChangeEventArgs e)
+        {
+            if (e.Item is MediaBrowser.Controller.Entities.Movies.Movie && RankedCollections.IsRankedCopy(e.Item))
+                RealPosterBadges.RankedCopyAdded();
         }
 
         private void ProcessItem(BaseItem item)
@@ -362,6 +371,7 @@ namespace HomeScreenCompanion
         public void Dispose()
         {
             _libraryManager.ItemAdded -= OnItemChanged;
+            _libraryManager.ItemAdded -= OnItemAdded;
             _libraryManager.ItemUpdated -= OnItemChanged;
             _collectionManager.CollectionCreated -= OnCollectionCreated;
             _collectionManager.ItemsAddedToCollection -= OnItemsAddedToCollection;
