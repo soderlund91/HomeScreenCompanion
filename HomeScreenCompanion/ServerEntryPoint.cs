@@ -13,6 +13,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace HomeScreenCompanion
@@ -38,7 +39,7 @@ namespace HomeScreenCompanion
         private readonly HashSet<long> _processedStrmIds = new HashSet<long>();
         private readonly HashSet<long> _showCopiesInFlight = new HashSet<long>();
 
-        public ServerEntryPoint(ILibraryManager libraryManager, ILogManager logManager, IJsonSerializer jsonSerializer, IProviderManager providerManager, IFileSystem fileSystem, ICollectionManager collectionManager, IItemRepository itemRepository, IMediaSourceManager mediaSourceManager, ITaskManager taskManager, IUserDataManager userDataManager)
+        public ServerEntryPoint(ILibraryManager libraryManager, ILogManager logManager, IJsonSerializer jsonSerializer, IProviderManager providerManager, IFileSystem fileSystem, ICollectionManager collectionManager, IItemRepository itemRepository, IMediaSourceManager mediaSourceManager, ITaskManager taskManager, IUserDataManager userDataManager, MediaBrowser.Controller.Session.ISessionManager sessionManager)
         {
             _libraryManager = libraryManager;
             _logger = PluginLog.Wrap(logManager.GetLogger("HomeScreenCompanion_RealTime"), "Real-time");
@@ -50,6 +51,7 @@ namespace HomeScreenCompanion
             _mediaSourceManager = mediaSourceManager;
             _taskManager = taskManager;
             _userDataManager = userDataManager;
+            GentleMode.Initialize(sessionManager);
         }
 
         public void Run()
@@ -221,9 +223,9 @@ namespace HomeScreenCompanion
                 return;
 
             // Items under the top-list folder are .strm virtual copies. Never tag them, but DO
-            // link each one to its original movie (as an alternate version) and force a media
-            // probe so it gets a real RunTimeTicks — otherwise resume breaks and the movie is
-            // marked fully-watched on stop. This fires as soon as Emby indexes the .strm.
+            // bring each one in line with its film (text, media info, cast; merged as a version):
+            // without a runtime resume breaks and the movie is marked fully-watched on stop. This
+            // fires as soon as Emby indexes the .strm; a sync working on the folder does it itself.
             if (Plugin.Instance != null && !string.IsNullOrEmpty(item.Path))
             {
                 var topListsFolder = Path.Combine(Plugin.Instance.DataFolderPath, "toplists") + Path.DirectorySeparatorChar;
@@ -265,14 +267,17 @@ namespace HomeScreenCompanion
             }
         }
 
-        // Links a freshly indexed top-list .strm item to its original movie (alternate version)
-        // and queues a real ffprobe so it gets a valid RunTimeTicks + MediaStreams. Runs at most
-        // once per item per server session, on the first event where its IMDb id is resolved.
+        // Brings a freshly indexed top-list .strm item in line with its film (TopListCopies.Prepare:
+        // text, media info, cast, merged as an alternate version; a probe only when the film has
+        // no media info). Runs at most once per item per server session, on the first event where
+        // its IMDb id is resolved, one item at a time and paced by gentle mode. Copies in a folder
+        // a sync is working on are left to that sync.
         private void ProcessTopListStrmItem(BaseItem item)
         {
             try
             {
                 if (!(item is MediaBrowser.Controller.Entities.Movies.Movie)) return;
+                if (TopListCopies.IsBusy(item.Path)) return;
 
                 var imdb = item.GetProviderId("Imdb");
                 if (string.IsNullOrEmpty(imdb)) return; // metadata not resolved yet — a later ItemUpdated will carry it
@@ -296,10 +301,16 @@ namespace HomeScreenCompanion
                 // "finishing touches in the background" operation.
                 Task.Run(async () =>
                 {
+                    await TopListCopies.Gate.WaitAsync().ConfigureAwait(false);
                     try
                     {
                         var current = _libraryManager.GetItemById(itemId);
                         if (current == null) return;
+                        if (TopListCopies.IsBusy(current.Path))
+                        {
+                            lock (_strmLock) { _processedStrmIds.Remove(current.InternalId); }
+                            return;
+                        }
 
                         var topListsFolder = Path.Combine(Plugin.Instance.DataFolderPath, "toplists") + Path.DirectorySeparatorChar;
 
@@ -320,25 +331,32 @@ namespace HomeScreenCompanion
                             && string.Equals(m.GetProviderId("Imdb"), imdb, StringComparison.OrdinalIgnoreCase))
                           .ToList();
 
-                        if (originals.Count > 0)
+                        // The film the .strm points at; else the first with the IMDb id (merged with that one).
+                        BaseItem? primary = originals.Count > 0 ? originals[0] : null;
+                        var film = TopListCopies.FilmOf(current, _libraryManager) ?? primary;
+                        int writes = 0;
+                        if (film != null)
                         {
-                            var primary = originals[0];
-                            try { _libraryManager.MergeItems(new[] { primary, current }); }
-                            catch (Exception ex) { _logger.Warn("[TopList] Merge failed for '" + itemName + "': " + ex.Message); }
+                            writes = TopListCopies.Prepare(current, film, primary ?? film, null, false,
+                                _libraryManager, _providerManager, _fileSystem, m => _logger.Warn("[TopList] " + m), null, CancellationToken.None);
 
                             // Optional: same collection memberships as the originals.
-                            if (TopListCollectionMirror.Enabled)
+                            if (TopListCollectionMirror.Enabled && originals.Count > 0)
                                 await TopListCollectionMirror.SyncCopy(_libraryManager.GetItemById(itemId) ?? current, originals);
                         }
-
-                        // Idempotent — skips if the item already has a runtime.
-                        MergeTopListVersionsTask.QueueStrmProbe(_providerManager, _fileSystem, current);
-                        _logger.Info("[TopList] Linked + probed '" + itemName + "'");
+                        // No film in the library: Emby probes the copy (low priority), idempotent.
+                        else if (MergeTopListVersionsTask.QueueStrmProbe(_providerManager, _fileSystem, current)) writes++;
+                        if (writes > 0)
+                        {
+                            _logger.Info("[TopList] Linked '" + itemName + "' to its film (" + writes + " write" + (writes == 1 ? "" : "s") + ")");
+                            await GentleMode.WroteAsync(CancellationToken.None, writes).ConfigureAwait(false);
+                        }
                     }
                     catch (Exception ex)
                     {
                         _logger.Error("[TopList] ProcessTopListStrmItem(bg) error: " + ex.Message);
                     }
+                    finally { TopListCopies.Gate.Release(); }
                 });
             }
             catch (Exception ex)

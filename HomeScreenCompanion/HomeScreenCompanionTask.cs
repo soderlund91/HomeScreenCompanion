@@ -197,6 +197,7 @@ namespace HomeScreenCompanion
                 _log.Rule();
                 _log.Info($"Home Screen Companion v{Plugin.Instance?.Version}  ·  {startTime:yyyy-MM-dd HH:mm}  ·  Full sync");
                 if (dryRun) _log.Warn("DRY RUN — nothing will be changed, the log shows what would happen");
+                GentleMode.Announce(_log);
 
                 var allItems = _libraryManager.GetItemList(new InternalItemsQuery
                 {
@@ -1299,12 +1300,12 @@ namespace HomeScreenCompanion
                         _log.Skip($"Playlist for '{plStats?.DisplayName ?? kvp.Value.Owner.Name}' left unchanged — source failed or returned nothing");
                         continue;
                     }
-                    await SyncPlaylistsForEntryAsync(kvp.Value.Owner, kvp.Value.Items, dryRun, plStats);
+                    await SyncPlaylistsForEntryAsync(kvp.Value.Owner, kvp.Value.Items, dryRun, plStats, null, cancellationToken);
                 }
                 foreach (var kvp in nextWatchByGroup)
                 {
                     statsByGroupKey.TryGetValue(kvp.Key, out var nwStats);
-                    await SyncPlaylistsForEntryAsync(kvp.Value.Owner, new List<BaseItem>(), dryRun, nwStats, kvp.Value.PerUser);
+                    await SyncPlaylistsForEntryAsync(kvp.Value.Owner, new List<BaseItem>(), dryRun, nwStats, kvp.Value.PerUser, cancellationToken);
                 }
                 if ((groupPlaylistItems.Count > 0 || nextWatchByGroup.Count > 0) && !dryRun)
                 {
@@ -1378,6 +1379,7 @@ namespace HomeScreenCompanion
                     {
                         foreach (var t in toRemove) { item.RemoveTag(t); tagsRemoved++; tagRemovedByTag[t] = tagRemovedByTag.GetValueOrDefault(t) + 1; }
                         foreach (var t in toAdd) { item.AddTag(t); tagsAdded++; tagAddedByTag[t] = tagAddedByTag.GetValueOrDefault(t) + 1; }
+                        GentleMode.Wrote(cancellationToken);
                         try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); }
                         catch (Exception ex)
                         {
@@ -1416,6 +1418,7 @@ namespace HomeScreenCompanion
                     {
                         foreach (var t in toRemove) { item.RemoveTag(t); tagsRemoved++; tagRemovedByTag[t] = tagRemovedByTag.GetValueOrDefault(t) + 1; }
                         foreach (var t in toAdd) { item.AddTag(t); tagsAdded++; tagAddedByTag[t] = tagAddedByTag.GetValueOrDefault(t) + 1; }
+                        GentleMode.Wrote(cancellationToken);
                         try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); }
                         catch (Exception ex)
                         {
@@ -1454,6 +1457,7 @@ namespace HomeScreenCompanion
                     {
                         foreach (var t in toRemove) { item.RemoveTag(t); tagsRemoved++; tagRemovedByTag[t] = tagRemovedByTag.GetValueOrDefault(t) + 1; }
                         foreach (var t in toAdd) { item.AddTag(t); tagsAdded++; tagAddedByTag[t] = tagAddedByTag.GetValueOrDefault(t) + 1; }
+                        GentleMode.Wrote(cancellationToken);
                         try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); }
                         catch (Exception ex)
                         {
@@ -1548,7 +1552,7 @@ namespace HomeScreenCompanion
                         if (existingColl == null)
                         {
                             if (dryRun) { collWouldCreate++; _log.Debug($"  {cName}  →  would be created ({desiredIds.Count} items)"); continue; }
-                            var createdRef = await _collectionManager.CreateCollection(new CollectionCreationOptions { Name = cName, IsLocked = false, ItemIdList = desiredIds.ToArray() });
+                            var createdRef = await CreateCollectionGently(cName, desiredIds.ToList(), cancellationToken);
                             if (createdRef != null)
                             {
                                 collCreated++;
@@ -1574,9 +1578,9 @@ namespace HomeScreenCompanion
                             var toAdd = desiredIds.Where(id => !currentMembers.Contains(id)).ToList();
                             var toRemove = currentMembers.Where(id => !desiredIds.Contains(id)).ToList();
                             if (toAdd.Count > 0 && !dryRun)
-                                await _collectionManager.AddToCollection(existingColl.InternalId, toAdd.ToArray());
+                                await AddToCollectionGently(existingColl.InternalId, toAdd, cancellationToken);
                             if (toRemove.Count > 0 && !dryRun && existingColl is BoxSet boxSet)
-                                _collectionManager.RemoveFromCollection(boxSet, toRemove.ToArray());
+                                await RemoveFromCollectionGently(boxSet, toRemove, cancellationToken);
                             if ((toAdd.Count > 0 || toRemove.Count > 0) && !dryRun)
                             {
                                 collUpdated++;
@@ -1608,7 +1612,7 @@ namespace HomeScreenCompanion
                         }
                         if (_ranked)
                             RankedCollections.SetDisplayOrder(_libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = cName, Recursive = true }).FirstOrDefault(), _libraryManager);
-                        RankedCollections.Probe(_rankProbe, _providerManager, _fileSystem);
+                        RankedCollections.Probe(_rankProbe, _providerManager, _fileSystem, cancellationToken);
                     }
                     catch (Exception ex)
                     {
@@ -1689,7 +1693,7 @@ namespace HomeScreenCompanion
                 SyncPlaylistTags(config, dryRun);
                 bool _hasTopLists = (config.TopLists ?? new List<TopListHomeSection>()).Any(t => !string.IsNullOrWhiteSpace(t.TagName));
                 if (_hasTopLists) { _log.Blank(); _log.Info("» Top-lists"); }
-                SyncTopListFolders(config, dryRun);
+                SyncTopListFolders(config, dryRun, null, cancellationToken);
                 if (!dryRun) TopListSyncTask.SyncAll(_libraryManager, _userViewManager, _userManager, _jsonSerializer, _logger, cancellationToken, _log);
 
                 progress.Report(100);
@@ -1840,6 +1844,7 @@ namespace HomeScreenCompanion
                     _log.Info($"  Playlists:     {statsList.Sum(g => g.PlaylistUsersCreated)} created, {statsList.Sum(g => g.PlaylistUsersUpdated)} updated{(statsList.Sum(g => g.PlaylistUsersFailed) > 0 ? $", {statsList.Sum(g => g.PlaylistUsersFailed)} failed" : "")}");
                 _log.Info($"  Home sections: {totalHsSynced} synced, {totalHsRemoved + _deletedGroupRowsRemoved} removed");
                 if (_userStatus?.SummaryLine() is string _disabledLine) _log.Info("  " + _disabledLine);
+                foreach (var _gentleLine in GentleMode.SummaryLines()) _log.Info("  " + _gentleLine);
                 _log.Info($"  Done in {elapsedStr}  ·  {StatusSymbol(groupsFailed, groupsWarned)} {finalStatus}");
                 _log.Rule();
             }
@@ -1950,7 +1955,7 @@ namespace HomeScreenCompanion
             {
                 // Same rebuild as the full sync, limited to this list. A show list is rebuilt from
                 // its tag or, when picked by hand, from the shows saved in its folder.
-                SyncTopListFolders(config, dryRun, tl.TagName);
+                SyncTopListFolders(config, dryRun, tl.TagName, cancellationToken);
                 var tlFolder = Path.Combine(Plugin.Instance!.DataFolderPath, "toplists", SanitizeTopListFolderName(tl.TagName));
                 listSummary = isShow ? $"{RunLog.Plural(ShowTopList.ReadManifest(tlFolder, _jsonSerializer).Count, "show")} synced to its library folder"
                     : $"{RunLog.Plural(Directory.Exists(tlFolder) ? Directory.GetFiles(tlFolder, "*.strm").Length : 0, "movie")} synced to its library folder";
@@ -1965,8 +1970,7 @@ namespace HomeScreenCompanion
                 var (ok, msg) = rebuildManual(tl);
                 if (ok) _log.Ok($"Top-list '{tl.TagName}': {msg}");
                 else { errors++; _log.Error($"Top-list '{tl.TagName}' failed — {msg}"); }
-                try { _libraryMonitor?.ReportFileSystemChanged(Path.Combine(Plugin.Instance!.DataFolderPath, "toplists", SanitizeTopListFolderName(tl.TagName))); }
-                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                RefreshTopListFolder(Path.Combine(Plugin.Instance!.DataFolderPath, "toplists", SanitizeTopListFolderName(tl.TagName)));
                 listSummary = ok ? msg : "rebuild failed";
             }
 
@@ -2112,6 +2116,7 @@ namespace HomeScreenCompanion
             _log.Info($"Home Screen Companion v{Plugin.Instance?.Version}  ·  {startTime:yyyy-MM-dd HH:mm}  ·  Single group: {_displayName}");
             if (dryRun) _log.Warn("DRY RUN — nothing will be changed, the log shows what would happen");
             _log.Info($"  Library: {_movieCount:N0} movies, {_seriesCount:N0} series");
+            if (_preview == null) GentleMode.Announce(_log);
             _log.Rule();
 
             var gs = new GroupRunStats
@@ -2922,6 +2927,7 @@ namespace HomeScreenCompanion
                 if (!dryRun)
                 {
                     ApplyTagChanges(item, changes, shouldHave);
+                    GentleMode.Wrote(cancellationToken);
                     try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); }
                     catch (Exception ex) { _log.Warn($"Could not save tags for '{item.Name}': {ex.Message}"); }
                     if (++updateCount % 25 == 0) await Task.Yield();
@@ -2976,6 +2982,7 @@ namespace HomeScreenCompanion
                     if (!dryRun)
                     {
                         ApplyTagChanges(ep, changesEp, shouldHaveEp);
+                        GentleMode.Wrote(cancellationToken);
                         try { _libraryManager.UpdateItem(ep, ep.Parent, ItemUpdateType.MetadataEdit, null); }
                         catch (Exception ex) { _log.Warn($"Could not save tags for episode '{ep.Name}': {ex.Message}"); }
                         if (++updateCount % 25 == 0) await Task.Yield();
@@ -3032,6 +3039,7 @@ namespace HomeScreenCompanion
                     if (!dryRun)
                     {
                         ApplyTagChanges(season, changesSeason, shouldHaveSeason);
+                        GentleMode.Wrote(cancellationToken);
                         try { _libraryManager.UpdateItem(season, season.Parent, ItemUpdateType.MetadataEdit, null); }
                         catch (Exception ex) { _log.Warn($"Could not save tags for season '{season.Name}': {ex.Message}"); }
                         if (++updateCount % 25 == 0) await Task.Yield();
@@ -3082,6 +3090,7 @@ namespace HomeScreenCompanion
                         if (!dryRun)
                         {
                             item.RemoveTag(orphan);
+                            GentleMode.Wrote(cancellationToken);
                             try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); }
                             catch (Exception ex) { _log.Warn($"Could not save tags for '{item.Name}': {ex.Message}"); }
                             if (++updateCount % 25 == 0) await Task.Yield();
@@ -3168,7 +3177,7 @@ namespace HomeScreenCompanion
                     bool _newCollArt = false;
                     if (existingColl == null)
                     {
-                        var createdColl = await _collectionManager.CreateCollection(new CollectionCreationOptions { Name = cName, IsLocked = false, ItemIdList = desiredIds.ToArray() });
+                        var createdColl = await CreateCollectionGently(cName, desiredIds.ToList(), cancellationToken);
                         collResult = 1;
                         _collCreated = true;
                         _collItemsAdded = desiredIds.Count;
@@ -3183,8 +3192,8 @@ namespace HomeScreenCompanion
                         var currentMembers = _libraryManager.GetItemList(new InternalItemsQuery { CollectionIds = new[] { existingColl.InternalId }, Recursive = true, IsVirtualItem = false }).Where(i => _ranked || !TopListCollectionMirror.IsTopListItem(i)).Select(i => i.InternalId).ToHashSet();
                         var toAdd = desiredIds.Where(id => !currentMembers.Contains(id)).ToList();
                         var toRemove = currentMembers.Where(id => !desiredIds.Contains(id)).ToList();
-                        if (toAdd.Count > 0) await _collectionManager.AddToCollection(existingColl.InternalId, toAdd.ToArray());
-                        if (toRemove.Count > 0 && existingColl is BoxSet boxSet) _collectionManager.RemoveFromCollection(boxSet, toRemove.ToArray());
+                        if (toAdd.Count > 0) await AddToCollectionGently(existingColl.InternalId, toAdd, cancellationToken);
+                        if (toRemove.Count > 0 && existingColl is BoxSet boxSet) await RemoveFromCollectionGently(boxSet, toRemove, cancellationToken);
                         ApplyCollectionSortName(existingColl, cName, tagConfig.CollectionSortName);
                         collResult = toAdd.Count + toRemove.Count;
                         _collItemsAdded = toAdd.Count;
@@ -3215,7 +3224,7 @@ namespace HomeScreenCompanion
                             await ReapplyNewCollectionArtAsync(new List<(string, TagConfig, IList<BaseItem>)> { (cName, tagConfig, _artItems) }, cancellationToken);
                         if (_ranked) RankedCollections.SetDisplayOrder(_artColl, _libraryManager);
                     }
-                    RankedCollections.Probe(_rankProbe, _providerManager, _fileSystem);
+                    RankedCollections.Probe(_rankProbe, _providerManager, _fileSystem, cancellationToken);
                     gs.CollectionCreated = _collCreated;
                     gs.CollectionItemsAdded = _collItemsAdded;
                     gs.CollectionItemsRemoved = _collItemsRemoved;
@@ -3250,11 +3259,11 @@ namespace HomeScreenCompanion
             {
                 // Each user's own picks; nothing is written for a user whose list could not be made.
                 if (_nextWatchPerUser != null && _nextWatchPerUser.Count > 0)
-                    await SyncPlaylistsForEntryAsync(tagConfig, new List<BaseItem>(), dryRun, gs, _nextWatchPerUser);
+                    await SyncPlaylistsForEntryAsync(tagConfig, new List<BaseItem>(), dryRun, gs, _nextWatchPerUser, cancellationToken);
                 _nextWatchPerUser = null;
             }
             else
-                await SyncPlaylistsForEntryAsync(tagConfig, collectionOutputItems, dryRun, gs);
+                await SyncPlaylistsForEntryAsync(tagConfig, collectionOutputItems, dryRun, gs, null, cancellationToken);
 
             if (!dryRun)
             {
@@ -3324,7 +3333,7 @@ namespace HomeScreenCompanion
             CleanupDisabledPlaylists(config, dryRun);
             SyncPlaylistTags(config, dryRun);
             // Only this group's own top-list (other lists are not fed by this tag).
-            SyncTopListFolders(config, dryRun, tagName);
+            SyncTopListFolders(config, dryRun, tagName, cancellationToken);
             // Made with the group's Create as top-list: its rows too (the group has no other row).
             if (!dryRun && SourceTopLists.IsOn(tagConfig) && (config.TopLists ?? new List<TopListHomeSection>()).Any(t => t.FromSource && string.Equals(t.TagName, tagName, StringComparison.OrdinalIgnoreCase)))
             {
@@ -3396,6 +3405,7 @@ namespace HomeScreenCompanion
                     if (!dryRun)
                     {
                         item.RemoveTag(offTag);
+                        GentleMode.Wrote(cancellationToken);
                         try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); }
                         catch (Exception ex) { _log.Warn($"Could not save tags for '{item.Name}': {ex.Message}"); }
                     }
@@ -3446,7 +3456,7 @@ namespace HomeScreenCompanion
                 _log.Blank();
                 _log.Info("» Top-list");
                 SaveTopListPart(config, tagConfig, tagName, new List<BaseItem>());
-                SyncTopListFolders(config, false, tagName);
+                SyncTopListFolders(config, false, tagName, cancellationToken);
             }
 
             if (tagConfig.EnableHomeSection)
@@ -3873,6 +3883,60 @@ namespace HomeScreenCompanion
 
         // A playlist's entries in playlist order: (entry id, the item it stands for). An episode stands
         // for its season or show when the source lists that season / show instead (Emby expands both).
+        // Gentle mode: one Emby call saves every item it adds to or removes from a collection, so
+        // while someone is watching the members go in slices with a pause between them.
+        private async Task<BoxSet> CreateCollectionGently(string name, List<long> ids, CancellationToken cancellationToken)
+        {
+            var first = ids.Take(GentleMode.BatchSize).ToArray();
+            var created = await GentleMode.TimedAsync("collection members", () => _collectionManager.CreateCollection(new CollectionCreationOptions { Name = name, IsLocked = false, ItemIdList = first }));
+            await GentleMode.WroteAsync(cancellationToken, first.Length);
+            if (created != null && first.Length < ids.Count)
+                await AddToCollectionGently(created.InternalId, ids.Skip(first.Length).ToList(), cancellationToken);
+            return created!;
+        }
+
+        private async Task AddToCollectionGently(long collectionId, List<long> ids, CancellationToken cancellationToken)
+        {
+            foreach (var slice in GentleMode.Slices(ids))
+            {
+                await GentleMode.TimedAsync("collection members", () => _collectionManager.AddToCollection(collectionId, slice));
+                await GentleMode.WroteAsync(cancellationToken, slice.Length);
+            }
+        }
+
+        private async Task RemoveFromCollectionGently(BoxSet boxSet, List<long> ids, CancellationToken cancellationToken)
+        {
+            foreach (var slice in GentleMode.Slices(ids))
+            {
+                GentleMode.Timed("collection members", () => _collectionManager.RemoveFromCollection(boxSet, slice));
+                await GentleMode.WroteAsync(cancellationToken, slice.Length);
+            }
+        }
+
+        // The entries that can stay where they are when a playlist is put in target order: the
+        // longest run of entries whose current order already matches the target order (every other
+        // entry is moved once, which is the fewest moves possible).
+        internal static HashSet<long> InOrderAlready(List<long> current, List<long> target)
+        {
+            var rank = new Dictionary<long, int>();
+            for (int i = 0; i < target.Count; i++) rank[target[i]] = i;
+            var seq = current.Where(rank.ContainsKey).ToList();
+            // Longest increasing subsequence of the target ranks (patience sorting, O(n log n)).
+            var tails = new List<int>();          // index into seq of the smallest tail per length
+            var prev = new int[seq.Count];
+            for (int i = 0; i < seq.Count; i++)
+            {
+                int r = rank[seq[i]];
+                int lo = 0, hi = tails.Count;
+                while (lo < hi) { int mid = (lo + hi) / 2; if (rank[seq[tails[mid]]] < r) lo = mid + 1; else hi = mid; }
+                prev[i] = lo > 0 ? tails[lo - 1] : -1;
+                if (lo == tails.Count) tails.Add(i); else tails[lo] = i;
+            }
+            var keep = new HashSet<long>();
+            for (int k = tails.Count > 0 ? tails[tails.Count - 1] : -1; k >= 0; k = prev[k]) keep.Add(seq[k]);
+            return keep;
+        }
+
         private static List<(long Entry, long Id)> PlaylistEntries(IEnumerable<BaseItem> playlistItems, HashSet<long> desired)
         {
             var list = new List<(long Entry, long Id)>();
@@ -4250,7 +4314,7 @@ namespace HomeScreenCompanion
         // perUser (NextWatch): each user's own list instead of collectionOutputItems; only the users
         // in it are synced.
         private async Task SyncPlaylistsForEntryAsync(TagConfig tagConfig, List<BaseItem> collectionOutputItems, bool dryRun, GroupRunStats? gs = null,
-            Dictionary<string, List<BaseItem>>? perUser = null)
+            Dictionary<string, List<BaseItem>>? perUser = null, CancellationToken cancellationToken = default)
         {
             // Playlist sync — one individual playlist per user in PlaylistUserIds
             if (tagConfig.EnablePlaylist && !dryRun && !StillWanted(tagConfig))
@@ -4455,17 +4519,20 @@ namespace HomeScreenCompanion
                                 } catch (Exception ex) {
                                     _log.Warn($"Playlist \"{plName}\": could not remove {entryIdsToRemove.Count} items for {plUser.Name}: {ex.Message}");
                                 }
+                                await GentleMode.WroteAsync(cancellationToken);
                             }
 
                             if (toAdd.Length > 0)
                             {
                                 _playlistManager.AddToPlaylist(existingPlaylist.InternalId, toAdd, plUser);
+                                await GentleMode.WroteAsync(cancellationToken);
                             }
 
                             // Reorder the playlist so it mirrors the source order. AddToPlaylist appends new
                             // items at the end, so re-read the actual contents (to pick up entry IDs of the
-                            // items just added) and move each entry into its place; a show's episodes move
-                            // together, in their own order. Only an entry that is out of place is moved.
+                            // items just added); a show's episodes move together, in their own order. Each
+                            // move saves the playlist, so the entries already in the right order among
+                            // themselves (the longest such run) stay and only the others move.
                             var afterEntries = PlaylistEntries(_libraryManager.GetItemList(
                                 new InternalItemsQuery { ListIds = new[] { existingPlaylist.InternalId }, OrderBy = new[] { ("ListItemOrder", SortOrder.Ascending) } }),
                                 desiredPlIdSet);
@@ -4476,24 +4543,28 @@ namespace HomeScreenCompanion
                             var currentOrder = afterEntries.Select(e => e.Entry).ToList();
 
                             bool reordered = false;
-                            for (int targetIndex = 0; targetIndex < targetOrder.Count && targetIndex < currentOrder.Count; targetIndex++)
+                            if (!currentOrder.SequenceEqual(targetOrder) && currentOrder.Count == targetOrder.Count)
                             {
-                                long wanted = targetOrder[targetIndex];
-                                if (currentOrder[targetIndex] == wanted) continue;   // already in place
-
-                                try
+                                var stay = InOrderAlready(currentOrder, targetOrder);
+                                for (int targetIndex = 0; targetIndex < targetOrder.Count; targetIndex++)
                                 {
-                                    await _playlistManager.MoveItem(existingPlaylist.InternalId, wanted, targetIndex);
-
-                                    // Mirror the same move locally so our model matches the server.
+                                    long wanted = targetOrder[targetIndex];
+                                    if (stay.Contains(wanted)) continue;
+                                    // Right after the entry that comes before it in the list's order.
                                     currentOrder.Remove(wanted);
-                                    currentOrder.Insert(targetIndex, wanted);
-                                    reordered = true;
-                                }
-                                catch (Exception ex)
-                                {
-                                    _log.Warn($"Playlist \"{plName}\": could not reorder for {plUser.Name}: {ex.Message}");
-                                    break;
+                                    int at = targetIndex == 0 ? 0 : currentOrder.IndexOf(targetOrder[targetIndex - 1]) + 1;
+                                    try
+                                    {
+                                        await _playlistManager.MoveItem(existingPlaylist.InternalId, wanted, at);
+                                        currentOrder.Insert(at, wanted);
+                                        reordered = true;
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        _log.Warn($"Playlist \"{plName}\": could not reorder for {plUser.Name}: {ex.Message}");
+                                        break;
+                                    }
+                                    await GentleMode.WroteAsync(cancellationToken);
                                 }
                             }
 
@@ -4791,16 +4862,22 @@ namespace HomeScreenCompanion
                             try
                             {
                                 // Hämta befintlig sektion som bas — plugin-inställningar appliceras ovanpå utan att nollställa Emby-egna värden
+                                var _hsBefore = SectionKey(_jsonSerializer, ownedSection);
                                 var updateSection = BuildContentSection(_jsonSerializer, settingsDict, userLibraryId, ownedSection);
                                 typeof(ContentSection).GetProperty("Id")?.SetValue(updateSection, ownedSection.Id);
-                                _userManager.UpdateHomeSection(userInternalId, updateSection, cancellationToken);
+                                if (SectionKey(_jsonSerializer, updateSection) != _hsBefore)
+                                {
+                                    GentleMode.Wrote(cancellationToken);
+                                    _userManager.UpdateHomeSection(userInternalId, updateSection, cancellationToken);
+                                    _hsAction = "updated";
+                                }
+                                else _hsAction = "unchanged";
                                 trackId = ownedSection.Id ?? sectionMarker;
-                                _hsAction = "updated";
                                 if (_posMove && MoveToPosition(_userManager, userInternalId, ownedSection.Id ?? "", _posNow, cancellationToken,
                                         tc.HomeSectionUserIds.Where(u => u != userId), settingsDict.TryGetValue("CustomName", out var _movedName) ? _movedName : null))
                                 {
                                     _posMoved++;
-                                    _hsAction = "updated, moved to its new position";
+                                    _hsAction += ", moved to its new position";
                                 }
                                 goto _hsSectionDone;
                             }
@@ -4820,6 +4897,7 @@ namespace HomeScreenCompanion
                         {
                             var beforeIds = new HashSet<string>(
                                 allCurrentSections.Where(s => !string.IsNullOrEmpty(s.Id)).Select(s => s.Id));
+                            GentleMode.Wrote(cancellationToken);
                             _userManager.AddHomeSection(userInternalId, BuildContentSection(_jsonSerializer, settingsDict, userLibraryId), cancellationToken);
                             var afterSections = _userManager.GetHomeSections(userInternalId, cancellationToken);
                             var newId = (afterSections?.Sections ?? Array.Empty<ContentSection>())
@@ -5005,15 +5083,21 @@ namespace HomeScreenCompanion
                     string sectionId;
                     if (owned != null)
                     {
+                        var before = SectionKey(_jsonSerializer, owned);
                         written = RotatingRow.Build(tc, pick, config, _libraryManager, _jsonSerializer, owned);
                         typeof(ContentSection).GetProperty("Id")?.SetValue(written, owned.Id);
-                        _userManager.UpdateHomeSection(uid, written, cancellationToken);
+                        if (SectionKey(_jsonSerializer, written) != before)
+                        {
+                            GentleMode.Wrote(cancellationToken);
+                            _userManager.UpdateHomeSection(uid, written, cancellationToken);
+                        }
                         sectionId = owned.Id;
                         if (posMove) MoveToPosition(_userManager, uid, sectionId, settingsNow, cancellationToken, tc.HomeSectionUserIds.Where(u => u != userId), written.CustomName);
                     }
                     else
                     {
                         written = RotatingRow.Build(tc, pick, config, _libraryManager, _jsonSerializer, null);
+                        GentleMode.Wrote(cancellationToken);
                         _userManager.AddHomeSection(uid, written, cancellationToken);
                         sectionId = (_userManager.GetHomeSections(uid, cancellationToken)?.Sections ?? Array.Empty<ContentSection>())
                             .Where(s => !string.IsNullOrEmpty(s.Id) && !sections.Any(b => b.Id == s.Id)).Select(s => s.Id).FirstOrDefault() ?? "";
@@ -5759,6 +5843,17 @@ namespace HomeScreenCompanion
                 catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             }
             return updated;
+        }
+
+        /// <summary>
+        /// A row as Emby stores it (written and read back through <see cref="ContentSection"/>), to
+        /// tell whether an update would change anything: an unchanged row is not written again.
+        /// Take it before <see cref="BuildContentSection"/>, which changes the row it is given.
+        /// </summary>
+        internal static string SectionKey(IJsonSerializer jsonSerializer, ContentSection section)
+        {
+            try { return jsonSerializer.SerializeToString(jsonSerializer.DeserializeFromString<ContentSection>(jsonSerializer.SerializeToString(section))); }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); return Guid.NewGuid().ToString("N"); }
         }
 
         internal static ContentSection BuildContentSection(IJsonSerializer jsonSerializer, Dictionary<string, string> settings, string? libraryId, ContentSection? existing = null)
@@ -7307,6 +7402,7 @@ namespace HomeScreenCompanion
             if (gs.EnableHomeSection)
                 _log.Info($"  Home sections: {(gs.HomeSectionSynced ? 1 : 0)} synced");
             if (_userStatus?.SummaryLine() is string disabledLine) _log.Info("  " + disabledLine);
+            foreach (var gentleLine in GentleMode.SummaryLines()) _log.Info("  " + gentleLine);
             _log.Info($"  Done in {RunLog.Elapsed(DateTime.Now - startTime)}  ·  {StatusSymbol(failed, warned)} {finalStatus}");
             _log.Rule();
         }
@@ -7890,7 +7986,7 @@ namespace HomeScreenCompanion
         }
 
         // onlyTag: Run Group on one top-list — rebuild just that list and leave the other folders alone.
-        private void SyncTopListFolders(PluginConfiguration config, bool dryRun, string? onlyTag = null)
+        private void SyncTopListFolders(PluginConfiguration config, bool dryRun, string? onlyTag = null, CancellationToken cancellationToken = default)
         {
             var dataPath = Plugin.Instance.DataFolderPath;
             var topListsPath = Path.Combine(dataPath, "toplists");
@@ -8052,9 +8148,26 @@ namespace HomeScreenCompanion
                 int count = 0;
                 var rankExtras = TopListHistory.Update(tl.TagName, selected.Select(s => s.Item).ToList(), badgeStyle,
                     _jsonSerializer, _libraryManager, _userManager, _userDataManager, m => _log.Warn(m));
-                // Only files that changed are written (and the ones no longer in the list removed): the
-                // folder is a watched library, so rewriting every file made Emby refresh every title of
-                // the list on each sync.
+                // The list's library (none yet for a new list: EnsureLibraries makes it below). With one,
+                // the run owns the folder until its copies are prepared (TopListCopies): the real-time
+                // handler leaves them alone, Emby does not watch the folder, and the library is
+                // refreshed once after the writes.
+                var tlLib = RankedCollections.LibraryFor(_libraryManager, folderPath);
+                long tlLibId = 0;
+                bool own = tlLib != null && long.TryParse(tlLib.ItemId, out tlLibId);
+                if (own)
+                {
+                    RankedCollections.UseHscLibraryOptions(_libraryManager, tlLibId, tlLib!.Name, RankedCollections.MovieTypes, "Top-list library", _log);
+                    TopListCopies.Begin(folderPath);
+                }
+                try
+                {
+                // Only files that changed are written (and the ones no longer in the list removed):
+                // each changed file is work for Emby's refresh of the library.
+                var pendingNew = new List<(string BaseName, string FilePath, BaseItem Item)>();
+                // An nfo or .strm changed: Emby has to read the folder again (badge images alone
+                // are applied to the copies directly).
+                bool metaChanged = false;
                 var changedBases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var wantedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var tempDir = Path.Combine(Path.GetTempPath(), "hsc_" + Guid.NewGuid().ToString("N"));
@@ -8074,8 +8187,11 @@ namespace HomeScreenCompanion
                     {
                         count++;
                         var sortPrefix = count.ToString().PadLeft(digits, '0');
+                        // No rank in the nfo when the run owns the folder: the rank is set as the
+                        // copy's SortName (TopListCopies.Prepare), so a reorder rewrites no nfo.
                         bool changed = ShowTopList.WriteIfChanged(Path.Combine(folderPath, entry.BaseName + ".nfo"),
-                            HomeScreenCompanionService.BuildTopListNfo(entry.Item, sortPrefix));
+                            HomeScreenCompanionService.BuildTopListNfo(entry.Item, own ? null : sortPrefix));
+                        if (changed) metaChanged = true;
                         var rx = rankExtras.TryGetValue(entry.Item.Id, out var _rx) ? _rx : null;
                         var sig = RenderSignature(entry.Item, count, badgeStyle, rx);
                         newSigs[entry.BaseName] = sig;
@@ -8093,9 +8209,12 @@ namespace HomeScreenCompanion
                         }
                         foreach (var suffix in new[] { ".jpg", "-thumb.jpg" })
                             wantedFiles.Add(entry.BaseName + suffix);
-                        // .strm last: the folder is a watched library, and Emby creates the item the
-                        // moment it sees the .strm — the nfo and badged images must already be there.
-                        if (ShowTopList.WriteIfChanged(Path.Combine(folderPath, entry.BaseName + ".strm"), entry.FilePath)) changed = true;
+                        // .strm last: Emby creates the item the moment it sees the .strm — the nfo and
+                        // badged images must already be there. A new title's .strm waits for its
+                        // slice (below) when the run owns the folder.
+                        var strmFile = Path.Combine(folderPath, entry.BaseName + ".strm");
+                        if (own && !File.Exists(strmFile)) pendingNew.Add(entry);
+                        else if (ShowTopList.WriteIfChanged(strmFile, entry.FilePath)) { changed = true; metaChanged = true; }
                         wantedFiles.Add(entry.BaseName + ".nfo");
                         wantedFiles.Add(entry.BaseName + ".strm");
                         if (changed) changedBases.Add(entry.BaseName);
@@ -8118,82 +8237,94 @@ namespace HomeScreenCompanion
                     if (!ext.Equals(".strm", StringComparison.OrdinalIgnoreCase) && !ext.Equals(".nfo", StringComparison.OrdinalIgnoreCase)
                         && !ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase)) continue;
                     if (wantedFiles.Contains(Path.GetFileName(f))) continue;
-                    try { File.Delete(f); removedFiles++; } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                    try { File.Delete(f); removedFiles++; if (!ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase)) metaChanged = true; } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                 }
 
-                // Notify the file system monitor so Emby is aware of the changes
-                if (changedBases.Count > 0 || removedFiles > 0)
+                if (!own)
                 {
-                    try { _libraryMonitor?.ReportFileSystemChanged(folderPath); }
-                    catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
-                }
-
-                // For items already indexed in the library: update SortName and poster directly
-                // so changes are visible immediately without waiting for a full library scan.
-                try
-                {
-                    var sortPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                    var originalNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                    for (int si = 0; si < selected.Count; si++)
+                    // No library yet (EnsureLibraries makes and scans it), or one HSC did not find.
+                    if (changedBases.Count > 0 || removedFiles > 0)
                     {
-                        var _strm = Path.Combine(folderPath, selected[si].BaseName + ".strm");
-                        sortPaths[_strm] = (si + 1).ToString().PadLeft(digits, '0');
-                        originalNames[_strm] = selected[si].Item.Name ?? "";
+                        try { _libraryMonitor?.ReportFileSystemChanged(folderPath); }
+                        catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                    }
+                }
+                else
+                {
+                    var strmPaths = new Dictionary<string, (string Rank, BaseItem Film)>(StringComparer.OrdinalIgnoreCase);
+                    for (int si = 0; si < selected.Count; si++)
+                        strmPaths[Path.Combine(folderPath, selected[si].BaseName + ".strm")] = ((si + 1).ToString().PadLeft(digits, '0'), selected[si].Item);
+
+                    // Copies of films that left the list go straight away.
+                    foreach (var stale in TopListCopiesIn(folderPath).Where(c => !strmPaths.ContainsKey(c.Path)))
+                    {
+                        try { GentleMode.Timed("top-list copy delete", () => _libraryManager.DeleteItem(stale, new DeleteOptions { DeleteFileLocation = false })); }
+                        catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                        GentleMode.Wrote(cancellationToken);
                     }
 
-                    var libItems = _libraryManager.GetItemList(new InternalItemsQuery
+                    // New titles: their .strm in slices (a few while someone is watching, 25
+                    // otherwise), each followed by one refresh of the library (normal priority),
+                    // waited for. The first refresh also reads the changed nfo files.
+                    int written = selected.Count - pendingNew.Count;
+                    bool needRefresh = metaChanged || TopListCopiesIn(folderPath).Count < written;
+                    bool timedOut = false;
+                    while ((pendingNew.Count > 0 || needRefresh) && !timedOut)
                     {
-                        Recursive = true,
-                        IncludeItemTypes = new[] { "Movie" }
-                    }).Where(i => !string.IsNullOrEmpty(i.Path)
-                               && i.Path.StartsWith(folderPath + Path.DirectorySeparatorChar,
-                                                    StringComparison.OrdinalIgnoreCase))
-                      .ToList();
-
-                    foreach (var li in libItems)
-                    {
-                        var strmPath = li.Path;
-                        if (string.IsNullOrEmpty(strmPath)) continue;
-                        // Unchanged files and rank: the item is left alone (no update, no refresh).
-                        bool rankChanged = sortPaths.TryGetValue(strmPath, out var newSort) && !string.Equals(li.SortName, newSort, StringComparison.Ordinal);
-                        // The copy shows the original's title (see BuildTopListNfo), whatever language its library fetched.
-                        bool nameChanged = originalNames.TryGetValue(strmPath, out var origName) && origName.Length > 0 && !string.Equals(li.Name, origName, StringComparison.Ordinal);
-                        if (nameChanged) li.Name = origName;
-                        if (!rankChanged && !nameChanged && !changedBases.Contains(Path.GetFileNameWithoutExtension(strmPath))
-                            && HomeScreenCompanionService.RankedImagesApplied(li, folderPath)) continue;
-
-                        // Update SortName
-                        if (newSort != null)
-                        {
-                            var prop = li.GetType().GetProperty("SortName");
-                            if (prop?.CanWrite == true) prop.SetValue(li, newSort);
-                        }
-
-                        // Point poster and thumb at our local ranked images
-                        HomeScreenCompanionService.ApplyRankedImages(li, folderPath);
-
-                        // Merge STRM as an alternate version of the original library movie.
-                        // MergeItems replicates what Emby does automatically when two video
-                        // files for the same film share a folder, but across different virtual
-                        // libraries.
+                        cancellationToken.ThrowIfCancellationRequested();
+                        int take = Math.Min(GentleMode.BatchSize, pendingNew.Count);
+                        foreach (var w in pendingNew.Take(take))
+                            ShowTopList.WriteIfChanged(Path.Combine(folderPath, w.BaseName + ".strm"), w.FilePath);
+                        pendingNew.RemoveRange(0, take);
+                        written += take;
+                        needRefresh = false;
                         try
                         {
-                            var strmImdb = li.GetProviderId("Imdb");
-                            if (!string.IsNullOrEmpty(strmImdb)
-                                && origLookup.TryGetValue(strmImdb, out var primary)
-                                && li.Id != primary.Id)
+                            _providerManager.QueueRefresh(tlLibId, new MetadataRefreshOptions(_fileSystem)
                             {
-                                _libraryManager.MergeItems(new[] { primary, li });
-                                MergeTopListVersionsTask.QueueStrmProbe(_providerManager, _fileSystem, li);
-                            }
+                                Recursive = true,
+                                MetadataRefreshMode = MetadataRefreshMode.Default,
+                                ImageRefreshMode = MetadataRefreshMode.Default
+                            }, RefreshPriority.Normal);
                         }
-                        catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
-
-                        try { _libraryManager.UpdateItem(li, li.Parent, ItemUpdateType.MetadataEdit, null); }
+                        catch (Exception ex) { _log.Warn($"Top-list library '{tlLib!.Name}' could not be refreshed: {ex.Message}"); break; }
+                        if (!RankedCollections.WaitForCopiesAsync(_providerManager, _libraryManager, tlLibId, folderPath, written, 0, TimeSpan.FromSeconds(90), cancellationToken).GetAwaiter().GetResult())
+                            timedOut = true;
+                        if (pendingNew.Count > 0) GentleMode.Wrote(cancellationToken, take);
+                    }
+                    // Not indexed in time: the rest is written now and Emby adds it later (the
+                    // real-time handler prepares those copies).
+                    foreach (var w in pendingNew)
+                        ShowTopList.WriteIfChanged(Path.Combine(folderPath, w.BaseName + ".strm"), w.FilePath);
+                    if (timedOut)
+                    {
+                        _log.Warn($"Top-list '{tl.TagName}': Emby is still adding its copies — the next sync finishes them");
+                        try { _providerManager.QueueRefresh(tlLibId, new MetadataRefreshOptions(_fileSystem) { Recursive = true }, RefreshPriority.Low); }
                         catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                     }
+
+                    // Every copy: rank, badged images, the film's text, media info and cast, merged
+                    // with the film. A copy that is already right costs reads only.
+                    int preparedWrites = 0;
+                    foreach (var li in TopListCopiesIn(folderPath))
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (!strmPaths.TryGetValue(li.Path, out var want)) continue;
+                        var imdb = li.GetProviderId("Imdb");
+                        var mergeWith = !string.IsNullOrEmpty(imdb) && origLookup.TryGetValue(imdb, out var orig) ? orig : want.Film;
+                        int writes = TopListCopies.Prepare(li, want.Film, mergeWith, want.Rank,
+                            changedBases.Contains(Path.GetFileNameWithoutExtension(li.Path)),
+                            _libraryManager, _providerManager, _fileSystem, m => _log.Warn(m), m => _log.Debug(m), cancellationToken);
+                        preparedWrites += writes;
+                        if (writes > 0) GentleMode.Wrote(cancellationToken, writes);
+                    }
+                    if (preparedWrites > 0) _log.Debug($"  Top-list '{tl.TagName}': copies brought in line with their films ({RunLog.Plural(preparedWrites, "write")})");
                 }
-                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                }
+                finally
+                {
+                    if (own) TopListCopies.End(folderPath);
+                }
 
                 _log.Ok($"Top-list '{tl.TagName}': {RunLog.Plural(count, "movie")} synced to its library folder");
             }
@@ -8216,6 +8347,39 @@ namespace HomeScreenCompanion
                 }
                 Plugin.Instance.SaveConfiguration();
             }
+        }
+
+        // After HSC wrote into a top-list folder: one refresh of its library, at normal priority
+        // (Emby does not watch HSC's folders: its monitor refreshes the library at high priority
+        // once per changed file). No library found: Emby's monitor is told about the folder.
+        private void RefreshTopListFolder(string folderPath)
+        {
+            try
+            {
+                var lib = RankedCollections.LibraryFor(_libraryManager, folderPath);
+                if (lib != null && long.TryParse(lib.ItemId, out var libId))
+                    _providerManager.QueueRefresh(libId, new MetadataRefreshOptions(_fileSystem)
+                    {
+                        Recursive = true,
+                        MetadataRefreshMode = MetadataRefreshMode.Default,
+                        ImageRefreshMode = MetadataRefreshMode.Default
+                    }, RefreshPriority.Normal);
+                else _libraryMonitor?.ReportFileSystemChanged(folderPath);
+            }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+        }
+
+        // The movie copies Emby has indexed in a top-list folder.
+        private List<BaseItem> TopListCopiesIn(string folderPath)
+        {
+            var prefix = folderPath.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            return _libraryManager.GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = new[] { "Movie" },
+                Recursive = true,
+                IsVirtualItem = false,
+                PathStartsWith = prefix
+            }).Where(i => !string.IsNullOrEmpty(i.Path) && i.Path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList();
         }
 
         // Show top-lists are rebuilt on every sync, manual ones too: their series get new episodes,
@@ -8265,10 +8429,15 @@ namespace HomeScreenCompanion
                     }
                     if (maxItems > 0) series = series.Take(maxItems).ToList();
 
+                    var tlLib = RankedCollections.LibraryFor(_libraryManager, folderPath);
+                    if (tlLib != null && long.TryParse(tlLib.ItemId, out var tlLibId))
+                        RankedCollections.UseHscLibraryOptions(_libraryManager, tlLibId, tlLib.Name, RankedCollections.ShowTypes, "Top-list library", _log);
+                    int changesBefore = ShowTopList.Changes;
                     var count = ShowTopList.WriteFolder(folderPath, series, badgeStyle,
                         _libraryManager, _jsonSerializer, _httpClient, _providerManager, _fileSystem, m => _log.Warn(m),
                         ranked => TopListHistory.Update(tl.TagName, ranked, badgeStyle, _jsonSerializer, _libraryManager, _userManager, _userDataManager, m => _log.Warn(m)));
-                    try { _libraryMonitor?.ReportFileSystemChanged(folderPath); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                    // One refresh of the library when a file changed (Emby does not watch the folder).
+                    if (ShowTopList.Changes != changesBefore) RefreshTopListFolder(folderPath);
                     ShowTopList.ApplyIndexed(folderPath, _libraryManager, _jsonSerializer);
                     _log.Ok($"Top-list '{tl.TagName}': {RunLog.Plural(count, "show")} synced to its library folder");
                 }

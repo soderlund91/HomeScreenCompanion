@@ -9680,27 +9680,19 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 return { folders: existingFolders, preCreationIds: new Set() };
             }
             // Library doesn't exist yet — create it, then re-fetch the updated list.
-            // A show list's library only holds copies the plugin writes complete (nfo + images
-            // linked from the originals), so it needs no online metadata, and it stays out of
-            // search where every show would otherwise appear twice.
-            var libraryOptions = isShows
-                ? {
-                    EnableInternetProviders: false,
-                    ExcludeFromSearch: true,
-                    TypeOptions: ['Series', 'Season', 'Episode'].map(function (t) {
-                        return { Type: t, MetadataFetchers: ['Nfo'], MetadataFetcherOrder: ['Nfo'], ImageFetchers: [], ImageFetcherOrder: [] };
-                    })
-                }
-                : {
-                    EnableInternetProviders: true,
-                    TypeOptions: [{
-                        Type: 'Movie',
-                        MetadataFetchers: ['Nfo', 'TheMovieDb', 'TheTVDB'],
-                        MetadataFetcherOrder: ['Nfo', 'TheMovieDb', 'TheTVDB'],
-                        ImageFetchers: ['TheMovieDb', 'TheTVDB'],
-                        ImageFetcherOrder: ['TheMovieDb', 'TheTVDB']
-                    }]
-                };
+            // A list's library only holds copies the plugin makes complete (nfo + images; a movie
+            // copy also takes its film's text, media info and cast), so it needs no online
+            // metadata, and HSC refreshes it after writing, so Emby does not watch its folder
+            // (SourceTopLists.LibraryOptionsFor makes the same). A show list stays out of search,
+            // where every show would otherwise appear twice.
+            var libraryOptions = {
+                EnableInternetProviders: false,
+                EnableRealtimeMonitor: false,
+                ExcludeFromSearch: isShows,
+                TypeOptions: (isShows ? ['Series', 'Season', 'Episode'] : ['Movie']).map(function (t) {
+                    return { Type: t, MetadataFetchers: ['Nfo'], MetadataFetcherOrder: ['Nfo'], ImageFetchers: [], ImageFetcherOrder: [] };
+                })
+            };
             return fetch(window.ApiClient.getUrl('Library/VirtualFolders'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Emby-Token': tok },

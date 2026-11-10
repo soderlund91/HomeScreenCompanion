@@ -58,6 +58,7 @@ namespace HomeScreenCompanion
                 logger?.Info($"{name}: the previous sync has finished — starting now");
             }
             _holder = name;
+            GentleMode.Begin();
             return new Releaser();
         }
 
@@ -66,6 +67,7 @@ namespace HomeScreenCompanion
         {
             if (!Gate.Wait(0)) return null;
             _holder = name;
+            GentleMode.Begin();
             return new Releaser();
         }
 

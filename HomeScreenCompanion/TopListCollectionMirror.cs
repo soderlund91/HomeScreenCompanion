@@ -332,10 +332,17 @@ namespace HomeScreenCompanion
                                 _logger?.Info($"[TopList] [Dry run] Collection mirror: '{boxSet.Name}' would get {toAdd.Length} top-list item(s) added and {toRemove.Length} removed");
                             continue;
                         }
-                        if (toAdd.Length > 0)
-                            await _collectionManager.AddToCollection(collId, toAdd).ConfigureAwait(false);
-                        if (toRemove.Length > 0)
-                            _collectionManager.RemoveFromCollection(boxSet, toRemove);
+                        // In slices while someone is watching (GentleMode): each call saves every item.
+                        foreach (var slice in GentleMode.Slices(toAdd))
+                        {
+                            await GentleMode.TimedAsync("collection members", () => _collectionManager.AddToCollection(collId, slice)).ConfigureAwait(false);
+                            await GentleMode.WroteAsync(CancellationToken.None, slice.Length).ConfigureAwait(false);
+                        }
+                        foreach (var slice in GentleMode.Slices(toRemove))
+                        {
+                            GentleMode.Timed("collection members", () => _collectionManager.RemoveFromCollection(boxSet, slice));
+                            await GentleMode.WroteAsync(CancellationToken.None, slice.Length).ConfigureAwait(false);
+                        }
                         changes += toAdd.Length + toRemove.Length;
                     }
                     catch (Exception ex)

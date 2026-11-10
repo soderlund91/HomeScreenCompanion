@@ -110,6 +110,7 @@ namespace HomeScreenCompanion
                 var startTime = DateTime.Now;
                 _log.Rule();
                 _log.Info($"Home Screen Sync  ·  {startTime:yyyy-MM-dd HH:mm}");
+                GentleMode.Announce(_log);
                 _log.Rule();
 
                 // Dry run: the whole run works on a copy of the settings (memberships, tracking and
@@ -189,8 +190,9 @@ namespace HomeScreenCompanion
                     + (sourceCount > 1 ? $" from {sourceCount} source users." : ".");
                 _log.Rule();
                 _log.Info(_dry ? "Summary (dry run: nothing was changed)" : "Summary");
-                _log.Info($"  Sections:      {totals.Copied} {(_dry ? "would be copied" : "copied")} to {RunLog.Plural(usersDone, "user")}{(sourceCount > 1 ? $" from {RunLog.Plural(sourceCount, "source user")}" : "")}{(totals.Failed > 0 ? $", {RunLog.Plural(totals.Failed, "user")} failed" : "")}");
+                _log.Info($"  Sections:      {totals.Copied} {(_dry ? "would be copied" : "copied")} to {RunLog.Plural(usersDone, "user")}{(totals.Unchanged > 0 ? $", {totals.Unchanged} unchanged" : "")}{(sourceCount > 1 ? $" from {RunLog.Plural(sourceCount, "source user")}" : "")}{(totals.Failed > 0 ? $", {RunLog.Plural(totals.Failed, "user")} failed" : "")}");
                 if (userStatus.SummaryLine() is string disabledLine) _log.Info("  " + disabledLine);
+                foreach (var gentleLine in GentleMode.SummaryLines()) _log.Info("  " + gentleLine);
                 _log.Info($"  Done in {RunLog.Elapsed(DateTime.Now - startTime)}  ·  {(totals.Failed > 0 ? "✖ Completed with " + RunLog.Plural(totals.Failed, "error") : "✔ Completed")}");
                 _log.Rule();
                 progress.Report(100);
@@ -217,7 +219,7 @@ namespace HomeScreenCompanion
 
         private sealed class SyncTotals
         {
-            public int Copied, Targets, Failed, Skipped;
+            public int Copied, Unchanged, Targets, Failed, Skipped;
             public bool ConfigChanged;   // top-list or source row tracking updated
         }
 
@@ -369,6 +371,7 @@ namespace HomeScreenCompanion
                         }
                         if (row == null)
                         {
+                            GentleMode.Wrote(cancellationToken);
                             _userManager.AddHomeSection(targetInternalId, managed.NewTopListRow(tl, _jsonSerializer, _libraryManager), cancellationToken);
                             row = (_userManager.GetHomeSections(targetInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>())
                                 .FirstOrDefault(s => !string.IsNullOrEmpty(s.Id) && !before.Any(b => b.Id == s.Id));
@@ -403,6 +406,18 @@ namespace HomeScreenCompanion
             }
 
             if (profile.LibraryOrder) CopyLibraryOrder(profile.SourceUserId, sourceName, targets, userStatus);
+        }
+
+        // A row as Emby stores it, without its id: to tell whether a user's rows already are the master's.
+        private string RowKey(ContentSection section)
+        {
+            try
+            {
+                var c = _jsonSerializer.DeserializeFromString<ContentSection>(_jsonSerializer.SerializeToString(section));
+                typeof(ContentSection).GetProperty("Id")?.SetValue(c, null);
+                return _jsonSerializer.SerializeToString(c);
+            }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); return Guid.NewGuid().ToString("N"); }
         }
 
         // Copy all: the user's home screen replaced by the master's. Rows of sources and top-lists
@@ -459,6 +474,23 @@ namespace HomeScreenCompanion
                 foreach (var k in kept)
                     HomeScreenCompanionTask.RememberRowPosition(_userManager, _jsonSerializer, k.PositionKey, targetIdStr, targetInternalId, k.Row.Id, cancellationToken);
 
+            var copies = new List<(ContentSection Section, ContentSection Copy)>();
+            foreach (var section in masterSections)
+            {
+                var copy = PrepareCopy(config, managed, section, sourceKey, targetIdStr, targetKey, targetName, notCopied);
+                if (copy != null) copies.Add((section, copy));
+            }
+            // The user's rows already are the master's (the same rows in the same order, none kept
+            // aside): nothing is written. Deleting and adding them all again would write every row
+            // of every user on every sync, and give each row a new id.
+            if (kept.Count == 0 && existingSections.Length == copies.Count
+                && existingSections.Select(RowKey).SequenceEqual(copies.Select(c => RowKey(c.Copy))))
+            {
+                _log.Debug($"  {targetName}: {RunLog.Plural(copies.Count, "section")} already as the master's — nothing written");
+                totals.Unchanged += copies.Count;
+                return 0;
+            }
+
             if (existingSections.Length > 0 && _dry)
                 _log.Debug($"  [Dry run] {targetName}: {existingSections.Length} existing sections would be replaced");
             else if (existingSections.Length > 0)
@@ -473,14 +505,13 @@ namespace HomeScreenCompanion
             }
 
             int copiedHere = 0;
-            foreach (var section in masterSections)
+            foreach (var (section, copy) in copies)
             {
-                var copy = PrepareCopy(config, managed, section, sourceKey, targetIdStr, targetKey, targetName, notCopied);
-                if (copy == null) continue;
                 _log.Debug(D($"  {targetName}: + [{section.SectionType}] \"{copy.CustomName ?? copy.Name}\""));
                 if (_dry) { totals.Copied++; copiedHere++; continue; }
                 var rotating = managed.RotatingRowOf(section, sourceKey);
                 var beforeAdd = rotating != null ? _userManager.GetHomeSections(targetInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>() : null;
+                GentleMode.Wrote(cancellationToken);
                 _userManager.AddHomeSection(targetInternalId, copy, cancellationToken);
                 if (rotating != null && TrackRotatingRow(rotating, beforeAdd!, copy, targetIdStr, targetInternalId, cancellationToken)) totals.ConfigChanged = true;
                 totals.Copied++;
@@ -499,6 +530,7 @@ namespace HomeScreenCompanion
                 if (_dry) { _log.Debug($"  [Dry run] {targetName}: = '{k.Row.CustomName ?? k.Row.Name}' would be kept ({(k.Source != null ? "source row; the master is not one of its users" : "top-list row")})"); continue; }
                 if (row == null)
                 {
+                    GentleMode.Wrote(cancellationToken);
                     _userManager.AddHomeSection(targetInternalId, CopySection(k.Row), cancellationToken);
                     row = (_userManager.GetHomeSections(targetInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>())
                         .FirstOrDefault(s => !string.IsNullOrEmpty(s.Id) && !before.Any(b => b.Id == s.Id));
@@ -570,13 +602,20 @@ namespace HomeScreenCompanion
                 else if (match != null)
                 {
                     typeof(ContentSection).GetProperty("Id")?.SetValue(copy, match.Id);
-                    _userManager.UpdateHomeSection(targetInternalId, copy, cancellationToken);
+                    // The user's row already as the master's: not written again.
+                    bool changed = HomeScreenCompanionTask.SectionKey(_jsonSerializer, copy) != HomeScreenCompanionTask.SectionKey(_jsonSerializer, match);
+                    if (changed)
+                    {
+                        GentleMode.Wrote(cancellationToken);
+                        _userManager.UpdateHomeSection(targetInternalId, copy, cancellationToken);
+                    }
                     done.Add(match.Id ?? "");
                     if (rotating != null) { RotatingRow.Track(rotating, managed.SourceUserId(rotating, targetKey) ?? targetIdStr, match.Id ?? "", copy); totals.ConfigChanged = true; }
-                    _log.Debug($"  {targetName}: = '{label}' updated");
+                    _log.Debug($"  {targetName}: = '{label}' {(changed ? "updated" : "unchanged")}");
                 }
                 else
                 {
+                    GentleMode.Wrote(cancellationToken);
                     _userManager.AddHomeSection(targetInternalId, copy, cancellationToken);
                     var added = (_userManager.GetHomeSections(targetInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>())
                         .FirstOrDefault(s => !string.IsNullOrEmpty(s.Id) && !current.Any(b => b.Id == s.Id));

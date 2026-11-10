@@ -3459,33 +3459,30 @@ public class HomeScreenCompanionService : IService
                                                     StringComparison.OrdinalIgnoreCase))
                       .ToList();
 
+                    TopListCopies.Begin(folderPath);
+                    try
+                    {
                     foreach (var li in libItems)
                     {
                         if (string.IsNullOrEmpty(li.Path)) continue;
-
-                        if (sortPaths.TryGetValue(li.Path, out var newSort))
+                        sortPaths.TryGetValue(li.Path, out var newSort);
+                        if (!strmToOriginal.TryGetValue(li.Path, out var origItem))
                         {
-                            var prop = li.GetType().GetProperty("SortName");
-                            if (prop?.CanWrite == true) prop.SetValue(li, newSort);
+                            // Not in the list (any more): only its rank and badged images.
+                            if (newSort != null) li.SortName = newSort;
+                            ApplyRankedImages(li, folderPath);
+                            try { _libraryManager.UpdateItem(li, li.Parent, ItemUpdateType.MetadataEdit, null); }
+                            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                            continue;
                         }
-
-                        // Point poster and thumb at our local ranked images
-                        ApplyRankedImages(li, folderPath);
-
-                        // Merge STRM as an alternate version of the original library movie.
-                        try
-                        {
-                            if (strmToOriginal.TryGetValue(li.Path, out var origItem) && li.Id != origItem.Id)
-                            {
-                                _libraryManager.MergeItems(new[] { origItem, li });
-                                MergeTopListVersionsTask.QueueStrmProbe(_providerManager, _fileSystem, li);
-                            }
-                        }
-                        catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
-
-                        try { _libraryManager.UpdateItem(li, li.Parent, ItemUpdateType.MetadataEdit, null); }
-                        catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                        // Rank, badged images (all drawn again), the film's text, media info and
+                        // cast, merged with it: only what differs is written (TopListCopies).
+                        int writes = TopListCopies.Prepare(li, origItem, origItem, newSort, true,
+                            _libraryManager, _providerManager, _fileSystem, m => _logger.Warn(m), null, CancellationToken.None);
+                        if (writes > 0) GentleMode.Wrote(CancellationToken.None, writes);
                     }
+                    }
+                    finally { TopListCopies.End(folderPath); }
                 }
                 catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
 
@@ -3501,7 +3498,9 @@ public class HomeScreenCompanionService : IService
         // so Emby identifies the .strm item deterministically instead of guessing from the
         // "Title (Year)" file name — a wrong guess means no merge (duplicates in the UI) or a
         // merge with the wrong film.
-        internal static string BuildTopListNfo(BaseItem item, string sortPrefix)
+        // sortPrefix null: no rank in the nfo (a list sync sets the rank as the copy's SortName, so a
+        // reorder leaves the nfo as it is: Emby re-reading a changed nfo drops the copy's cast).
+        internal static string BuildTopListNfo(BaseItem item, string? sortPrefix)
         {
             var sb = new System.Text.StringBuilder();
             sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<movie>\n");
@@ -3509,7 +3508,7 @@ public class HomeScreenCompanionService : IService
             // language, and the copy would then show another name than the film it stands for.
             if (!string.IsNullOrWhiteSpace(item.Name))
                 sb.Append("  <title>").Append(System.Security.SecurityElement.Escape(item.Name)).Append("</title>\n");
-            sb.Append("  <sorttitle>").Append(sortPrefix).Append("</sorttitle>\n");
+            if (sortPrefix != null) sb.Append("  <sorttitle>").Append(sortPrefix).Append("</sorttitle>\n");
 
             var imdb = item.GetProviderId("Imdb");
             if (!string.IsNullOrWhiteSpace(imdb))

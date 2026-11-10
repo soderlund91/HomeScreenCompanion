@@ -223,7 +223,7 @@ namespace HomeScreenCompanion
             // Series that left the list.
             foreach (var dir in Directory.GetDirectories(folderPath))
                 if (!usedFolders.Contains(Path.GetFileName(dir)))
-                    try { Directory.Delete(dir, true); } catch (Exception ex) { log?.Invoke($"Top-list: could not remove '{dir}' — {ex.Message}"); }
+                    try { Directory.Delete(dir, true); Interlocked.Increment(ref Changes); } catch (Exception ex) { log?.Invoke($"Top-list: could not remove '{dir}' — {ex.Message}"); }
 
             jsonSerializer.SerializeToFile(manifest, Path.Combine(folderPath, ManifestFileName));
             return manifest.Count;
@@ -470,7 +470,7 @@ namespace HomeScreenCompanion
             _mediaSourceManager = mediaSourceManager;
         }
 
-        private static bool SyncVideoInfo(BaseItem copy, BaseItem original)
+        internal static bool SyncVideoInfo(BaseItem copy, BaseItem original)
         {
             bool changed = false;
             if (copy.Container != original.Container) { copy.Container = original.Container; changed = true; }
@@ -481,14 +481,15 @@ namespace HomeScreenCompanion
             return changed;
         }
 
-        private static void CopyMediaStreams(BaseItem copy, BaseItem original)
+        internal static bool CopyMediaStreams(BaseItem copy, BaseItem original)
         {
-            if (_itemRepository == null || _mediaSourceManager == null) return;
+            if (_itemRepository == null || _mediaSourceManager == null) return false;
             var theirs = _mediaSourceManager.GetMediaStreams(original) ?? new List<MediaStream>();
-            if (theirs.Count == 0) return;
+            if (theirs.Count == 0) return false;
             var mine = _mediaSourceManager.GetMediaStreams(copy) ?? new List<MediaStream>();
-            if (StreamSignature(mine) == StreamSignature(theirs)) return;
+            if (StreamSignature(mine) == StreamSignature(theirs)) return false;
             _itemRepository.SaveMediaStreams(copy.InternalId, theirs, CancellationToken.None);
+            return true;
         }
 
         private static string StreamSignature(List<MediaStream> streams) =>
@@ -496,7 +497,7 @@ namespace HomeScreenCompanion
                 .Select(s => $"{s.Index}:{s.Type}:{s.Codec}:{s.Language}:{s.Width}x{s.Height}:{s.Channels}:{s.IsExternal}:{s.Path}"));
 
         // The fields a card or details page shows. A copy's SortName is its rank and stays.
-        private static bool SyncMetadata(BaseItem copy, BaseItem original, bool isSeries)
+        internal static bool SyncMetadata(BaseItem copy, BaseItem original, bool isSeries)
         {
             bool changed = false;
             if (!string.IsNullOrEmpty(original.Name) && copy.Name != original.Name) { copy.Name = original.Name; changed = true; }
@@ -592,6 +593,9 @@ namespace HomeScreenCompanion
             return string.IsNullOrWhiteSpace(safe) ? "unknown" : safe;
         }
 
+        /// <summary>Files written or removed by WriteIfChanged / CopyIfChanged / WriteFolder (a caller compares before and after).</summary>
+        internal static int Changes;
+
         // Both return true when they wrote the file (it was missing or different).
         internal static bool WriteIfChanged(string path, string content)
         {
@@ -601,6 +605,7 @@ namespace HomeScreenCompanion
             }
             catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             File.WriteAllText(path, content);
+            Interlocked.Increment(ref Changes);
             return true;
         }
 
@@ -615,12 +620,13 @@ namespace HomeScreenCompanion
             }
             catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             File.Copy(source, target, overwrite: true);
+            Interlocked.Increment(ref Changes);
             return true;
         }
 
         private static void TryDelete(string path)
         {
-            try { File.Delete(path); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+            try { File.Delete(path); Interlocked.Increment(ref Changes); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
         }
     }
 }
