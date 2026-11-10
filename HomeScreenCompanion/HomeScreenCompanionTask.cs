@@ -1590,6 +1590,10 @@ namespace HomeScreenCompanion
                                     foreach (var id in toRemove) _log.Debug($"    - {CollLabel(id)}");
                                 }
                             }
+                            // A dry run does not work out a ranked collection's copies (RankedCollections.SyncAsync
+                            // writes them), so its films compared with its copies would say every title changes.
+                            else if (dryRun && rankedSources.ContainsKey(cName))
+                                _log.Debug($"  {cName}  →  ranked collection: its copies are not worked out in a dry run");
                             else if (toAdd.Count > 0 || toRemove.Count > 0)
                             {
                                 collWouldUpdate++;
@@ -1952,8 +1956,10 @@ namespace HomeScreenCompanion
                 // its tag or, when picked by hand, from the shows saved in its folder.
                 SyncTopListFolders(config, dryRun, tl.TagName);
                 var tlFolder = Path.Combine(Plugin.Instance!.DataFolderPath, "toplists", SanitizeTopListFolderName(tl.TagName));
-                listSummary = isShow ? $"{RunLog.Plural(ShowTopList.ReadManifest(tlFolder, _jsonSerializer).Count, "show")} synced to its library folder"
-                    : $"{RunLog.Plural(Directory.Exists(tlFolder) ? Directory.GetFiles(tlFolder, "*.strm").Length : 0, "movie")} synced to its library folder";
+                var inFolder = isShow ? RunLog.Plural(ShowTopList.ReadManifest(tlFolder, _jsonSerializer).Count, "show")
+                    : RunLog.Plural(Directory.Exists(tlFolder) ? Directory.GetFiles(tlFolder, "*.strm").Length : 0, "movie");
+                // A dry run left the folder as it was: say what is in it, not that it was synced.
+                listSummary = dryRun ? $"dry run — {inFolder} in its library folder, not changed" : $"{inFolder} synced to its library folder";
             }
             else if (dryRun)
             {
@@ -2080,8 +2086,8 @@ namespace HomeScreenCompanion
                 if (dryRun) _log.Skip("Dry run: the rotating row is not changed");
                 else ManageHomeSections(config, cancellationToken, debug, null, tagConfig.Tag.Trim());
                 _log.Rule();
-                LastRunStatus = $"Completed ({DateTime.Now:HH:mm})";
-                return (true, "Rotating row synced");
+                LastRunStatus = dryRun ? $"Dry run — completed ({DateTime.Now:HH:mm})" : $"Completed ({DateTime.Now:HH:mm})";
+                return (true, dryRun ? "Dry run — the rotating row is not changed" : "Rotating row synced");
             }
             if (_preview == null && tagConfig.SourceType == "AI" && tagConfig.AiRefreshIntervalDays > 0 &&
                 tagConfig.Active && IsScheduleActive(tagConfig.ActiveIntervals) &&

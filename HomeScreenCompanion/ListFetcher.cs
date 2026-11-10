@@ -588,7 +588,10 @@ namespace HomeScreenCompanion
                 int tmdbOnly = all.Count(i => string.IsNullOrEmpty(i.Imdb));
                 if (tmdbOnly > 0)
                     LastNote = $"{RunLog.Plural(tmdbOnly, "entry", "entries")} with a TMDb id only left out: they need a TMDb API key in Settings";
-                return all;
+                // Those without a type are dropped altogether: a TMDb id alone can be a film and an
+                // unrelated show, so the Missing titles (and their export) must not take it as a film.
+                // With a type they stay for the Missing titles, which can use the TMDb id safely.
+                return all.Where(i => !string.IsNullOrEmpty(i.Imdb) || i.Type != null).ToList();
             }
 
             // The IMDb ids of TMDb-only entries are asked 20 at a time, in list order, so a Max that
@@ -601,10 +604,14 @@ namespace HomeScreenCompanion
                 {
                     var chunk = all.Skip(start).Take(20).ToList();
                     var told = await Task.WhenAll(chunk.Where(i => string.IsNullOrEmpty(i.Imdb) && !string.IsNullOrEmpty(i.Tmdb))
-                        .Select(i => FillImdbFromTmdb(i, tmdbApiKey, cancellationToken)));
-                    ambiguous += told.Count(ok => !ok);
+                        .Select(async i => (Item: i, Ok: await FillImdbFromTmdb(i, tmdbApiKey, cancellationToken))));
+                    // Left out for good: not tagged, and not on the Missing titles or their export either
+                    // (they would take the TMDb id as a film).
+                    var leftOut = new HashSet<ExternalItemDto>(told.Where(x => !x.Ok).Select(x => x.Item));
+                    ambiguous += leftOut.Count;
                     foreach (var dto in chunk)
                     {
+                        if (leftOut.Contains(dto)) continue;
                         result.Add(dto);
                         if (hits != null && hits.See(dto)) return result;
                     }
@@ -616,6 +623,8 @@ namespace HomeScreenCompanion
                 if (ambiguous > 0)
                     LastNote = $"{RunLog.Plural(ambiguous, "entry", "entries")} with a TMDb id only and no type left out: TMDb has a movie and a show with that id, "
                         + "and the list's title and year did not tell which one it means. Give the entries a type (\"type\": \"movie\" or \"show\")";
+                // Nothing left: why, as the error of an unreadable list (Preserve keeps the last good one).
+                if (ambiguous > 0 && result.Count == 0) LastError = LastNote;
             }
         }
 

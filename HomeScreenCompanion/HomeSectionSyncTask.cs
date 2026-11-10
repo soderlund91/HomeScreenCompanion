@@ -233,7 +233,13 @@ namespace HomeScreenCompanion
         private bool _dry;
 
         // A log line about a change: marked when the run only simulates it.
-        private string D(string text) => _dry ? "[Dry run] " + text : text;
+        // (After the line's indent, so the log stays lined up.)
+        private string D(string text)
+        {
+            if (!_dry) return text;
+            int indent = text.Length - text.TrimStart(' ').Length;
+            return text.Substring(0, indent) + "[Dry run] " + text.Substring(indent);
+        }
 
         // Saves what this run changed. The run works on the settings it started with: when they
         // were saved on the page meanwhile, the server holds a new copy, so the run's membership

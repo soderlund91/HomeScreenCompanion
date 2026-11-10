@@ -138,15 +138,20 @@ namespace HomeScreenCompanion
                 }
                 if (tmdb.Length > 0)
                 {
+                    // TMDb numbers movies and shows apart: without a type, a film and a show with this id
+                    // cannot be told apart, so neither is shown (as the list left the entry out, see
+                    // ListFetcher.FillImdbFromTmdb). Only one of them: that one.
+                    var found = new List<(TmdbTitle X, bool Show)>();
                     foreach (var asShow in show.HasValue ? new[] { show.Value } : new[] { false, true })
                     {
                         try
                         {
                             var x = await MissingTitles.TmdbGet<TmdbTitle>((asShow ? "tv/" : "movie/") + tmdb, apiKey, http, json, ct).ConfigureAwait(false);
-                            if (x != null) return FromTmdb(t, x, asShow);
+                            if (x != null) found.Add((x, asShow));
                         }
                         catch (Exception ex) when (IsNotFound(ex)) { }
                     }
+                    if (found.Count == 1) return FromTmdb(t, found[0].X, found[0].Show);
                 }
                 return new Result { Imdb = imdb, Tmdb = tmdb };
             }
@@ -175,6 +180,10 @@ namespace HomeScreenCompanion
 
             try
             {
+                // A TMDb id alone, without a type, can be a film and an unrelated show: both are asked,
+                // and when both answer neither is shown (see AskTmdbAsync). Else the first that answers.
+                bool both = t.Type != "show" && t.Type != "movie" && imdb.Length == 0;
+                var hits = new List<(RemoteSearchResult Hit, bool Show)>();
                 foreach (var asShow in t.Type == "show" ? new[] { true } : t.Type == "movie" ? new[] { false } : new[] { false, true })
                 {
                     IEnumerable<RemoteSearchResult> results = asShow
@@ -184,6 +193,12 @@ namespace HomeScreenCompanion
                             new RemoteSearchQuery<MovieInfo> { SearchInfo = new MovieInfo { ProviderIds = ids }, IncludeDisabledProviders = true }, ct).ConfigureAwait(false);
                     var hit = (results ?? Enumerable.Empty<RemoteSearchResult>()).Where(Agrees).FirstOrDefault();
                     if (hit == null) continue;
+                    hits.Add((hit, asShow));
+                    if (!both) break;
+                }
+                if (hits.Count != 1) return new Result { Imdb = imdb, Tmdb = tmdb };
+                {
+                    var (hit, asShow) = hits[0];
                     var url = hit.ImageUrl ?? "";
                     // TheMovieDb gives the original size: the popup needs far less.
                     const string original = ImageBase + "original/";
@@ -195,7 +210,6 @@ namespace HomeScreenCompanion
                         Type = asShow ? "show" : "movie"
                     };
                 }
-                return new Result { Imdb = imdb, Tmdb = tmdb };
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex)
