@@ -695,7 +695,7 @@ namespace HomeScreenCompanion
                         continue;
                     }
 
-                    _log.Step($"Fetching sources — [{gs.GroupIndex}/{gs.GroupTotal}] {displayName}");
+                    _log.Step($"Fetching sources — [{gs.GroupIndex}/{gs.GroupTotal}] {StepName(tagConfig.Name, tagName)}");
                     var groupTimer = System.Diagnostics.Stopwatch.StartNew();
                     try
                     {
@@ -2406,7 +2406,7 @@ namespace HomeScreenCompanion
             _log.Blank();
             _log.Info("» Fetching sources");
             _log.Section($"[1/1] {_displayName}");
-            _log.Step($"Fetching sources — {_displayName}");
+            _log.Step($"Fetching sources — {StepName(tagConfig.Name, tagConfig.Tag.Trim())}");
             _log.Debug("  " + DescribeSourceDetail(tagConfig, effectiveLimit) + (groupEntries.Count > 1 ? $"  ·  {groupEntries.Count} sources in group" : ""));
 
             // Saved without a URL / local source yet: nothing is changed (see Execute).
@@ -3482,6 +3482,15 @@ namespace HomeScreenCompanion
             : t.SourceType == "LocalPlaylist" ? "no playlist picked yet" : "no collection picked yet";
 
         private static string GroupKey(TagConfig t) => GroupIssues.Key(t.Name, t.Tag);
+
+        /// The source's name for the live step under "Last run": "Name [tag]" only when the tag
+        /// differs from the name, so a source whose tag is its name is not named twice.
+        private static string StepName(string? name, string tag)
+        {
+            var n = (name ?? "").Trim();
+            if (n.Length == 0) return tag;
+            return string.Equals(n, tag, StringComparison.OrdinalIgnoreCase) ? n : $"{n} [{tag}]";
+        }
 
         // Fallback id a home row is found by when its real section id is not known.
         private static string SectionMarker(TagConfig tc) =>

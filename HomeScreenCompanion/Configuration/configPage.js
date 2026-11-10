@@ -5751,7 +5751,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var step = st.Step || '';
         if (isHomeScreen && step.indexOf('Home Screen Sync') !== 0) step = 'Home Screen Sync · ' + step;
         if (isPosters) step = 'Original-language posters · ' + step;
-        if (step.length > 70) step = step.substring(0, 69) + '…';
         var text = 'Running · ' + step;
         var started = st.StartedUtc ? Date.parse(st.StartedUtc) : NaN;
         if (!isNaN(started)) {
@@ -5759,8 +5758,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             text += ' · ' + (s >= 3600 ? Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm'
                 : s >= 60 ? Math.floor(s / 60) + 'm ' + (s % 60) + 's' : s + 's');
         }
-        // Runs waiting for this one go last: the label is cut to the width with an ellipsis
-        // (the full text is in its tooltip).
+        // Runs waiting for this one go last: the label wraps onto two lines and is cut past
+        // that (the full text is in its tooltip).
         if (st.Waiting) text += ' · ' + st.Waiting;
         return text;
     }

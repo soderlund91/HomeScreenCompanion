@@ -431,10 +431,14 @@
         /* The top row is as wide as the tab content (the form is max 900px). */
         .hsc-top-row { max-width: 900px; }
         /* "Last run" stays on the buttons' line and takes the room left; a long status
-           (step, elapsed, waiting runs) is cut with an ellipsis, full text in its tooltip. */
+           (step, elapsed, waiting runs) wraps onto a second line, and only past that is it
+           cut with an ellipsis (full text in its tooltip). */
         #lastRunIndicator { flex: 1 1 0; min-width: 0; }
         #lastRunIndicator > span:not(#lastRunStatusLabel) { flex-shrink: 0; }
-        #lastRunStatusLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #lastRunStatusLabel {
+            min-width: 0; overflow: hidden; overflow-wrap: anywhere; line-height: 1.3;
+            display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+        }
 
         .qs-checklist { margin: 6px 0 0; padding-left: 18px; line-height: 1.7; }
         .qs-starter {
