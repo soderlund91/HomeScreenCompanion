@@ -77,22 +77,28 @@ namespace HomeScreenCompanion
                     .Where(id => id.Length > 0)
                     .Distinct().ToList();
                 var known = Load();
-                Save(current);
                 // First run after installing / updating: only remember what is there.
-                if (known == null) return;
+                if (known == null) { Save(current); return; }
 
                 var added = current.Where(id => !known.Contains(id)).ToList();
-                if (added.Count == 0) return;
-
                 var topLists = Plugin.Instance?.Configuration?.TopLists ?? new List<TopListHomeSection>();
                 var topListLibs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var tl in topLists)
-                    foreach (var id in TopListSyncTask.OwnLibraryIds(tl.HomeSectionLibraryId, _libraryManager))
-                        topListLibs.Add(id.Replace("-", ""));
-                if (topListLibs.Count == 0) return;   // no top-list rows to keep clean
+                if (added.Count > 0)
+                    foreach (var tl in topLists)
+                        foreach (var id in TopListSyncTask.OwnLibraryIds(tl.HomeSectionLibraryId, _libraryManager))
+                            topListLibs.Add(id.Replace("-", ""));
 
                 // A top-list's own library is set up by HSC itself (which already runs the sync).
-                var foreign = added.Where(id => !topListLibs.Contains(id)).ToList();
+                // No top-lists: no top-list rows to keep clean.
+                var foreign = topListLibs.Count == 0 ? new List<string>() : added.Where(id => !topListLibs.Contains(id)).ToList();
+                // Dry run: the new library is not remembered yet, so the sync runs for it once Dry Run
+                // Mode is switched off (the next check after a task or a library change).
+                if (foreign.Count > 0 && DryRun.On)
+                {
+                    _logger.Debug($"[Libraries] [Dry run] {RunLog.Plural(foreign.Count, "new library")}: the Top-list section sync would run");
+                    return;
+                }
+                Save(current);
                 if (foreign.Count == 0) return;
 
                 var names = _libraryManager.GetVirtualFolders()

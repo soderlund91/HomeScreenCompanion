@@ -431,10 +431,14 @@
         /* The top row is as wide as the tab content (the form is max 900px). */
         .hsc-top-row { max-width: 900px; }
         /* "Last run" stays on the buttons' line and takes the room left; a long status
-           (step, elapsed, waiting runs) is cut with an ellipsis, full text in its tooltip. */
+           (step, elapsed, waiting runs) wraps onto a second line, and only past that is it
+           cut with an ellipsis (full text in its tooltip). */
         #lastRunIndicator { flex: 1 1 0; min-width: 0; }
         #lastRunIndicator > span:not(#lastRunStatusLabel) { flex-shrink: 0; }
-        #lastRunStatusLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #lastRunStatusLabel {
+            min-width: 0; overflow: hidden; overflow-wrap: anywhere; line-height: 1.3;
+            display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+        }
 
         .qs-checklist { margin: 6px 0 0; padding-left: 18px; line-height: 1.7; }
         .qs-starter {
@@ -908,6 +912,22 @@
         .src-folder-head:hover .src-folder-actions, .src-folder-actions:focus-within { opacity: 1; }
         .src-folder-actions button { border: none; background: transparent; color: inherit; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
         .src-folder-actions button:hover { background: rgba(128,128,128,0.2); }
+        /* Run all groups in folder: only on an open folder with sources, under its header, just above
+           the first source (the header holds it, so the list's own children stay header + rows).
+           Secondary look, the play icon in the Run colour. */
+        .src-folder-head { position: relative; }
+        .src-folder-head.hsc-has-run:not(.closed) { margin-bottom: 46px; }
+        .btnFolderRun {
+            display: none; position: absolute; top: calc(100% + 9px); left: 18px;
+            align-items: center; gap: 4px; cursor: pointer;
+            padding: 3px 10px 3px 6px; border-radius: 6px; border: 1px solid var(--hsc-hairline);
+            background: var(--hsc-tint-1); color: inherit; font: inherit; font-size: 0.85em; font-weight: 500; white-space: nowrap;
+        }
+        .btnFolderRun:hover { background: var(--hsc-tint-2); }
+        .src-folder-head:has(.btnFolderRun:hover) { background: rgba(128,128,128,0.1); }
+        .btnFolderRun:disabled { opacity: 0.6; cursor: default; }
+        .src-folder-head .btnFolderRun .md-icon { font-size: 1.15em; color: var(--hsc-activity-text); }
+        .src-folder-head.hsc-has-run:not(.closed) .btnFolderRun { display: inline-flex; }
         .txtFolderName { font-weight: 600; font-size: 0.95em; padding: 3px 6px; min-width: 200px; box-sizing: border-box; }
         .src-folder-none { display: flex; align-items: baseline; gap: 8px; padding: 6px 12px 6px; margin: 18px 0 8px; border-top: 1px solid var(--hsc-hairline); user-select: none; }
         .src-folder-none-name { font-weight: 600; font-size: 0.9em; color: var(--theme-text-secondary); white-space: nowrap; }
@@ -1731,6 +1751,22 @@
                             </div>
                         </div>
 
+                        <!-- JSON lists -->
+                        <div class="advanced-section settings-panel" style="margin-bottom: 8px;">
+                            <div class="advanced-header settings-panel-toggle" style="padding: 10px 14px;">
+                                <i class="md-icon" style="margin-right: 8px; font-size: 1.1em; opacity: 0.65;">code</i>
+                                <span style="font-size: 0.95em; font-weight: 600;">JSON lists</span>
+                                <i class="md-icon settings-panel-chevron" style="margin-left: auto; transition: transform 0.2s; font-size: 1.1em; opacity: 0.65;">expand_more</i>
+                            </div>
+                            <div class="settings-panel-body" style="display:none; padding: 0 14px 14px;">
+                                <div class="inputContainer">
+                                    <label class="selectLabel" for="numJsonMaxItems">Max entries per list</label>
+                                    <input is="emby-input" type="number" min="0" step="1" id="numJsonMaxItems" placeholder="1000" />
+                                    <div class="fieldDescription">At most this many entries are read from one JSON list (any other site's URL), however high a source's Max is. Default 1,000; 0 = no limit (the whole list). An entry with a TMDb id only takes one TMDb request to find its IMDb id.</div>
+                                </div>
+                            </div>
+                        </div>
+
                     </div>
                 </div>
 
@@ -1941,6 +1977,16 @@
                             <div class="fieldDescription">Only count titles someone actually watched. Titles you just marked as watched are ignored by the Last Played and Popular rules and by the AI.</div>
                         </div>
 
+                        <div class="hsc-eyebrow" style="margin-top: 24px; margin-bottom: 8px;">Syncs</div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="chkGentleModeEnabled" />
+                                <span>Gentle mode</span>
+                            </label>
+                            <div class="fieldDescription">While someone is watching (paused counts too), syncs make their changes a few at a time with short pauses in between, so playback is not held up. The sync takes longer then, most of all when a new top-list or ranked collection is made. With nobody watching it runs at full speed.</div>
+                        </div>
+
                         <div class="hsc-eyebrow" style="margin-top: 24px; margin-bottom: 8px;">Features</div>
 
                         <div class="checkboxContainer checkboxContainer-withDescription">
@@ -1987,7 +2033,7 @@
                                 <input is="emby-checkbox" type="checkbox" id="chkDryRunMode" />
                                 <span>Dry Run Mode</span>
                             </label>
-                            <div class="fieldDescription">A test run: the log shows what would happen, but nothing is changed. Remember to turn it off again.</div>
+                            <div class="fieldDescription">A test run: syncs and tasks only log what they would do, and nothing changes by itself in the background. What you click on this page still happens. Remember to turn it off again.</div>
                         </div>
 
                         <div class="hsc-eyebrow" style="margin-top: 24px; margin-bottom: 8px;">Tags &amp; Collections</div>
@@ -2334,7 +2380,7 @@
                 <!-- PLUGIN INTRO -->
                 <div class="info-box" style="margin:0 0 20px;padding:12px 16px;font-size:0.92em;line-height:1.6;">
                     <strong>What does this plugin do?</strong><br>
-                    Home Screen Companion keeps your Emby home screen up to date automatically. Each <strong>source</strong> is a list of movies and shows: from a site like Trakt, MDBList or TMDb, from your own collections and playlists, picked by hand, built by filters on your files, written by an AI, or worked out per user from what they watch (<em>Your Next Watch</em>).
+                    Home Screen Companion keeps your Emby home screen up to date automatically. Each <strong>source</strong> is a list of movies and shows: from a site like Trakt, MDBList or TMDb (or any JSON list), from your own collections and playlists, picked by hand, built by filters on your files, written by an AI, or worked out per user from what they watch (<em>Your Next Watch</em>).
                     <ul style="margin:6px 0 0;padding-left:18px;line-height:1.7;">
                         <li>The plugin finds those titles in your library and keeps them up to date as a <strong>tag</strong>, an Emby <strong>collection</strong> and/or a <strong>playlist</strong> per user.</li>
                         <li>Any of them can be a <strong>home screen row</strong> for the users you choose, like "Trending Now" or "Christmas Movies", shown all year or only on the dates you set.</li>
@@ -2431,7 +2477,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">folder</i>
-                    <div><strong>Folders</strong> — sort a long list of sources into folders that open and close. A folder only changes how the list looks; nothing a source does depends on it. <em>New folder</em> makes one at the top of the list, with the sources in no folder under <em>No folder</em>. A new source lands first under <em>No folder</em>. Drag a source past a folder's header to move it in, or down under <em>No folder</em> to take it out. On a folder's header you can move it, rename it, or remove it (its sources stay). Searching and filtering also look inside closed folders, and sorting by name sorts within each folder. Which folders are open is remembered in your browser. Click <strong>Save</strong> to keep your folders.</div>
+                    <div><strong>Folders</strong> — sort a long list of sources into folders that open and close. A folder only changes how the list looks; nothing a source does depends on it. <em>New folder</em> makes one at the top of the list, with the sources in no folder under <em>No folder</em>. A new source lands first under <em>No folder</em>. Drag a source past a folder's header to move it in, or down under <em>No folder</em> to take it out. On a folder's header you can move it, rename it, or remove it (its sources stay). An open folder has <strong>Run all groups in folder</strong> above its first source: it runs <em>Run Group</em> on each active source in the folder, one after another in list order (disabled sources are left out, as their Run Group is), and shows a summary at the end. With unsaved changes it first asks to save. Searching and filtering also look inside closed folders, and sorting by name sorts within each folder. Which folders are open is remembered in your browser. Click <strong>Save</strong> to keep your folders.</div>
                 </div>
                 <div class="hsc-eyebrow" style="margin:14px 0 8px;">More about the source types</div>
                 <div id="help-more-rotating" class="help-feature-row">
@@ -2447,15 +2493,16 @@
                 </div>
                 <div id="help-more-external" class="help-feature-row">
                     <i class="md-icon help-feat-icon">public</i>
-                    <div><strong>External</strong> — paste a list URL from <strong>Trakt</strong>, <strong>MDBList</strong> or <strong>TMDb</strong>. The plugin downloads the list and tags every matching title it finds in your library.
+                    <div><strong>External</strong> — paste a list URL from <strong>Trakt</strong>, <strong>MDBList</strong> or <strong>TMDb</strong>, or the URL of a <strong>JSON list</strong> on any other site. The plugin downloads the list and tags every matching title it finds in your library.
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li><strong>Several URLs</strong> — <em>Add another URL</em> adds more lists to the same source; their titles are combined under the one tag, collection and playlist. Links next to <em>Source URLs</em> open each site's list pages, to find lists.</li>
-                            <li><strong>Max (0=All)</strong> — each URL has its own limit. It counts titles <strong>found in your library</strong> (not blacklisted and passing the source's filters), from the top of the list: <em>Max 10</em> on a top-100 list gives the 10 highest-ranked titles you have, even if titles 1–3 are missing. With 0 (or a Max above it) a list is read up to its provider's limit in Settings → External list settings: the whole list for Trakt and MDBList, 1,000 entries for TMDb, unless you change it there (0 means the whole list).</li>
+                            <li><strong>Max (0=All)</strong> — each URL has its own limit. It counts titles <strong>found in your library</strong> (not blacklisted and passing the source's filters), from the top of the list: <em>Max 10</em> on a top-100 list gives the 10 highest-ranked titles you have, even if titles 1–3 are missing. With 0 (or a Max above it) a list is read up to its provider's limit in Settings → External list settings: the whole list for Trakt and MDBList, 1,000 entries for TMDb and JSON lists, unless you change it there (0 means the whole list).</li>
                             <li><strong>Matching</strong> — titles are matched by their <strong>IMDb id</strong>, so your library items need IMDb ids (Emby's metadata usually adds them). A title on the list without an IMDb id is skipped. TMDb entries are looked up to find their IMDb id.</li>
                             <li><strong>Trakt</strong> — needs a <strong>Trakt Client ID</strong> in the Settings tab. Public user lists work, and so do Trakt's own lists that its API offers, such as <code>trakt.tv/movies/trending</code> or <code>/shows/popular</code>.</li>
                             <li><strong>MDBList</strong> — public lists work without a key; private lists need the <strong>MDBList API Key</strong>. MDBList's official lists (<code>/lists/official/…</code>) are always read without the key.</li>
                             <li><strong>TMDb</strong>, two ways: <em>your own lists</em> — paste the URL of any public or private list you made on themoviedb.org; or <em>API endpoints</em> — paste a direct TMDb API URL (e.g. popular movies, top-rated, now-playing, or a specific collection). Both need a <strong>TMDb API Read Access Token</strong> in the Settings tab.</li>
-                            <li><strong>Test</strong> next to a URL checks that the list can be read; <em>Preview</em> shows which titles on the list are in your library and which are not.</li>
+                            <li><strong>JSON list</strong> — any other http(s) URL that returns JSON, such as a site's JSON export of a list. The JSON is a list, or an object with the list in <code>items</code>, <code>results</code>, <code>movies</code>, <code>shows</code> or <code>data</code>. Each entry needs an IMDb id (<code>imdb_id</code>, <code>imdb</code> or <code>imdbId</code>) or a TMDb id (<code>tmdb_id</code>, <code>tmdb</code>, <code>tmdbId</code> or <code>id</code>); <code>title</code>, <code>year</code> and <code>type</code> are read when there. No key is needed. Entries with a TMDb id only are looked up with the <strong>TMDb API Read Access Token</strong>. TMDb numbers movies and shows apart, so for an entry without a type the plugin takes the movie or the show whose title and year match the list; when that cannot be told, the entry is left out and the run log says so. Give such entries a <code>type</code> (<code>movie</code> or <code>show</code>) to be sure.</li>
+                            <li><strong>Test</strong> next to a URL checks that the list can be read; <em>Preview</em> shows which titles on the list are in your library and which are not. Titles that are not in your library get their poster, year and type from TMDb (with the TMDb token in Settings) or else from Emby's own metadata search.</li>
                             <li>If a site cannot be reached, the run log says why. Turn on <em>Preserve tags and collections on empty result</em> (Settings) to keep the old titles when a list comes back empty.</li>
                         </ul></div>
                 </div>
@@ -2776,10 +2823,12 @@
                     <i class="md-icon help-feat-icon">format_list_numbered</i>
                     <div><strong>Keep the list order — movies only (experimental)</strong> — shown when <em>Ranked collections</em> is switched on under <em>Advanced Settings</em> in the Settings tab (and saved). The collection then opens in the order of the list instead of Emby's own order.
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
-                            <li>For each movie HSC makes a hidden copy that carries its rank, linked to the real film as a version (so it appears once in search and shares its watched status).</li>
+                            <li>For each movie HSC makes a hidden copy that carries its rank, linked to the real film as a version (so it appears once in search and shares its watched status). The copy takes its text, images, cast and media info from the film: its library fetches nothing online.</li>
                             <li>The copies sit in a hidden library "&lt;collection&gt; (ranked)" that is hidden from My Media and Latest like the top-list libraries (setting <em>Hide HSC libraries</em>). It is also always added to the excluded libraries of every user's other home rows (Continue Watching, library rows and so on, also rows made before it), so the copies never show twice; collection and playlist rows are left as they are.</li>
                             <li>When the list order changes, only the ranks of the copies change: a copy is added only for a new film and removed only when its film leaves the list, so nothing is rebuilt on a reorder.</li>
                             <li>Only movies are ranked: shows in the list keep their normal place after the ranked movies.</li>
+                            <li>The collection holds only its ranked copies, also with <em>Show collections on top-list items</em> on: a film that is also on a top-list keeps its normal poster here, never the rank-badge one.</li>
+                            <li>A copy that drops out of its collection or loses its link to the real film is put back about a minute after it (or its film) is played, marked played or changed, without waiting for the next sync.</li>
                             <li>Untick it (or switch the feature off) and the next sync puts the real films back and removes the copies and their library. This is experimental.</li>
                         </ul></div>
                 </div>
@@ -2989,7 +3038,7 @@
                 <div class="hsc-eyebrow" style="margin:14px 0 8px;">More about real posters</div>
                 <div id="help-more-realposters" class="help-feature-row">
                     <i class="md-icon help-feat-icon">verified</i>
-                    <div><strong>Real posters</strong> — under <em>Badge Style</em>, tick <em>Badge the real posters too</em> to put a red TOP 10 square on each listed title's own poster everywhere in Emby: libraries, search, the item page, other rows and every app (for a show list, the series poster; for a movie, all its versions).
+                    <div><strong>Real posters</strong> — under <em>Badge Style</em>, tick <em>Badge the real posters too</em> to put a red TOP 10 square on each listed title's own poster everywhere in Emby: libraries, collections (ranked ones too), search, the item page, other rows and every app (for a show list, the series poster; for a movie, all its versions).
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li><em>Label</em>: <em>TOP 10</em>, or <em>TOP 10 #3</em> with the title's rank on a second line; <em>Size</em>: S, M or L; <em>Position</em>: top left, top right (the standard), bottom left, bottom centre or bottom right. The small poster beside them shows the result at rank 7.</li>
                             <li>A title in several lists gets one badge with its best rank.</li>
@@ -3011,7 +3060,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">visibility_off</i>
-                    <div><strong>Libraries and collections</strong> — each top-list has its own library. <em>Hide HSC libraries</em> (on by default) keeps it out of the sidebar, "My Media" and "Latest", and <em>Show collections on top-list items</em> makes "Included in &lt;collection&gt;" show on a movie opened from a top-list. Both are in the Settings tab, see <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-sec-8b').scrollIntoView({behavior:'smooth'});return false;">Advanced Settings</a>.</div>
+                    <div><strong>Libraries and collections</strong> — each top-list has its own library. Its titles are copies of your movies and shows: a movie copy takes its film's text, media info and cast and is linked to it as a version, so the library reads only the copies' own nfo files and fetches nothing online. Emby does not watch these folders for changes: HSC refreshes the library itself, once, after it has written its files. <em>Hide HSC libraries</em> (on by default) keeps it out of the sidebar, "My Media" and "Latest", and <em>Show collections on top-list items</em> makes "Included in &lt;collection&gt;" show on a movie opened from a top-list. Both are in the Settings tab, see <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-sec-8b').scrollIntoView({behavior:'smooth'});return false;">Advanced Settings</a>.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">lock_open</i>
@@ -3052,6 +3101,10 @@
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">movie</i>
                     <div><strong>TMDb API Read Access Token</strong> — Needed for every TMDb source: your own lists (public or private) and TMDb API endpoints (e.g. popular movies, top-rated, now-playing). Get your token at <a href="https://www.themoviedb.org/settings/api" target="_blank" class="help-link">themoviedb.org/settings/api</a> — scroll to <em>API Read Access Token</em> and copy the long token (not the short API Key).</div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">code</i>
+                    <div><strong>JSON lists</strong> — <em>Max entries per list</em> for JSON list URLs from other sites. They need no key; the TMDb token is used for entries that give a TMDb id only.</div>
                 </div>
                 <div class="hsc-eyebrow" style="margin:14px 0 8px;">AI Settings</div>
                 <div class="step-text" style="margin-bottom:10px;font-size:0.92em;">Fill in only the AI you use in your <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-more-ai').scrollIntoView({behavior:'smooth'});return false;">AI sources</a>. Each has a <strong>Model</strong> field (which model to ask) with a link to that provider's current models. A cloud AI is paid per call; a cheaper, fast model is usually enough for lists.</div>
@@ -3111,7 +3164,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">science</i>
-                    <div><strong>Dry Run Mode</strong> <span style="opacity:0.6;">(Logging &amp; Troubleshooting)</span> — Runs a full sync simulation without making any real changes. The log shows exactly what would be tagged, removed or collected — useful for checking your settings before committing. Remember to switch it off again.</div>
+                    <div><strong>Dry Run Mode</strong> <span style="opacity:0.6;">(Logging &amp; Troubleshooting)</span> — Every sync and task (Full sync, Run, Copy &amp; Sync, the top-list sync, original posters and the rest of the Run menu) runs as a simulation without making any real changes. The log shows exactly what would be tagged, removed, copied or collected — useful for checking your settings before committing. What the plugin otherwise does by itself in the background (tagging new titles, linking top-list copies, keeping collections in order) waits until it is switched off. What you click on this page yourself, such as Save, Delete or Restore, still happens. Remember to switch it off again.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">playlist_remove</i>
@@ -3119,7 +3172,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">collections_bookmark</i>
-                    <div><strong>Show collections on top-list items</strong> <span style="opacity:0.6;">(Top-lists)</span> — Adds each top-list movie to the same collections as the original, so "Included in &lt;collection&gt;" also shows when a movie is opened from a top-list. Depending on the collection's sort order, it may then show the top-list version with its rank-badge poster.</div>
+                    <div><strong>Show collections on top-list items</strong> <span style="opacity:0.6;">(Top-lists)</span> — Adds each top-list movie to the same collections as the original, so "Included in &lt;collection&gt;" also shows when a movie is opened from a top-list. Depending on the collection's sort order, it may then show the top-list version with its rank-badge poster. A ranked collection (<em>Keep the list order</em>) is left out: it keeps its own copies.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">share</i>
@@ -3142,6 +3195,10 @@
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">play_circle</i>
                     <div><strong>Run button</strong> — Start a run by hand at any time; hover an option to see what it does. <em>Full sync</em> (the two below together), <em>Sync tags and collections</em> (every active source: tags, collections, playlists, home rows and top-lists) and <em>Sync home screen</em> (copies the source user's home screen to the selected users). <em>Other</em> opens the runs that also start by themselves: <em>Bump Continue Watching</em>, <em>Sync top-list rows</em> (each top-list row shows only its own library; also runs when a library is created in Emby) and <em>Merge top-list versions</em> (links top-list movies to the library movie as an extra version). While a sync, Run Group, Home Screen Sync or top-list sync is busy, <em>Last run</em> at the top of the page shows the step it is on and how long it has been running, e.g. <em>Running · Playlists — Top 10: 34/88 users · 1m 12s</em>. Runs never overlap: a sync, Run Group, Home Screen Sync or top-list sync started while another is busy waits for it to finish (shown as <em>… waiting for … to finish</em>) and then runs.</div>
+                </div>
+                <div id="help-gentle-mode" class="help-feature-row">
+                    <i class="md-icon help-feat-icon">slow_motion_video</i>
+                    <div><strong>Gentle mode</strong> — <em>Settings → Syncs → Gentle mode</em>, on by default. With it off every run goes at full speed, as if nobody were watching. With it on: when a run starts or goes on while someone is watching something on the server (playing or paused), HSC makes its many small changes (copies, collection members, tags, playlists, home rows) a few at a time with a pause after each few, so playback is not held up. A slow change gets a slice of its own, and the pause after a slice is twice as long as its changes took (3 to 15 seconds). The cast of a ranked or top-list copy goes in short steps, each its own change: two people first, then as many as fit in about 50 ms going by the step before (a slow step halves the next one, down to one person; after a step of more than 0.3 seconds the pause is three times that step). A top-list that changes (one film out, one in) adds its new copies a few at a time, with one refresh of its library each. (Home rows that are already right are never written again, with Gentle mode on or off.) The run then takes longer; the log says so at the start (<em>3 people are watching: the sync runs in gentle mode and takes longer.</em>) and its summary shows how many slices and how much pausing there was, how long the item saves, media info, cast and merges of ranked and top-list copies took, and the longest single change. A ranked collection of 100 or more copies that takes a while logs its progress every 50 copies. With nobody watching a run goes at full speed, in batches of 25, so someone who starts watching mid-run is noticed after one batch.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">schedule</i>

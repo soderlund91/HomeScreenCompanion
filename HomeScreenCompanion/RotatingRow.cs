@@ -155,7 +155,9 @@ namespace HomeScreenCompanion
         /// The items from the current turn on, the current one first. Moves the turn on when a new
         /// period has come, to the next item at least one user can see (usable).
         /// </summary>
-        internal static List<string> Sequence(TagConfig t, IJsonSerializer json, Func<string, bool> usable)
+        // save false (a dry run): the turn is worked out the same way but not saved, so it is not
+        // marked as applied either (see Due).
+        internal static List<string> Sequence(TagConfig t, IJsonSerializer json, Func<string, bool> usable, bool save = true)
         {
             var items = Items(t).Select(KeyOf).ToList();
             if (items.Count == 0) return items;
@@ -206,7 +208,7 @@ namespace HomeScreenCompanion
                 s.Order = order;
                 s.Index = order.FindIndex(v => string.Equals(v, s.Current, StringComparison.OrdinalIgnoreCase));
                 if (s.Index < 0) s.Index = 0;
-                if (json.SerializeToString(s) != before) SaveStates(states, json);
+                if (save && json.SerializeToString(s) != before) SaveStates(states, json);
                 return order.Skip(s.Index).Concat(order.Take(s.Index)).ToList();
             }
         }
@@ -316,10 +318,10 @@ namespace HomeScreenCompanion
         }
 
         /// <summary>The items from the current turn on (see Sequence); the turn moves to one a user of the row can see.</summary>
-        internal static List<string> Turn(TagConfig t, IUserManager um, ILibraryManager lm, IJsonSerializer json)
+        internal static List<string> Turn(TagConfig t, IUserManager um, ILibraryManager lm, IJsonSerializer json, bool save = true)
         {
             var viewers = (t.HomeSectionUserIds ?? new List<string>()).Select(u => UserOf(u, um)).Where(u => u != null && u.Policy?.IsDisabled != true).Select(u => u!).ToList();
-            return Sequence(t, json, value => viewers.Count == 0 || viewers.Any(u => ItemFor(t, value, u, lm, json) != null));
+            return Sequence(t, json, value => viewers.Count == 0 || viewers.Any(u => ItemFor(t, value, u, lm, json) != null), save);
         }
 
         /// <summary>What this user sees: the first item from the turn on that works for them; null: nothing.</summary>

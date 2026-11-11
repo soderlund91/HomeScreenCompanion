@@ -36,17 +36,20 @@ namespace HomeScreenCompanion
             _logger = PluginLog.Wrap(logManager.GetLogger("HomeScreenCompanion_TopListMerge"), "Top-list merge");
         }
 
-        // Forces Emby to ffprobe a top-list .strm item so it gets a real RunTimeTicks and
-        // MediaStreams. Without this, freshly indexed .strm items have RunTimeTicks = 0, which
-        // makes Emby mark the movie fully played (instead of saving a resume point) when stopped
-        // mid-playback from the top-list. EnableRemoteContentProbe is the flag that makes the
-        // server probe .strm targets (they are skipped during a normal library scan).
-        internal static void QueueStrmProbe(IProviderManager providerManager, IFileSystem fileSystem, BaseItem li)
+        // Gives a .strm copy a real RunTimeTicks and MediaStreams. Without them, freshly indexed
+        // .strm items have RunTimeTicks = 0, which makes Emby mark the movie fully played (instead
+        // of saving a resume point) when stopped mid-playback. With the film it stands for at hand,
+        // its media info is copied (no probe, no online lookup, two saves). Otherwise Emby probes
+        // the .strm target at low priority (EnableRemoteContentProbe: .strm targets are skipped
+        // during a normal library scan). Returns true when it wrote or queued something.
+        internal static bool QueueStrmProbe(IProviderManager providerManager, IFileSystem fileSystem, BaseItem li,
+            ILibraryManager? libraryManager = null, BaseItem? film = null)
         {
-            if (providerManager == null || fileSystem == null || li == null) return;
+            if (providerManager == null || fileSystem == null || li == null) return false;
             // Already has a real runtime → nothing to fix. Makes this safe to call repeatedly
             // (e.g. from the post-creation poll loop) without re-probing healthy items.
-            if ((li.RunTimeTicks ?? 0) > 0) return;
+            if ((li.RunTimeTicks ?? 0) > 0) return false;
+            if (libraryManager != null && film != null && CopyMediaInfo(libraryManager, li, film)) return true;
             try
             {
                 var opts = new MetadataRefreshOptions(fileSystem)
@@ -57,9 +60,26 @@ namespace HomeScreenCompanion
                     ReplaceAllImages         = false,
                     ForceSave                = true
                 };
-                providerManager.QueueRefresh(li.InternalId, opts, RefreshPriority.High);
+                providerManager.QueueRefresh(li.InternalId, opts, RefreshPriority.Low);
+                return true;
             }
-            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); return false; }
+        }
+
+        // The film's runtime, size, resolution and streams on the copy. False when the film has no
+        // media info itself (not probed yet).
+        internal static bool CopyMediaInfo(ILibraryManager libraryManager, BaseItem copy, BaseItem film)
+        {
+            if ((film.RunTimeTicks ?? 0) <= 0) return false;
+            try
+            {
+                bool changed = ShowTopList.SyncVideoInfo(copy, film);
+                if (copy.RunTimeTicks != film.RunTimeTicks) { copy.RunTimeTicks = film.RunTimeTicks; changed = true; }
+                if (changed) libraryManager.UpdateItem(copy, copy.Parent, ItemUpdateType.MetadataEdit, null);
+                ShowTopList.CopyMediaStreams(copy, film);
+                return true;
+            }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); return false; }
         }
 
         public string Key => "MergeTopListVersionsTask";
@@ -83,9 +103,19 @@ namespace HomeScreenCompanion
             try
             {
                 _log.Info($"» Merging top-list versions with library  ·  {startTime:yyyy-MM-dd HH:mm}");
-                var merged = MergeAll(_libraryManager, _providerManager, _fileSystem, cancellationToken);
+                bool dry = Plugin.Instance?.Configuration?.DryRunMode == true;
+                if (dry) _log.Warn(DryRun.Header);
+                var merged = MergeAll(_libraryManager, _providerManager, _fileSystem, cancellationToken, dry);
                 // Bring collection memberships of all copies in line with the setting (mirror or clear).
-                var collChanges = TopListCollectionMirror.SyncAll(cancellationToken).GetAwaiter().GetResult();
+                var collChanges = TopListCollectionMirror.SyncAll(cancellationToken, dry).GetAwaiter().GetResult();
+                if (dry)
+                {
+                    LastRunStatus = $"Dry run — {merged} item(s) would be linked.";
+                    _log.Ok($"Dry run: {RunLog.Plural(merged, "top-list item")} would be linked to library movies  ·  {RunLog.Elapsed(DateTime.Now - startTime)}");
+                    if (collChanges > 0)
+                        _log.Ok($"Dry run: {RunLog.Plural(collChanges, "collection membership")} would be updated on top-list items");
+                    return Task.CompletedTask;
+                }
                 LastRunStatus = $"Done — {merged} item(s) linked.";
                 _log.Ok($"{RunLog.Plural(merged, "top-list item")} linked to library movies  ·  {RunLog.Elapsed(DateTime.Now - startTime)}");
                 if (collChanges > 0)
@@ -103,7 +133,8 @@ namespace HomeScreenCompanion
             return Task.CompletedTask;
         }
 
-        internal static int MergeAll(ILibraryManager libraryManager, IProviderManager providerManager, IFileSystem fileSystem, CancellationToken cancellationToken)
+        // dry: counts (and logs) the copies that are not linked yet, without linking or probing.
+        internal static int MergeAll(ILibraryManager libraryManager, IProviderManager providerManager, IFileSystem fileSystem, CancellationToken cancellationToken, bool dry = false)
         {
             var dataPath = Plugin.Instance?.DataFolderPath;
             if (string.IsNullOrEmpty(dataPath)) return 0;
@@ -154,10 +185,18 @@ namespace HomeScreenCompanion
                 if (!origLookup.TryGetValue(imdb, out var primary)) continue;
                 if (li.Id == primary.Id) continue;
 
+                if (dry)
+                {
+                    if (primary is Video pv && pv.GetAlternateVersionIds().Contains(li.InternalId)) continue;
+                    merged++;
+                    _log.Debug($"  [Dry run] '{li.Name}' would be linked to '{primary.Name}'");
+                    continue;
+                }
+
                 try
                 {
                     libraryManager.MergeItems(new[] { primary, li });
-                    QueueStrmProbe(providerManager, fileSystem, li);
+                    QueueStrmProbe(providerManager, fileSystem, li, libraryManager, primary);
                     merged++;
                     _log.Debug($"  '{li.Name}' linked to '{primary.Name}'");
                 }
@@ -221,8 +260,9 @@ namespace HomeScreenCompanion
                 if (li.Id == primary.Id) continue;
                 try
                 {
-                    libraryManager.MergeItems(new[] { primary, li });
-                    QueueStrmProbe(providerManager, fileSystem, li);
+                    // Already a version of it (the real-time handler links new copies too).
+                    if (!TopListCopies.IsMerged(li, primary)) libraryManager.MergeItems(new[] { primary, li });
+                    QueueStrmProbe(providerManager, fileSystem, li, libraryManager, primary);
                     merged++;
                 }
                 catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
