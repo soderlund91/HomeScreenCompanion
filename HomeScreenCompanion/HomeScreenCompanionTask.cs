@@ -1508,8 +1508,15 @@ namespace HomeScreenCompanion
                 // Ranked collections (experimental): sources that keep it (also when their list failed
                 // to load this time); every other ranked folder, its copies and library go first, so
                 // this run puts the real films back.
+                // Collections with a source's name that HSC did not make and that were not imported.
+                var notOwned = new Dictionary<string, BoxSet>(StringComparer.OrdinalIgnoreCase);
+                foreach (var _cn in desiredCollectionsMap.Keys)
+                {
+                    var _nb = NotOwnedCollection(_libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = _cn, Recursive = true }).FirstOrDefault(), _cn, importedCollections);
+                    if (_nb != null) notOwned[_cn] = _nb;
+                }
                 var rankedSources = collectionSources
-                    .Where(c => RankedCollections.Wants(config, c.Value))
+                    .Where(c => RankedCollections.Wants(config, c.Value) && !notOwned.ContainsKey(c.Key))
                     .ToDictionary(c => c.Key, c => c.Value, StringComparer.OrdinalIgnoreCase);
                 if (!dryRun)
                     RankedCollections.Cleanup(new HashSet<string>(rankedSources.Values.Select(RankedCollections.FolderName), StringComparer.OrdinalIgnoreCase),
@@ -1546,6 +1553,21 @@ namespace HomeScreenCompanion
 
                     try
                     {
+                        if (notOwned.TryGetValue(cName, out var _notOwned))
+                        {
+                            var (_nAdd, _nRemove, _nCount) = await SyncNotOwnedCollectionAsync(_notOwned, cName, desiredIds, dryRun, cancellationToken);
+                            if (_nAdd + _nRemove == 0) _log.Debug($"  {cName}  →  up to date ({_nCount} items)");
+                            else if (dryRun) { collWouldUpdate++; _log.Debug($"  {cName}  →  would be updated (+{_nAdd}, -{_nRemove})"); }
+                            else
+                            {
+                                collUpdated++;
+                                collItemsAdded[cName] = _nAdd;
+                                collItemsRemoved[cName] = _nRemove;
+                                _log.Debug($"  {cName}  →  updated (+{_nAdd}, -{_nRemove})");
+                            }
+                            continue;
+                        }
+
                         var existingColl = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = cName, Recursive = true }).FirstOrDefault();
 
                         if (existingColl == null)
@@ -1661,7 +1683,15 @@ namespace HomeScreenCompanion
                     try
                     {
                         var coll = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = oldName, Recursive = true }).FirstOrDefault();
-                        if (coll != null && !dryRun)
+                        if (TagAnchor.IsAnchor(coll, _jsonSerializer)) coll = null;
+                        var _release = NotOwnedCollection(coll, oldName, importedCollections);
+                        if (_release != null)
+                        {
+                            // Not made by HSC: only the titles HSC put in come out.
+                            int _out = ReleaseNotOwnedCollection(_release, dryRun);
+                            _log.Skip($"Collection \"{oldName}\" kept (not made by HSC); {RunLog.Plural(_out, "title")} HSC added {(dryRun ? "would be " : "")}taken out");
+                        }
+                        else if (coll != null && !dryRun)
                         {
                             _libraryManager.DeleteItem(coll, new DeleteOptions { DeleteFileLocation = false });
                             collDeleted++;
@@ -3162,9 +3192,11 @@ namespace HomeScreenCompanion
                 {
                     var _extraVersions = ExtraVersionIds(collectionOutputItems);
                     var desiredIds = collectionOutputItems.Select(i => i.InternalId).Where(id => !_extraVersions.Contains(id)).ToHashSet();
+                    var _notOwned = NotOwnedCollection(_libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = cName, Recursive = true }).FirstOrDefault(),
+                        cName, RecordImportedCollections(config));
                     bool _ranked = false;
                     List<BaseItem>? _rankProbe = null;
-                    if (RankedCollections.Wants(config, tagConfig))
+                    if (RankedCollections.Wants(config, tagConfig) && _notOwned == null)
                     {
                         try
                         {
@@ -3184,7 +3216,15 @@ namespace HomeScreenCompanion
                     }
                     var existingColl = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = cName, Recursive = true }).FirstOrDefault();
                     bool _collArtCheck = false;
-                    if (existingColl == null)
+                    if (_notOwned != null)
+                    {
+                        var (_nAdd, _nRemove, _nCount) = await SyncNotOwnedCollectionAsync(_notOwned, cName, desiredIds, false, cancellationToken);
+                        collResult = _nAdd + _nRemove;
+                        _collItemsAdded = _nAdd;
+                        _collItemsRemoved = _nRemove;
+                        if (debug) _log.Debug(collResult == 0 ? $"  {cName}  →  up to date ({_nCount} items)" : $"  {cName}  →  updated (+{_nAdd}, -{_nRemove})");
+                    }
+                    else if (existingColl == null)
                     {
                         var createdColl = await CreateCollectionGently(cName, desiredIds.ToList(), cancellationToken);
                         collResult = 1;
@@ -3219,7 +3259,7 @@ namespace HomeScreenCompanion
                             foreach (var id in toRemove) _log.Debug($"    - {CollLabel(id)}");
                         }
                     }
-                    var _artColl = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = cName, Recursive = true }).FirstOrDefault();
+                    var _artColl = _notOwned != null ? null : _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = cName, Recursive = true }).FirstOrDefault();
                     if (_artColl != null)
                     {
                         // Same description handling as the full sync.
@@ -3439,6 +3479,11 @@ namespace HomeScreenCompanion
                 else if (others.Any(t => t.EnableCollection && string.Equals(
                     string.IsNullOrWhiteSpace(t.CollectionName) ? t.Tag?.Trim() : t.CollectionName.Trim(), cName, StringComparison.OrdinalIgnoreCase)))
                     _log.Skip($"Collection \"{cName}\" kept — another group in schedule uses it");
+                else if (NotOwnedCollection(coll, cName, RecordImportedCollections(config)) is BoxSet _release)
+                {
+                    int _out = ReleaseNotOwnedCollection(_release, dryRun);
+                    _log.Skip($"Collection \"{cName}\" kept (not made by HSC); {RunLog.Plural(_out, "title")} HSC added {(dryRun ? "would be " : "")}taken out ({why})");
+                }
                 else if (dryRun) _log.Skip($"Collection \"{cName}\" would be removed ({why})");
                 else
                 {
@@ -3907,10 +3952,52 @@ namespace HomeScreenCompanion
         {
             var first = ids.Take(GentleMode.BatchSize).ToArray();
             var created = await GentleMode.TimedAsync("collection members", () => _collectionManager.CreateCollection(new CollectionCreationOptions { Name = name, IsLocked = false, ItemIdList = first }));
+            if (created != null) CollectionOwnership.RecordCreated(created.InternalId, _libraryManager);
             await GentleMode.WroteAsync(cancellationToken, first.Length);
             if (created != null && first.Length < ids.Count)
                 await AddToCollectionGently(created.InternalId, ids.Skip(first.Length).ToList(), cancellationToken);
             return created!;
+        }
+
+        // A collection with the source's name that HSC did not make and the user did not import
+        // (e.g. one of Emby's TMDb collections): HSC adds its titles but does not own it (see
+        // CollectionOwnership). Null for HSC's own collections, imported ones and the tag anchor.
+        private BoxSet? NotOwnedCollection(BaseItem? coll, string cName, HashSet<string> imported)
+            => coll is BoxSet box && !imported.Contains(cName) && !TagAnchor.IsAnchor(coll, _jsonSerializer)
+               && !CollectionOwnership.IsCreated(coll, _libraryManager) ? box : null;
+
+        // A collection HSC does not own: the missing titles go in; only titles HSC put in earlier and
+        // no longer listed come out. Its other titles, images, description and sort title stay.
+        private async Task<(int Added, int Removed, int Count)> SyncNotOwnedCollectionAsync(BoxSet coll, string cName, HashSet<long> desiredIds, bool dryRun, CancellationToken cancellationToken)
+        {
+            var current = _libraryManager.GetItemList(new InternalItemsQuery { CollectionIds = new[] { coll.InternalId }, Recursive = true, IsVirtualItem = false })
+                .Where(i => !TopListCollectionMirror.IsTopListItem(i)).Select(i => i.InternalId).ToHashSet();
+            var added = CollectionOwnership.Added(coll.InternalId);
+            added.IntersectWith(current);   // taken out by hand: no longer HSC's to take out
+            var toAdd = desiredIds.Where(id => !current.Contains(id)).ToList();
+            var toRemove = added.Where(id => !desiredIds.Contains(id)).ToList();
+            _log.Skip($"Collection \"{cName}\" was not made by HSC: only the titles HSC adds are changed, and it stays in Emby when the source goes");
+            if (dryRun) return (toAdd.Count, toRemove.Count, current.Count);
+            if (toAdd.Count > 0) await AddToCollectionGently(coll.InternalId, toAdd, cancellationToken);
+            if (toRemove.Count > 0) await RemoveFromCollectionGently(coll, toRemove, cancellationToken);
+            added.UnionWith(toAdd);
+            added.ExceptWith(toRemove);
+            CollectionOwnership.SetAdded(coll.InternalId, added);
+            return (toAdd.Count, toRemove.Count, current.Count);
+        }
+
+        // The source of a collection HSC does not own is gone: the titles HSC put in come out, the
+        // collection stays. Returns how many titles came out (or would).
+        private int ReleaseNotOwnedCollection(BoxSet coll, bool dryRun)
+        {
+            var current = _libraryManager.GetItemList(new InternalItemsQuery { CollectionIds = new[] { coll.InternalId }, Recursive = true, IsVirtualItem = false })
+                .Select(i => i.InternalId).ToHashSet();
+            var ours = CollectionOwnership.Added(coll.InternalId).Where(current.Contains).ToList();
+            if (dryRun) return ours.Count;
+            foreach (var slice in GentleMode.Slices(ours))
+                GentleMode.Timed("collection members", () => _collectionManager.RemoveFromCollection(coll, slice));
+            CollectionOwnership.SetAdded(coll.InternalId, Array.Empty<long>());
+            return ours.Count;
         }
 
         private async Task AddToCollectionGently(long collectionId, List<long> ids, CancellationToken cancellationToken)
@@ -5687,15 +5774,20 @@ namespace HomeScreenCompanion
 
             int removed = 0;
             bool incomplete = false;   // a collection could not be updated: its old custom tags are kept in the history
+            // A collection with a source's name that HSC did not make (CollectionOwnership) gets no custom tag.
+            var createdIds = CollectionOwnership.CreatedIds(_libraryManager);
+            var importedNames = RecordImportedCollections(config);
             var allBoxSets = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Recursive = true });
             foreach (var boxSet in allBoxSets)
             {
                 if (TagAnchor.IsAnchor(boxSet, _jsonSerializer)) continue;   // holds the tag rows' tags
                 var toAdd = new List<string>();
                 var toRemove = new List<string>();
+                bool hscOwn = hscCollections.Contains(boxSet.Name ?? "")
+                    && (createdIds.Contains(boxSet.InternalId) || importedNames.Contains(boxSet.Name ?? ""));
                 foreach (var tagName in allHseTags.Concat(customTags).Distinct(StringComparer.OrdinalIgnoreCase))
                 {
-                    if (!allHseTags.Contains(tagName) && !hscCollections.Contains(boxSet.Name ?? "")) continue;
+                    if (!allHseTags.Contains(tagName) && !hscOwn) continue;
                     var hasTag    = (boxSet.Tags ?? Array.Empty<string>()).Any(t => string.Equals(t, tagName, StringComparison.OrdinalIgnoreCase));
                     activeTags.TryGetValue(tagName, out var targets);
                     var shouldHave = targets != null && targets.Any(n => string.Equals(n, boxSet.Name, StringComparison.OrdinalIgnoreCase));

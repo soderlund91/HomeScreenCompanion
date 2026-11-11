@@ -2668,7 +2668,7 @@
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li>Its <strong>tag</strong> (taken off every title), its <strong>home rows</strong> and its users' <strong>playlists</strong> go on the next full sync, or the next <em>Run Group</em> of any source.</li>
                             <li>Its <strong>collection</strong> is only deleted by a <strong>full sync</strong>, so run <strong>Run</strong> → <em>Full sync</em> once to clear everything away (or wait for the nightly run). The log lists what was removed.</li>
-                            <li>Not removed: an <em>imported</em> collection (it stays in Emby, HSC just stops changing it), and a top-list made from the tag — delete that in the <strong>Top-Lists</strong> tab.</li>
+                            <li>Not removed: an <em>imported</em> collection (it stays in Emby, HSC just stops changing it), a collection HSC did not make (only the titles HSC added are taken out), and a top-list made from the tag — delete that in the <strong>Top-Lists</strong> tab.</li>
                             <li>If a tag or collection is still left after a full sync, remove it in the <strong>Cleanup</strong> tab.</li>
                         </ul>
                     </div>
@@ -2684,7 +2684,7 @@
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">collections_bookmark</i> Collection tab</div>
-                        Optionally group the matched items into an Emby collection with a custom name, description, poster and background. Upload your own art or let the plugin draw it in a style you pick. Enable <em>Only Collection</em> to skip tagging and only maintain the collection.
+                        Optionally group the matched items into an Emby collection with a custom name, description, poster and background. Upload your own art or let the plugin draw it in a style you pick. Enable <em>Only Collection</em> to skip tagging and only maintain the collection. If Emby already has a collection with that name that HSC did not make (and you did not import it), HSC only adds the matched items to it and takes out only items it added: the collection's other items, art, description and sort title stay as they are, and the collection stays in Emby when the source is deleted or switched off.
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">queue_music</i> Playlist tab</div>
