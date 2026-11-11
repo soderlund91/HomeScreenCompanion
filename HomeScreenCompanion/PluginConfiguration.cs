@@ -15,6 +15,7 @@ namespace HomeScreenCompanion
         public int TraktMaxItems { get; set; } = ListFetcher.DefaultTraktMax;
         public int MdblistMaxItems { get; set; } = ListFetcher.DefaultMdblistMax;
         public int TmdbMaxItems { get; set; } = ListFetcher.DefaultTmdbMax;
+        public int JsonMaxItems { get; set; } = ListFetcher.DefaultJsonMax;
         public int AiMaxItems { get; set; } = ListFetcher.DefaultAiMax;
         public string OpenAiApiKey { get; set; } = "";
         public string OpenAiModel { get; set; } = "gpt-4o-mini";
@@ -45,6 +46,10 @@ namespace HomeScreenCompanion
         // Last Played / Popular rules and the AI's "recently watched": count only titles that were
         // really played (Emby's activity log), not ones only marked as watched. See PlaybackHistory.
         public bool IgnoreMarkedAsWatched { get; set; } = false;
+        // Settings > Syncs: while someone is watching, runs space out their writes (GentleMode).
+        // On by default (owner, 2026-11-10, also for existing installs). Off: every run goes at full
+        // speed as if nobody watched.
+        public bool GentleModeEnabled { get; set; } = true;
         // Give top-list copies the same collection memberships as their original movie.
         public bool TopListMirrorCollections { get; set; } = false;
         // Settings > Features: show the Copy / Paste buttons and the Import collection button.
@@ -173,6 +178,11 @@ namespace HomeScreenCompanion
         // "row": the home row Copy & Sync added (its section id), so only that row is updated or
         // removed, never a row of the user's own with the same title. Empty in older records.
         public string SectionId { get; set; } = "";
+        // "row" written by Copy all (it records the rows only Copy & Sync can tell apart, by id), so
+        // a switch to Copy selected updates them instead of adding a second one. Copy selected
+        // makes it a normal record when it takes the row over; one left unticked is dropped and
+        // its row stays as a plain copy.
+        public bool FromCopyAll { get; set; } = false;
 
         public const string Home = "home";
         public const string Playlist = "playlist";

@@ -85,13 +85,23 @@ namespace HomeScreenCompanion
             log.Rule();
             log.Info($"Original-language posters  ·  {DateTime.Now:yyyy-MM-dd HH:mm}");
             log.Rule();
+            // Dry run: a simulation (the page's own Restore buttons are not a run and still restore).
+            bool dry = config.DryRunMode;
+            if (dry) log.Warn(DryRun.Header);
 
             // Off: the posters set here go back to the originals (the same as Restore all).
             if (!config.OrigPostersEnabled)
             {
-                if (OriginalPosters.Load(_jsonSerializer).Applied.Count == 0)
+                var appliedCount = OriginalPosters.Load(_jsonSerializer).Applied.Count;
+                if (appliedCount == 0)
                 {
                     log.Skip("Original-language posters is off in Home Screen Tweaks — nothing to do");
+                    return;
+                }
+                if (dry)
+                {
+                    log.Ok($"Dry run: original-language posters is off — {RunLog.Plural(appliedCount, "original poster")} would be put back");
+                    progress.Report(100);
                     return;
                 }
                 log.Step("Putting the original posters back");
@@ -102,7 +112,7 @@ namespace HomeScreenCompanion
             }
 
             var started = DateTime.UtcNow;
-            if (await OriginalPosters.RunAsync(config, _libraryManager, _providerManager, _fileSystem, _httpClient, _jsonSerializer, log, progress, cancellationToken).ConfigureAwait(false))
+            if (await OriginalPosters.RunAsync(config, _libraryManager, _providerManager, _fileSystem, _httpClient, _jsonSerializer, log, progress, cancellationToken, dry).ConfigureAwait(false))
                 log.Info($"  Done in {RunLog.Elapsed(DateTime.UtcNow - started)}");
             progress.Report(100);
         }

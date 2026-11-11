@@ -110,6 +110,7 @@ namespace HomeScreenCompanion
         public int Count { get; set; }
         public int InLibraryCount { get; set; }
         public List<SourceTestItem> Items { get; set; } = new List<SourceTestItem>();
+        public string Note { get; set; } = "";   // a warning about the list (ListFetcher.LastNote), "" = none
     }
 
     public class SourceTestItem
@@ -123,6 +124,18 @@ namespace HomeScreenCompanion
         public string LibraryName { get; set; } = "";
         public int? LibraryYear { get; set; }
         public string ItemType { get; set; } = "";
+        // From the list, for the poster of a title not in the library (MissingPosters).
+        public string Tmdb { get; set; } = "";
+        public string ListType { get; set; } = "";   // "movie", "show" or "" (the list does not say)
+    }
+
+    // Posters (and year / type) of list titles not in the library, for the source test popup.
+    // Asked of TMDb with the TMDb key in Settings, else of Emby's metadata search; the key stays here.
+    [Route("/HomeScreenCompanion/MissingPosters", "POST")]
+    [Authenticated(Roles = "Admin")]
+    public class MissingPostersRequest : IReturn<List<MissingPosters.Result>>
+    {
+        public List<MissingPosters.Title> Titles { get; set; } = new List<MissingPosters.Title>();
     }
 
     public class StatusResponse
@@ -760,6 +773,8 @@ namespace HomeScreenCompanion
         public bool DryRunMode { get; set; }
         public bool PreserveTagsOnEmptyResult { get; set; } = true;
         public bool IgnoreMarkedAsWatched { get; set; }
+        // Null in backups made before Gentle mode: the current setting is kept.
+        public bool? GentleModeEnabled { get; set; }
         public bool TopListMirrorCollections { get; set; }
         public bool ShowCopyPasteButtons { get; set; }
         public bool ShowImportCollectionButton { get; set; }
@@ -781,6 +796,7 @@ namespace HomeScreenCompanion
         public int? TraktMaxItems { get; set; }
         public int? MdblistMaxItems { get; set; }
         public int? TmdbMaxItems { get; set; }
+        public int? JsonMaxItems { get; set; }
         public int? AiMaxItems { get; set; }
     }
 
@@ -1251,6 +1267,13 @@ public class HomeScreenCompanionService : IService
             }
         }
 
+        public async Task<object> Post(MissingPostersRequest request)
+        {
+            var key = (Plugin.Instance?.Configuration?.TmdbApiKey ?? "").Trim();
+            return await MissingPosters.LookUpAsync(request.Titles ?? new List<MissingPosters.Title>(), key,
+                _providerManager, _httpClient, _jsonSerializer, CancellationToken.None).ConfigureAwait(false);
+        }
+
         public async Task<object> Get(TestUrlRequest request)
         {
             var config = Plugin.Instance?.Configuration;
@@ -1269,7 +1292,13 @@ public class HomeScreenCompanionService : IService
                 }
 
                 var library = BuildTestLibraryIndex();
-                var results = items.Select(i => MatchTestItem(library, i.Name, null, i.Imdb, false)).ToList();
+                var results = items.Select(i =>
+                {
+                    var r = MatchTestItem(library, i.Name, i.Year, i.Imdb, false);
+                    r.Tmdb = i.Tmdb ?? "";
+                    r.ListType = i.Type ?? "";
+                    return r;
+                }).ToList();
                 int inLibrary = results.Count(r => r.InLibrary);
 
                 return new TestUrlResponse
@@ -1278,7 +1307,9 @@ public class HomeScreenCompanionService : IService
                     Count = items.Count,
                     InLibraryCount = inLibrary,
                     Items = results,
-                    Message = $"Successfully found {items.Count} items ({inLibrary} in library)."
+                    Message = $"Successfully found {items.Count} items ({inLibrary} in library).",
+                    // A JSON list's left-out entries (ListFetcher.LastNote), shown in the test popup.
+                    Note = fetcher.LastNote ?? ""
                 };
             }
             catch (Exception ex)
@@ -1293,7 +1324,7 @@ public class HomeScreenCompanionService : IService
             public List<BaseItem> Items = new List<BaseItem>();
         }
 
-        // Same matching rules as the sync task: IMDb id first, top-list .strm copies excluded,
+        // Same matching rules as the sync task: IMDb id first, top-list and ranked .strm copies excluded,
         // and title+year as a fallback for AI sources only.
         private TestLibraryIndex BuildTestLibraryIndex()
         {
@@ -1310,6 +1341,7 @@ public class HomeScreenCompanionService : IService
                 if (!string.IsNullOrEmpty(item.Path) &&
                     item.Path.StartsWith(topListsFolder, StringComparison.OrdinalIgnoreCase))
                     continue;
+                if (RankedCollections.IsRankedPath(item.Path)) continue;
                 index.Items.Add(item);
                 if (item.LocationType != LocationType.FileSystem) continue;
                 var imdb = item.GetProviderId("Imdb");
@@ -1854,7 +1886,13 @@ public class HomeScreenCompanionService : IService
 
                 var library = BuildTestLibraryIndex();
                 var results = aiItems.Where(i => !string.IsNullOrWhiteSpace(i.title))
-                    .Select(i => MatchTestItem(library, i.title, i.year, i.imdb_id, true)).ToList();
+                    .Select(i =>
+                    {
+                        var r = MatchTestItem(library, i.title, i.year, i.imdb_id, true);
+                        var t = (i.type ?? "").Trim().ToLowerInvariant();
+                        r.ListType = t == "movie" ? "movie" : t == "show" || t == "series" || t == "tv" ? "show" : "";
+                        return r;
+                    }).ToList();
                 int inLibrary = results.Count(r => r.InLibrary);
 
                 return new TestAiSourceResponse
@@ -3423,33 +3461,30 @@ public class HomeScreenCompanionService : IService
                                                     StringComparison.OrdinalIgnoreCase))
                       .ToList();
 
+                    TopListCopies.Begin(folderPath);
+                    try
+                    {
                     foreach (var li in libItems)
                     {
                         if (string.IsNullOrEmpty(li.Path)) continue;
-
-                        if (sortPaths.TryGetValue(li.Path, out var newSort))
+                        sortPaths.TryGetValue(li.Path, out var newSort);
+                        if (!strmToOriginal.TryGetValue(li.Path, out var origItem))
                         {
-                            var prop = li.GetType().GetProperty("SortName");
-                            if (prop?.CanWrite == true) prop.SetValue(li, newSort);
+                            // Not in the list (any more): only its rank and badged images.
+                            if (newSort != null) li.SortName = newSort;
+                            ApplyRankedImages(li, folderPath);
+                            try { _libraryManager.UpdateItem(li, li.Parent, ItemUpdateType.MetadataEdit, null); }
+                            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                            continue;
                         }
-
-                        // Point poster and thumb at our local ranked images
-                        ApplyRankedImages(li, folderPath);
-
-                        // Merge STRM as an alternate version of the original library movie.
-                        try
-                        {
-                            if (strmToOriginal.TryGetValue(li.Path, out var origItem) && li.Id != origItem.Id)
-                            {
-                                _libraryManager.MergeItems(new[] { origItem, li });
-                                MergeTopListVersionsTask.QueueStrmProbe(_providerManager, _fileSystem, li);
-                            }
-                        }
-                        catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
-
-                        try { _libraryManager.UpdateItem(li, li.Parent, ItemUpdateType.MetadataEdit, null); }
-                        catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                        // Rank, badged images (all drawn again), the film's text, media info and
+                        // cast, merged with it: only what differs is written (TopListCopies).
+                        int writes = TopListCopies.Prepare(li, origItem, origItem, newSort, true,
+                            _libraryManager, _providerManager, _fileSystem, m => _logger.Warn(m), null, CancellationToken.None);
+                        if (writes > 0) GentleMode.Wrote(CancellationToken.None, writes);
                     }
+                    }
+                    finally { TopListCopies.End(folderPath); }
                 }
                 catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
 
@@ -3465,7 +3500,9 @@ public class HomeScreenCompanionService : IService
         // so Emby identifies the .strm item deterministically instead of guessing from the
         // "Title (Year)" file name — a wrong guess means no merge (duplicates in the UI) or a
         // merge with the wrong film.
-        internal static string BuildTopListNfo(BaseItem item, string sortPrefix)
+        // sortPrefix null: no rank in the nfo (a list sync sets the rank as the copy's SortName, so a
+        // reorder leaves the nfo as it is: Emby re-reading a changed nfo drops the copy's cast).
+        internal static string BuildTopListNfo(BaseItem item, string? sortPrefix)
         {
             var sb = new System.Text.StringBuilder();
             sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<movie>\n");
@@ -3473,7 +3510,7 @@ public class HomeScreenCompanionService : IService
             // language, and the copy would then show another name than the film it stands for.
             if (!string.IsNullOrWhiteSpace(item.Name))
                 sb.Append("  <title>").Append(System.Security.SecurityElement.Escape(item.Name)).Append("</title>\n");
-            sb.Append("  <sorttitle>").Append(sortPrefix).Append("</sorttitle>\n");
+            if (sortPrefix != null) sb.Append("  <sorttitle>").Append(sortPrefix).Append("</sorttitle>\n");
 
             var imdb = item.GetProviderId("Imdb");
             if (!string.IsNullOrWhiteSpace(imdb))
@@ -4004,6 +4041,7 @@ public class HomeScreenCompanionService : IService
                     DryRunMode                = config.DryRunMode,
                     PreserveTagsOnEmptyResult = config.PreserveTagsOnEmptyResult,
                     IgnoreMarkedAsWatched     = config.IgnoreMarkedAsWatched,
+                    GentleModeEnabled         = config.GentleModeEnabled,
                     TopListMirrorCollections  = config.TopListMirrorCollections,
                     ShowCopyPasteButtons      = config.ShowCopyPasteButtons,
                     ShowImportCollectionButton = config.ShowImportCollectionButton,
@@ -4021,6 +4059,7 @@ public class HomeScreenCompanionService : IService
                     TraktMaxItems             = config.TraktMaxItems,
                     MdblistMaxItems           = config.MdblistMaxItems,
                     TmdbMaxItems              = config.TmdbMaxItems,
+                    JsonMaxItems              = config.JsonMaxItems,
                     AiMaxItems                = config.AiMaxItems
                 };
                 file.Sections.Add("Settings");
@@ -4160,6 +4199,7 @@ public class HomeScreenCompanionService : IService
                     config.DryRunMode                = s.DryRunMode;
                     config.PreserveTagsOnEmptyResult = s.PreserveTagsOnEmptyResult;
                     config.IgnoreMarkedAsWatched     = s.IgnoreMarkedAsWatched;
+                    if (s.GentleModeEnabled != null) config.GentleModeEnabled = s.GentleModeEnabled.Value;
                     mirrorChanged = config.TopListMirrorCollections != s.TopListMirrorCollections;
                     config.TopListMirrorCollections  = s.TopListMirrorCollections;
                     config.ShowCopyPasteButtons      = s.ShowCopyPasteButtons;
@@ -4172,6 +4212,7 @@ public class HomeScreenCompanionService : IService
                     if (s.TraktMaxItems != null) config.TraktMaxItems = s.TraktMaxItems.Value;
                     if (s.MdblistMaxItems != null) config.MdblistMaxItems = s.MdblistMaxItems.Value;
                     if (s.TmdbMaxItems != null) config.TmdbMaxItems = s.TmdbMaxItems.Value;
+                    if (s.JsonMaxItems != null) config.JsonMaxItems = s.JsonMaxItems.Value;
                     if (s.AiMaxItems != null) config.AiMaxItems = s.AiMaxItems.Value;
                     if (s.ShowMissingTitles != null) config.ShowMissingTitles = s.ShowMissingTitles.Value;
                     if (s.MissingIncludeGaps != null) config.MissingIncludeGaps = s.MissingIncludeGaps.Value;

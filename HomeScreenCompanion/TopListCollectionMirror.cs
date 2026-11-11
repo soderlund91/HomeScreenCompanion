@@ -23,6 +23,9 @@ namespace HomeScreenCompanion
     //
     // When the setting is off, copies are kept out of all collections instead.
     //
+    // Ranked-collection copies (RankedCollections) never count as originals: a ranked collection
+    // holds only those, and mirroring them would put the badge copy in its place.
+    //
     // All writes are state-based (desired vs. current membership, never replayed deltas) and
     // serialised through one lock, so concurrent or out-of-order collection events cannot
     // leave a copy in the wrong state — the next reconcile always converges.
@@ -64,6 +67,9 @@ namespace HomeScreenCompanion
             return folder != null && !string.IsNullOrEmpty(item?.Path)
                 && item!.Path.StartsWith(folder, StringComparison.OrdinalIgnoreCase);
         }
+
+        // A real library movie: neither a top-list copy nor a ranked-collection copy.
+        private static bool IsOriginal(BaseItem item) => !IsTopListItem(item) && !RankedCollections.IsRankedCopy(item);
 
         private static long[] CollectionIdsOf(BaseItem item) =>
             (item.Collections ?? Array.Empty<MediaBrowser.Model.Dto.LinkedItemInfo>())
@@ -113,21 +119,30 @@ namespace HomeScreenCompanion
                 }))
                 {
                     var imdb = m.GetProviderId("Imdb") ?? "";
-                    if (!IsTopListItem(m) && wanted.Contains(imdb)) AddTo(originals, imdb, m);
+                    if (IsOriginal(m) && wanted.Contains(imdb)) AddTo(originals, imdb, m);
                 }
             }
             return (originals, copies);
         }
 
         // Makes one copy's memberships equal to the union of its originals' (or empty when the
-        // feature is off or there is no original). Caller must hold _mirrorLock.
-        private static async Task<int> SyncCopyCore(BaseItem copy, IEnumerable<BaseItem>? originals)
+        // feature is off or there is no original). Caller must hold _mirrorLock. dry: counts and
+        // logs the changes it would make, without making them.
+        private static async Task<int> SyncCopyCore(BaseItem copy, IEnumerable<BaseItem>? originals, bool dry)
         {
             var desired = new HashSet<long>();
             if (Enabled && originals != null)
                 foreach (var o in originals) desired.UnionWith(CollectionIdsOf(o));
             var current = new HashSet<long>(CollectionIdsOf(copy));
             int changes = 0;
+            if (dry)
+            {
+                foreach (var collId in desired.Where(id => !current.Contains(id)))
+                    _logger?.Debug($"[TopList] [Dry run] '{copy.Name}' would be added to collection {collId}");
+                foreach (var collId in current.Where(id => !desired.Contains(id)))
+                    _logger?.Debug($"[TopList] [Dry run] '{copy.Name}' would be removed from collection {collId}");
+                return desired.Count(id => !current.Contains(id)) + current.Count(id => !desired.Contains(id));
+            }
 
             foreach (var collId in desired.Where(id => !current.Contains(id)))
             {
@@ -154,13 +169,14 @@ namespace HomeScreenCompanion
         {
             if (_collectionManager == null || _libraryManager == null || copy == null) return 0;
             await _mirrorLock.WaitAsync().ConfigureAwait(false);
-            try { return await SyncCopyCore(copy, originals).ConfigureAwait(false); }
+            try { return await SyncCopyCore(copy, originals, DryRun.On).ConfigureAwait(false); }
             finally { _mirrorLock.Release(); }
         }
 
-        // Full pass over every top-list copy. Runs when the setting is toggled, after a backup
-        // restore and from the "Merge top-list versions" task.
-        internal static async Task<int> SyncAll(CancellationToken cancellationToken)
+        // Full pass over every top-list copy. Runs when the setting is toggled, when Dry Run Mode
+        // is switched off, after a backup restore and from the "Merge top-list versions" task.
+        // dry: counts what would change (the merge task in a dry run).
+        internal static async Task<int> SyncAll(CancellationToken cancellationToken, bool dry = false)
         {
             if (_libraryManager == null || _collectionManager == null || TopListsFolder == null) return 0;
             await _mirrorLock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -174,18 +190,20 @@ namespace HomeScreenCompanion
                     foreach (var copy in kv.Value)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
-                        changes += await SyncCopyCore(copy, origs).ConfigureAwait(false);
+                        changes += await SyncCopyCore(copy, origs, dry).ConfigureAwait(false);
                     }
                 }
                 if (changes > 0)
-                    _logger?.Info($"[TopList] Collection mirror ({(Enabled ? "on" : "off")}): {changes} membership change(s).");
+                    _logger?.Info(dry
+                        ? $"[TopList] [Dry run] Collection mirror ({(Enabled ? "on" : "off")}): {changes} membership change(s) would be made."
+                        : $"[TopList] Collection mirror ({(Enabled ? "on" : "off")}): {changes} membership change(s).");
                 return changes;
             }
             finally { _mirrorLock.Release(); }
         }
 
-        // Run Group on one top-list: only the copies in that list's folder.
-        internal static async Task<int> SyncFolder(string folderPath, CancellationToken cancellationToken)
+        // Run Group on one top-list: only the copies in that list's folder. dry: counts only.
+        internal static async Task<int> SyncFolder(string folderPath, CancellationToken cancellationToken, bool dry = false)
         {
             if (_libraryManager == null || _collectionManager == null || TopListsFolder == null) return 0;
             var prefix = folderPath.TrimEnd(System.IO.Path.DirectorySeparatorChar) + System.IO.Path.DirectorySeparatorChar;
@@ -200,7 +218,7 @@ namespace HomeScreenCompanion
                     foreach (var copy in kv.Value.Where(c => c.Path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
                     {
                         cancellationToken.ThrowIfCancellationRequested();
-                        changes += await SyncCopyCore(copy, origs).ConfigureAwait(false);
+                        changes += await SyncCopyCore(copy, origs, dry).ConfigureAwait(false);
                     }
                 }
                 return changes;
@@ -211,7 +229,7 @@ namespace HomeScreenCompanion
         internal static void QueueFullSync() =>
             Task.Run(async () =>
             {
-                try { await SyncAll(CancellationToken.None).ConfigureAwait(false); }
+                try { await SyncAll(CancellationToken.None, DryRun.On).ConfigureAwait(false); }
                 catch (Exception ex) { _logger?.Error("[TopList] Collection mirror sync failed: " + ex.Message); }
             });
 
@@ -296,7 +314,7 @@ namespace HomeScreenCompanion
                         });
 
                         var originalImdbs = new HashSet<string>(
-                            members.Where(m => !IsTopListItem(m))
+                            members.Where(IsOriginal)
                                    .Select(m => m.GetProviderId("Imdb"))
                                    .Where(s => !string.IsNullOrEmpty(s)),
                             StringComparer.OrdinalIgnoreCase);
@@ -307,10 +325,24 @@ namespace HomeScreenCompanion
 
                         var toAdd = desired.Where(id => !current.Contains(id)).ToArray();
                         var toRemove = current.Where(id => !desired.Contains(id)).ToArray();
-                        if (toAdd.Length > 0)
-                            await _collectionManager.AddToCollection(collId, toAdd).ConfigureAwait(false);
-                        if (toRemove.Length > 0)
-                            _collectionManager.RemoveFromCollection(boxSet, toRemove);
+                        if (DryRun.On)
+                        {
+                            // Caught up when Dry Run Mode is switched off (Plugin.UpdateConfiguration).
+                            if (toAdd.Length + toRemove.Length > 0)
+                                _logger?.Info($"[TopList] [Dry run] Collection mirror: '{boxSet.Name}' would get {toAdd.Length} top-list item(s) added and {toRemove.Length} removed");
+                            continue;
+                        }
+                        // In slices while someone is watching (GentleMode): each call saves every item.
+                        foreach (var slice in GentleMode.Slices(toAdd))
+                        {
+                            await GentleMode.TimedAsync("collection members", () => _collectionManager.AddToCollection(collId, slice)).ConfigureAwait(false);
+                            await GentleMode.WroteAsync(CancellationToken.None, slice.Length).ConfigureAwait(false);
+                        }
+                        foreach (var slice in GentleMode.Slices(toRemove))
+                        {
+                            GentleMode.Timed("collection members", () => _collectionManager.RemoveFromCollection(boxSet, slice));
+                            await GentleMode.WroteAsync(CancellationToken.None, slice.Length).ConfigureAwait(false);
+                        }
                         changes += toAdd.Length + toRemove.Length;
                     }
                     catch (Exception ex)

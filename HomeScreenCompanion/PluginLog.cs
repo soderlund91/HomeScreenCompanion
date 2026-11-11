@@ -185,6 +185,7 @@ namespace HomeScreenCompanion
 
         public PluginLogger(ILogger emby, string source) { Emby = emby; Source = source; }
 
+        public void Debug(string message, params object[] args) { var m = Format(message, args); PluginLog.Write("DBG", Source, m); Emby.Debug(m); }
         public void Info(string message, params object[] args) { var m = Format(message, args); PluginLog.Write("INF", Source, m); Emby.Info(m); }
         public void Warn(string message, params object[] args) { var m = Format(message, args); PluginLog.Write("WRN", Source, m); Emby.Warn(m); }
         public void Error(string message, params object[] args) { var m = Format(message, args); PluginLog.Write("ERR", Source, m); Emby.Error(m); }

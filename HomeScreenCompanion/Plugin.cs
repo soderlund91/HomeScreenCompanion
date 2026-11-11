@@ -38,6 +38,7 @@ namespace HomeScreenCompanion
             if (configuration is PluginConfiguration saved)
                 PluginLog.Write("INF", "Settings", $"Settings saved — {RunLog.Plural(saved.Tags?.Count ?? 0, "source entry", "source entries")}, {RunLog.Plural(saved.TopLists?.Count ?? 0, "top-list")}");
             var wasMirroring = Configuration?.TopListMirrorCollections ?? false;
+            var wasDryRun = Configuration?.DryRunMode ?? false;
             HomeScreenCompanionTask.KeepLastRunCounts(Configuration, configuration as PluginConfiguration);
             // A changed row Position: the next run moves the rows already there (see RowPlacement).
             RowPlacement.NoteChanges(Configuration, configuration as PluginConfiguration);
@@ -49,7 +50,7 @@ namespace HomeScreenCompanion
             if (configuration is PluginConfiguration incoming && Configuration is PluginConfiguration current)
             {
                 incoming.HomeSyncAdditions = (current.HomeSyncAdditions ?? new List<HomeSyncAddition>())
-                    .Select(a => new HomeSyncAddition { List = a.List, Key = a.Key, UserId = a.UserId, Picked = a.Picked, SectionId = a.SectionId }).ToList();
+                    .Select(a => new HomeSyncAddition { List = a.List, Key = a.Key, UserId = a.UserId, Picked = a.Picked, SectionId = a.SectionId, FromCopyAll = a.FromCopyAll }).ToList();
                 HomeSectionSyncTask.KeepKeysOfRenamedSources(current, incoming);
                 // A Position that points at a rotating source's row follows when the source is renamed.
                 RowPlacement.FollowRenamedSources(incoming, RotatingRow.Renames(current, incoming));
@@ -59,7 +60,8 @@ namespace HomeScreenCompanion
             base.UpdateConfiguration(configuration);
             HomeScreenCompanionTask.RecordImportedCollections(Configuration);
             // Toggling the collection mirror adds (or removes) memberships for all existing copies.
-            if (Configuration!.TopListMirrorCollections != wasMirroring)
+            // So does switching Dry Run Mode off: the mirror only logged what it would do meanwhile.
+            if (Configuration!.TopListMirrorCollections != wasMirroring || (wasDryRun && !Configuration.DryRunMode))
                 TopListCollectionMirror.QueueFullSync();
             // The Missing tab's kept file follows its settings (turned on, another folder or format).
             if (Configuration.ShowMissingTitles && Configuration.MissingExportToFile)

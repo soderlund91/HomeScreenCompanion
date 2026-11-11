@@ -617,7 +617,7 @@ namespace HomeScreenCompanion
                             Recursive = true,
                             MetadataRefreshMode = MetadataRefreshMode.Default,
                             ImageRefreshMode = MetadataRefreshMode.Default
-                        }, RefreshPriority.High);
+                        }, RefreshPriority.Normal);
                     }
                     catch (Exception ex) { log.Warn($"Top-list library '{lib.Name}' could not be scanned: {ex.Message}"); }
                 }
@@ -631,42 +631,25 @@ namespace HomeScreenCompanion
             return name.Length > 0 ? name : (tl.TagName ?? "Top-list").Trim();
         }
 
-        // Same options the Top-Lists tab uses (configPage.js executeTopListCreationSteps): a show
-        // list holds copies the plugin writes complete (nfo + images), so it needs no online
-        // metadata, and it stays out of search where every show would otherwise appear twice.
-        private static LibraryOptions LibraryOptionsFor(string folder, bool shows)
+        // Same options the Top-Lists tab uses (configPage.js executeTopListCreationSteps): a list
+        // holds copies the plugin makes complete (nfo, images, and for movies the film's text,
+        // media info and cast), so it needs no online metadata; HSC refreshes it after writing,
+        // so Emby does not watch its folder (see RankedCollections.UseHscLibraryOptions). A show
+        // list stays out of search, where every show would otherwise appear twice.
+        private static LibraryOptions LibraryOptionsFor(string folder, bool shows) => new LibraryOptions
         {
-            var paths = new[] { new MediaPathInfo { Path = folder } };
-            if (shows)
-                return new LibraryOptions
-                {
-                    PathInfos = paths,
-                    ExcludeFromSearch = true,
-                    TypeOptions = new[] { "Series", "Season", "Episode" }.Select(t => new TypeOptions
-                    {
-                        Type = t,
-                        MetadataFetchers = new[] { "Nfo" },
-                        MetadataFetcherOrder = new[] { "Nfo" },
-                        ImageFetchers = Array.Empty<string>(),
-                        ImageFetcherOrder = Array.Empty<string>()
-                    }).ToArray()
-                };
-            return new LibraryOptions
+            PathInfos = new[] { new MediaPathInfo { Path = folder } },
+            ExcludeFromSearch = shows,
+            EnableRealtimeMonitor = false,
+            TypeOptions = (shows ? RankedCollections.ShowTypes : RankedCollections.MovieTypes).Select(t => new TypeOptions
             {
-                PathInfos = paths,
-                TypeOptions = new[]
-                {
-                    new TypeOptions
-                    {
-                        Type = "Movie",
-                        MetadataFetchers = new[] { "Nfo", "TheMovieDb", "TheTVDB" },
-                        MetadataFetcherOrder = new[] { "Nfo", "TheMovieDb", "TheTVDB" },
-                        ImageFetchers = new[] { "TheMovieDb", "TheTVDB" },
-                        ImageFetcherOrder = new[] { "TheMovieDb", "TheTVDB" }
-                    }
-                }
-            };
-        }
+                Type = t,
+                MetadataFetchers = new[] { "Nfo" },
+                MetadataFetcherOrder = new[] { "Nfo" },
+                ImageFetchers = Array.Empty<string>(),
+                ImageFetcherOrder = Array.Empty<string>()
+            }).ToArray()
+        };
     }
 
     // removed_toplists.xml in the plugin data folder (see SourceTopLists).

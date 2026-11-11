@@ -1,0 +1,37 @@
+#!/bin/sh
+# Bumps the build number (the 4th digit of <Version> in the csproj) when dev is
+# pushed: 4.7.0.1 -> 4.7.0.2. Only the working copy changes, so the push itself
+# carries the number of the build being pushed and the next commit takes the new
+# one (pre-commit puts it in). One bump per push, however many commits it holds.
+# A push that fails and is run again does not bump twice: the bump is only made
+# while the working copy still has the same number as HEAD.
+# Never stops a push. Releases on beta and main get their version set by hand.
+# Turn on once per clone: git config core.hooksPath .githooks
+
+f=HomeScreenCompanion/HomeScreenCompanion.csproj
+
+[ "$(git rev-parse --abbrev-ref HEAD)" = "dev" ] || exit 0
+
+# Only when this push sends dev (stdin: <local ref> <local sha> <remote ref> <remote sha>).
+pushes_dev=
+while read -r local_ref local_sha remote_ref remote_sha; do
+	case "$local_ref" in
+		refs/heads/dev) [ "$local_sha" != "0000000000000000000000000000000000000000" ] && pushes_dev=1 ;;
+	esac
+done
+[ -n "$pushes_dev" ] || exit 0
+
+ver() { sed -n 's/.*<Version>\([0-9]*\.[0-9]*\.[0-9]*\.[0-9]*\)<\/Version>.*/\1/p' | head -n 1; }
+head_ver=$(git show "HEAD:$f" 2>/dev/null | ver)
+work_ver=$(ver < "$f")
+if [ -z "$head_ver" ] || [ -z "$work_ver" ]; then
+	echo "pre-push: no four-part <Version> in $f, build number not bumped" >&2
+	exit 0
+fi
+# Already bumped since the last commit (e.g. a push run again): leave it.
+[ "$head_ver" = "$work_ver" ] || exit 0
+
+new="${head_ver%.*}.$((${head_ver##*.} + 1))"
+sed -i "s/<Version>$head_ver<\/Version>/<Version>$new<\/Version>/" "$f"
+echo "pre-push: pushed $head_ver; next build is $new (in the working copy, goes with the next commit)"
+exit 0

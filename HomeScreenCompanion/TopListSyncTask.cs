@@ -56,7 +56,10 @@ namespace HomeScreenCompanion
             IsRunning = true;
             try
             {
-                var (_, msg) = SyncAll(_libraryManager, _userViewManager, _userManager, _jsonSerializer, _logger, cancellationToken);
+                // The task (Run menu, NewLibraryWatcher) is a run: a simulation in a dry run. The
+                // top-list's own Save on the page calls SyncAll directly and is not.
+                var (_, msg) = SyncAll(_libraryManager, _userViewManager, _userManager, _jsonSerializer, _logger, cancellationToken,
+                    dryRun: Plugin.Instance?.Configuration?.DryRunMode == true);
                 LastRunStatus = msg;
             }
             catch (Exception ex)
@@ -282,11 +285,12 @@ namespace HomeScreenCompanion
             PluginLogger logger,
             CancellationToken cancellationToken,
             RunLog? log = null,
-            string? onlyTag = null)
+            string? onlyTag = null,
+            bool dryRun = false)
         {
             // Inside the main sync the lines belong to that run's log, which it saves itself.
             if (log != null)
-                return SyncAllCore(libraryManager, userViewManager, userManager, jsonSerializer, logger, cancellationToken, log, onlyTag);
+                return SyncAllCore(libraryManager, userViewManager, userManager, jsonSerializer, logger, cancellationToken, log, onlyTag, dryRun);
 
             // Standalone (scheduled task or the UI): this task's own log — keep it across restarts.
             // One run at a time (see RunGate): a running sync / Run Group finishes first.
@@ -295,7 +299,7 @@ namespace HomeScreenCompanion
             Progress.Clear();
             try
             {
-                var result = SyncAllCore(libraryManager, userViewManager, userManager, jsonSerializer, logger, cancellationToken, null);
+                var result = SyncAllCore(libraryManager, userViewManager, userManager, jsonSerializer, logger, cancellationToken, null, null, dryRun);
                 LastRunStatus = result.message;
                 return result;
             }
@@ -315,8 +319,11 @@ namespace HomeScreenCompanion
             PluginLogger logger,
             CancellationToken cancellationToken,
             RunLog? log,
-            string? onlyTag = null)
+            string? onlyTag = null,
+            bool dry = false)
         {
+            // dry: a simulation — rows, settings, access and visibility stay as they are, and the
+            // log says what would change. The settings object is the live one: nothing on it is set.
             var config = Plugin.Instance?.Configuration;
             var startTime = DateTime.Now;
             // When called from the main sync, lines go into that run's log (under its "» Top-lists"
@@ -329,7 +336,9 @@ namespace HomeScreenCompanion
                 _log = new RunLog(ExecutionLog, null, "", config?.ExtendedConsoleOutput ?? false, Progress, "Top-lists");
                 _log.Rule();
                 _log.Info($"Top-list section sync  ·  {startTime:yyyy-MM-dd HH:mm}");
+                GentleMode.Announce(_log);
                 _log.Rule();
+                if (dry) _log.Warn(DryRun.Header);
             }
             else
             {
@@ -381,6 +390,12 @@ namespace HomeScreenCompanion
 
                     foreach (var t in unassignedTracked)
                     {
+                        if (dry)
+                        {
+                            tlRemoved++;
+                            _log.Debug($"  [Dry run] {UserLabel(userManager, t.UserId)}: section would be removed (user no longer selected)");
+                            continue;
+                        }
                         try
                         {
                             var uid = userManager.GetInternalId(t.UserId);
@@ -431,6 +446,22 @@ namespace HomeScreenCompanion
                         }
                         if (owned == null && !libraryFound) { noLibrary.Add(who); continue; }
 
+                        // Dry run: what would happen to this user's row (its settings are not touched).
+                        if (dry)
+                        {
+                            if (owned != null)
+                            {
+                                totalUpdated++; tlUpdated++;
+                                _log.Debug($"  [Dry run] {who}: section would be updated{(posMove ? " and put at its new position" : "")}");
+                            }
+                            else
+                            {
+                                totalAdded++; added.Add(who);
+                                _log.Debug($"  [Dry run] {who}: section would be added (it is missing)");
+                            }
+                            continue;
+                        }
+
                         // Every view this user's section editor lists (hidden libraries, channels
                         // and Live TV included).
                         var allViewIds = GetSectionEditorViewIds(userViewManager, userManager, userId);
@@ -478,21 +509,29 @@ namespace HomeScreenCompanion
                         string rowId;
                         if (owned != null)
                         {
+                            var before = HomeScreenCompanionTask.SectionKey(jsonSerializer, owned);
                             var updated = HomeScreenCompanionTask.BuildContentSection(
                                 jsonSerializer, settingsDict, tl.HomeSectionLibraryId, owned);
                             typeof(ContentSection).GetProperty("Id")?.SetValue(updated, owned.Id);
-                            userManager.UpdateHomeSection(uid, updated, cancellationToken);
+                            // An unchanged row is not written again (a sync of many users would
+                            // otherwise rewrite every row every time).
+                            bool changed = HomeScreenCompanionTask.SectionKey(jsonSerializer, updated) != before;
+                            if (changed)
+                            {
+                                GentleMode.Wrote(cancellationToken);
+                                userManager.UpdateHomeSection(uid, updated, cancellationToken);
+                            }
                             rowId = owned.Id;
                             bool moved = posMove && HomeScreenCompanionTask.MoveToPosition(userManager, uid, rowId, posNow, cancellationToken,
                                 OtherUsers(tl, userId), settingsDict.TryGetValue("CustomName", out var ownName) ? ownName : null);
                             if (moved) posMoved++;
-                            _log.Debug($"  {who}: section updated{(moved ? ", moved to its new position" : "")}");
-                            totalUpdated++;
-                            tlUpdated++;
+                            _log.Debug($"  {who}: section {(changed ? "updated" : "unchanged")}{(moved ? ", moved to its new position" : "")}");
+                            if (changed) { totalUpdated++; tlUpdated++; }
                         }
                         else
                         {
                             var beforeIds = new HashSet<string>(sections.Where(s => !string.IsNullOrEmpty(s.Id)).Select(s => s.Id));
+                            GentleMode.Wrote(cancellationToken);
                             userManager.AddHomeSection(uid, HomeScreenCompanionTask.BuildContentSection(
                                 jsonSerializer, settingsDict, tl.HomeSectionLibraryId), cancellationToken);
                             var after = userManager.GetHomeSections(uid, cancellationToken)?.Sections ?? Array.Empty<ContentSection>();
@@ -516,7 +555,9 @@ namespace HomeScreenCompanion
                     }
                     catch (Exception ex) { totalErrors++; _log.Warn($"Top-list '{tlName}': section could not be updated for {who} — {ex.Message}"); }
                 }
-                if (posMove)
+                if (posMove && dry)
+                    _log.Skip($"Dry run: top-list '{tlName}': its Position changed, the rows would be moved ({HomeScreenCompanionTask.PositionLabel(posNow)})");
+                else if (posMove)
                 {
                     RowPlacement.MarkApplied(posKey, posNow);
                     if (posMoved > 0) _log.Ok($"Top-list '{tlName}': row moved to its new position ({HomeScreenCompanionTask.PositionLabel(posNow)}) for {RunLog.Plural(posMoved, "user")}");
@@ -526,7 +567,11 @@ namespace HomeScreenCompanion
                     totalErrors++;
                     _log.Warn($"Top-list '{tlName}': its library ({tl.HomeSectionLibraryId}) is gone, so no row could be made for {NameList(noLibrary)} — open the top-list and click Save to make the library again");
                 }
-                if (tlUpdated > 0 || tlRemoved > 0 || added.Count > 0)
+                if (dry && (tlUpdated > 0 || tlRemoved > 0 || added.Count > 0))
+                    _log.Ok($"Dry run: top-list '{tlName}': {RunLog.Plural(tlUpdated, "section")} would be updated"
+                        + (added.Count > 0 ? $", {added.Count} added — the row is missing for {NameList(added)}" : "")
+                        + (tlRemoved > 0 ? $", {tlRemoved} removed" : ""));
+                else if (tlUpdated > 0 || tlRemoved > 0 || added.Count > 0)
                     _log.Ok($"Top-list '{tlName}': {RunLog.Plural(tlUpdated, "section")} updated"
                         + (added.Count > 0 ? $", {added.Count} added — the row was missing for {NameList(added)}" : "")
                         + (tlRemoved > 0 ? $", {tlRemoved} removed" : ""));
@@ -538,9 +583,10 @@ namespace HomeScreenCompanion
             {
                 if (userStatus.SummaryLine() is string disabledOne) _log.Skip(disabledOne);
                 // Run Group on one top-list: the sweep over every other row below belongs to the full sync.
-                GrantTopListLibraryAccess(topLists.Where(t => string.Equals(t.TagName, onlyTag, StringComparison.OrdinalIgnoreCase)).ToList(), userManager, libraryManager, logger);
+                GrantTopListLibraryAccess(topLists.Where(t => string.Equals(t.TagName, onlyTag, StringComparison.OrdinalIgnoreCase)).ToList(), userManager, libraryManager, logger, dry ? _log : null);
                 // A new library from this Run Group was kept out of the other rows and hidden when it
                 // was made (SyncTopListFolders, after SourceTopLists.EnsureLibraries).
+                if (dry) return (totalUpdated, $"Dry run — {totalUpdated} section(s) would be updated{(totalAdded > 0 ? $", {totalAdded} added" : "")} of top-list '{onlyTag}'.");
                 Plugin.Instance?.SaveConfiguration();
                 return (totalUpdated, $"Updated {totalUpdated} section(s){(totalAdded > 0 ? $", added {totalAdded}" : "")} of top-list '{onlyTag}'.");
             }
@@ -551,16 +597,27 @@ namespace HomeScreenCompanion
                 .Where(t => !string.IsNullOrEmpty(t.HomeSectionLibraryId) && t.HomeSectionLibraryId != "auto")
                 .Select(t => t.HomeSectionLibraryId.Trim().ToLowerInvariant())
                 .Distinct().ToList();
-            totalUpdated += KeepOutOfOtherRows(config, allTopListLibIds, libraryManager, userManager, jsonSerializer, cancellationToken);
+            int keptOut = KeepOutOfOtherRows(config, allTopListLibIds, libraryManager, userManager, jsonSerializer, cancellationToken, dry);
+            totalUpdated += keptOut;
 
-            GrantTopListLibraryAccess(topLists, userManager, libraryManager, logger);
+            GrantTopListLibraryAccess(topLists, userManager, libraryManager, logger, dry ? _log : null);
 
-            var hiddenFor = HideLibraries(config, userManager, libraryManager, logger, m => _log.Warn(m));
+            var hiddenFor = HideLibraries(config, userManager, libraryManager, logger, m => _log.Warn(m), dry);
             if (hiddenFor > 0)
-                _log.Info($"    HSC libraries {(config.HideTopListLibraries ? "hidden from" : "shown again in")} My Media and Latest for {RunLog.Plural(hiddenFor, "user")}");
+                _log.Info(dry
+                    ? $"    Dry run: HSC libraries would be {(config.HideTopListLibraries ? "hidden from" : "shown again in")} My Media and Latest for {RunLog.Plural(hiddenFor, "user")}"
+                    : $"    HSC libraries {(config.HideTopListLibraries ? "hidden from" : "shown again in")} My Media and Latest for {RunLog.Plural(hiddenFor, "user")}");
 
+            if (dry)
+            {
+                if (userStatus.SummaryLine() is string disabledDry) _log.Skip(disabledDry);
+                if (keptOut > 0) _log.Info($"    Dry run: top-list libraries would be kept out of {RunLog.Plural(keptOut, "other home row")}");
+                _log.Info($"    Dry run: {RunLog.Plural(totalUpdated, "section")} would be updated{(totalAdded > 0 ? $", {totalAdded} added" : "")} across {RunLog.Plural(topLists.Count, "top-list")}  ·  {RunLog.Elapsed(DateTime.Now - startTime)}");
+                return (totalUpdated, $"Dry run — {totalUpdated} section(s) would be updated{(totalAdded > 0 ? $", {totalAdded} added" : "")} across {topLists.Count} top-list(s).");
+            }
             Plugin.Instance?.SaveConfiguration();
             if (userStatus.SummaryLine() is string disabledLine) _log.Skip(disabledLine);
+            if (standalone) foreach (var gentleLine in GentleMode.SummaryLines()) _log.Info("    " + gentleLine);
             var summary = $"Updated {totalUpdated} section(s){(totalAdded > 0 ? $", added {totalAdded}" : "")} across {topLists.Count} top-list(s).";
             _log.Info($"    {RunLog.Plural(totalUpdated, "section")} updated{(totalAdded > 0 ? $", {totalAdded} added" : "")} across {RunLog.Plural(topLists.Count, "top-list")}{(totalErrors > 0 ? $", {RunLog.Plural(totalErrors, "error")}" : "")}  ·  {RunLog.Elapsed(DateTime.Now - startTime)}");
             return (totalUpdated, summary);
@@ -574,8 +631,9 @@ namespace HomeScreenCompanion
         /// the next full top-list sync. Rows that already exclude them are left alone. Returns the
         /// number of rows changed.
         /// </summary>
+        // dry: counts the rows that would change; no settings and no row change.
         internal static int KeepOutOfOtherRows(PluginConfiguration config, List<string> libIds, ILibraryManager libraryManager,
-            IUserManager userManager, IJsonSerializer jsonSerializer, CancellationToken cancellationToken)
+            IUserManager userManager, IJsonSerializer jsonSerializer, CancellationToken cancellationToken, bool dry = false)
         {
             libIds = libIds.Select(id => (id ?? "").Trim().ToLowerInvariant()).Where(id => id.Length > 0 && id != "auto").Distinct().ToList();
             if (libIds.Count == 0) return 0;
@@ -610,6 +668,12 @@ namespace HomeScreenCompanion
                     .Where(id => !existingExcluded.Contains(id, StringComparer.OrdinalIgnoreCase))
                     .ToList();
                 if (missing.Count == 0) continue;
+                if (dry)
+                {
+                    totalUpdated += (tc.HomeSectionTracked ?? new List<HomeSectionTracking>())
+                        .Count(t => !string.IsNullOrEmpty(t.SectionId) && !t.SectionId.StartsWith("hsc__"));
+                    continue;
+                }
 
                 existingExcluded.AddRange(missing);
                 existingExcluded = existingExcluded.Distinct().ToList();
@@ -655,8 +719,11 @@ namespace HomeScreenCompanion
                         // A rotating row keeps the tag it shows now (showing a collection or playlist now: left alone).
                         if (rotating && !string.Equals(owned.SectionType, "items", StringComparison.OrdinalIgnoreCase)) continue;
                         if (rotating) rowSettings["_queryTagId"] = (owned.Query?.TagIds ?? Array.Empty<string>()).FirstOrDefault() ?? "";
+                        var before = HomeScreenCompanionTask.SectionKey(jsonSerializer, owned);
                         var updatedSec = HomeScreenCompanionTask.BuildContentSection(jsonSerializer, rowSettings, string.Empty, owned);
                         typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSec, owned.Id);
+                        if (HomeScreenCompanionTask.SectionKey(jsonSerializer, updatedSec) == before) continue;
+                        GentleMode.Wrote(cancellationToken);
                         userManager.UpdateHomeSection(uid, updatedSec, cancellationToken);
                         totalUpdated++;
                     }
@@ -685,6 +752,12 @@ namespace HomeScreenCompanion
                     .Where(id => !otherOwn.Contains(id) && !otherExisting.Contains(id, StringComparer.OrdinalIgnoreCase))
                     .ToList();
                 if (otherMissing.Count == 0) continue;
+                if (dry)
+                {
+                    totalUpdated += (otherTl.HomeSectionTracked ?? new List<HomeSectionTracking>())
+                        .Count(t => !string.IsNullOrEmpty(t.SectionId) && !t.SectionId.StartsWith("hsc__"));
+                    continue;
+                }
 
                 var otherExcStr = string.Join(",", otherExisting.Concat(otherMissing).Distinct());
                 otherSettings["_queryExcludeViewIds"] = otherExcStr;
@@ -702,8 +775,11 @@ namespace HomeScreenCompanion
                         var secs = userManager.GetHomeSections(uid, cancellationToken)?.Sections ?? Array.Empty<ContentSection>();
                         var owned = secs.FirstOrDefault(s => s.Id == tracking.SectionId);
                         if (owned == null) continue;
+                        var before = HomeScreenCompanionTask.SectionKey(jsonSerializer, owned);
                         var updatedSec = HomeScreenCompanionTask.BuildContentSection(jsonSerializer, otherRowSettings, otherTl.HomeSectionLibraryId, owned);
                         typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSec, owned.Id);
+                        if (HomeScreenCompanionTask.SectionKey(jsonSerializer, updatedSec) == before) continue;
+                        GentleMode.Wrote(cancellationToken);
                         userManager.UpdateHomeSection(uid, updatedSec, cancellationToken);
                         totalUpdated++;
                     }
@@ -713,7 +789,7 @@ namespace HomeScreenCompanion
 
             // Aggressive: also keep all untracked, non-library-scoped sections up to date.
             totalUpdated += HomeScreenCompanionTask.UpdateUntrackedSections(
-                jsonSerializer, userManager, config, libIds, cancellationToken);
+                jsonSerializer, userManager, config, libIds, cancellationToken, dry);
             return totalUpdated;
         }
 
@@ -725,18 +801,20 @@ namespace HomeScreenCompanion
         /// top-list section sync and when a user is created (NewUserWatcher). Returns the number of
         /// users whose My Media / Latest settings changed.
         /// </summary>
-        internal static int HideLibraries(PluginConfiguration config, IUserManager userManager, ILibraryManager libraryManager, PluginLogger logger, Action<string>? warn = null)
+        // dry: counts the users that would change, without changing them.
+        internal static int HideLibraries(PluginConfiguration config, IUserManager userManager, ILibraryManager libraryManager, PluginLogger logger, Action<string>? warn = null, bool dry = false)
         {
             foreach (var tl in (config.TopLists ?? new List<TopListHomeSection>()).Where(ShowTopList.IsShows))
             {
                 if (string.IsNullOrEmpty(tl.HomeSectionLibraryId) || tl.HomeSectionLibraryId == "auto") continue;
                 var libGuid = ResolveLibraryGuid(tl.HomeSectionLibraryId.Trim(), libraryManager);
-                if (!string.IsNullOrEmpty(libGuid)) SetLatestExclusion(userManager, libGuid!, true, logger);
+                if (!string.IsNullOrEmpty(libGuid)) SetLatestExclusion(userManager, libGuid!, true, logger, dry);
             }
-            return TopListLibraryVisibility.Apply(config, userManager, libraryManager, warn, m => logger.Info(m));
+            return TopListLibraryVisibility.Apply(config, userManager, libraryManager, warn, m => logger.Info(m), dry);
         }
 
-        internal static void GrantTopListLibraryAccess(List<TopListHomeSection> topLists, IUserManager userManager, ILibraryManager libraryManager, PluginLogger logger)
+        // dryLog: a dry run — what would be granted or revoked goes to that log; no policy changes.
+        internal static void GrantTopListLibraryAccess(List<TopListHomeSection> topLists, IUserManager userManager, ILibraryManager libraryManager, PluginLogger logger, RunLog? dryLog = null)
         {
             dynamic mgr = userManager;
 
@@ -785,6 +863,7 @@ namespace HomeScreenCompanion
                         if (folders.Any(f => string.Equals(f.Replace("-", ""), libGuid, StringComparison.OrdinalIgnoreCase)))
                             continue;
 
+                        if (dryLog != null) { dryLog.Debug($"  [Dry run] Library '{tl.TagName}' would be granted to '{user.Name}'"); continue; }
                         // Remove any stale InternalId entry and add the GUID
                         var cleanedFolders = folders
                             .Where(f => !string.Equals(f.Replace("-", ""), rawLibId.Replace("-", ""), StringComparison.OrdinalIgnoreCase))
@@ -817,6 +896,7 @@ namespace HomeScreenCompanion
                             string.Equals(f.Replace("-", ""), libGuid, StringComparison.OrdinalIgnoreCase) ||
                             string.Equals(f.Replace("-", ""), rawNorm, StringComparison.OrdinalIgnoreCase));
                         if (!hasEntry) continue;
+                        if (dryLog != null) { dryLog.Debug($"  [Dry run] Library '{tl.TagName}' would be taken from '{user.Name}'"); continue; }
 
                         policy.EnabledFolders = folders
                             .Where(f =>
@@ -833,8 +913,9 @@ namespace HomeScreenCompanion
         }
 
         // Adds (or removes) a library in every user's "Latest" exclusions (LatestItemsExcludes).
-        internal static void SetLatestExclusion(IUserManager userManager, string libGuid, bool exclude, PluginLogger logger)
+        internal static void SetLatestExclusion(IUserManager userManager, string libGuid, bool exclude, PluginLogger logger, bool dry = false)
         {
+            if (dry) return;   // (a dry run: Apply counts the users; this one is always on and rarely changes)
             var norm = libGuid.Replace("-", "").ToLowerInvariant();
             foreach (var user in userManager.GetUserList(new UserQuery { IsDisabled = false }))
             {

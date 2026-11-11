@@ -23,7 +23,8 @@ namespace HomeScreenCompanion
     /// there still load: only their "pos" counts): which real library items are in a top list with the option on, and at what rank.
     /// Supports() of the image enhancer runs for every image Emby lists, so it only looks in this
     /// in-memory map; the map is rebuilt (debounced, on a background thread) after a config save,
-    /// a sync / Run Group and at server start.
+    /// a sync / Run Group, a new ranked-collection copy and at server start. A ranked copy gets
+    /// the badge of the film it was made from.
     /// </summary>
     internal static class RealPosterBadges
     {
@@ -77,6 +78,9 @@ namespace HomeScreenCompanion
             Interlocked.Exchange(ref _pendingAfterRun, 1);
             if (!RunGate.Busy) RunFinished();
         }
+
+        /// <summary>A ranked-collection copy was indexed: it gets its film's badge (rebuilds like a config save).</summary>
+        internal static void RankedCopyAdded() => ConfigSaved();
 
         /// <summary>Called when RunGate is released: the rebuild config saves during the run asked for.</summary>
         internal static void RunFinished()
@@ -179,6 +183,27 @@ namespace HomeScreenCompanion
                             if (key != null && byKey!.TryGetValue(key, out var versions))
                                 foreach (var v in versions) Add(v, rank, label, size, corner);
                             else Add(movie, rank, label, size, corner);
+                        }
+                        catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                    }
+                }
+
+                // Ranked-collection copies (RankedCollections) show their film's poster: they get
+                // the film's badge too, so a ranked collection looks like the library. Each copy's
+                // .strm holds the path of the film it was made from. Same image file and cache key
+                // as the film, so Emby serves the film's rendered badged poster. Top-list copies
+                // (the number tiles) never enter the map.
+                var rankedRoot = RankedCollections.RankedRoot;
+                if (byPath != null && map.Count > 0 && rankedRoot != null && Directory.Exists(rankedRoot))
+                {
+                    var prefix = rankedRoot + Path.DirectorySeparatorChar;
+                    foreach (var copy in lm.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Movie" }, Recursive = true, PathStartsWith = prefix }))
+                    {
+                        try
+                        {
+                            if (!RankedCollections.IsRankedCopy(copy) || !File.Exists(copy.Path)) continue;
+                            if (byPath.TryGetValue(File.ReadAllText(copy.Path).Trim(), out var film) && map.TryGetValue(film.InternalId, out var e))
+                                map[copy.InternalId] = e;
                         }
                         catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                     }

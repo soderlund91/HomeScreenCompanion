@@ -13,6 +13,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace HomeScreenCompanion
@@ -28,6 +29,7 @@ namespace HomeScreenCompanion
         private readonly IItemRepository _itemRepository;
         private readonly IMediaSourceManager _mediaSourceManager;
         private readonly ITaskManager _taskManager;
+        private readonly IUserDataManager _userDataManager;
         private NewLibraryWatcher? _libraryWatcher;
 
         private readonly object _strmLock = new object();
@@ -37,7 +39,7 @@ namespace HomeScreenCompanion
         private readonly HashSet<long> _processedStrmIds = new HashSet<long>();
         private readonly HashSet<long> _showCopiesInFlight = new HashSet<long>();
 
-        public ServerEntryPoint(ILibraryManager libraryManager, ILogManager logManager, IJsonSerializer jsonSerializer, IProviderManager providerManager, IFileSystem fileSystem, ICollectionManager collectionManager, IItemRepository itemRepository, IMediaSourceManager mediaSourceManager, ITaskManager taskManager)
+        public ServerEntryPoint(ILibraryManager libraryManager, ILogManager logManager, IJsonSerializer jsonSerializer, IProviderManager providerManager, IFileSystem fileSystem, ICollectionManager collectionManager, IItemRepository itemRepository, IMediaSourceManager mediaSourceManager, ITaskManager taskManager, IUserDataManager userDataManager, MediaBrowser.Controller.Session.ISessionManager sessionManager)
         {
             _libraryManager = libraryManager;
             _logger = PluginLog.Wrap(logManager.GetLogger("HomeScreenCompanion_RealTime"), "Real-time");
@@ -48,6 +50,8 @@ namespace HomeScreenCompanion
             _itemRepository = itemRepository;
             _mediaSourceManager = mediaSourceManager;
             _taskManager = taskManager;
+            _userDataManager = userDataManager;
+            GentleMode.Initialize(sessionManager);
         }
 
         public void Run()
@@ -62,6 +66,7 @@ namespace HomeScreenCompanion
             catch (Exception ex) { _logger.Warn($"[Migration] Top-lists could not be moved to their sources: {ex.Message}"); }
             TagCacheManager.Instance.Initialize(Plugin.Instance.DataFolderPath, _jsonSerializer);
             TopListCollectionMirror.Initialize(_libraryManager, _collectionManager, _logger);
+            RankedCopyGuard.Initialize(_libraryManager, _collectionManager, _logger);
             ShowTopList.Initialize(_itemRepository, _mediaSourceManager);
 
             // Last run logs survive a restart (shown in the log modal and "Last run").
@@ -72,10 +77,12 @@ namespace HomeScreenCompanion
             TopListSyncTask.RestoreLog();
 
             _libraryManager.ItemAdded += OnItemChanged;
+            _libraryManager.ItemAdded += OnItemAdded;
             _libraryManager.ItemUpdated += OnItemChanged;
             _collectionManager.CollectionCreated += OnCollectionCreated;
             _collectionManager.ItemsAddedToCollection += OnItemsAddedToCollection;
             _collectionManager.ItemsRemovedFromCollection += OnItemsRemovedFromCollection;
+            _userDataManager.UserDataSaved += OnUserDataSaved;
 
             // A library created in Emby later runs the Top-list section sync by itself.
             _libraryWatcher = new NewLibraryWatcher(_libraryManager, _taskManager, _jsonSerializer, _logger, Plugin.Instance.DataFolderPath);
@@ -91,8 +98,32 @@ namespace HomeScreenCompanion
         private void OnItemsAddedToCollection(object sender, CollectionModifiedEventArgs e) =>
             TopListCollectionMirror.OnCollectionChanged(e.Collection, e.ItemsChanged);
 
-        private void OnItemsRemovedFromCollection(object sender, CollectionModifiedEventArgs e) =>
+        private void OnItemsRemovedFromCollection(object sender, CollectionModifiedEventArgs e)
+        {
             TopListCollectionMirror.OnCollectionChanged(e.Collection, e.ItemsChanged);
+            // A ranked copy taken out of its collection: RankedCopyGuard checks whether it belongs there.
+            try
+            {
+                foreach (var id in e.ItemsChanged ?? new List<long>())
+                {
+                    var item = _libraryManager.GetItemById(id);
+                    if (item != null && RankedCollections.IsRankedCopy(item)) RankedCopyGuard.QueueCopy(item);
+                }
+            }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+        }
+
+        // Played / marked played: a ranked copy, or a film with ranked copies, is checked once
+        // playback has settled (RankedCopyGuard). Progress reports are skipped: the stop follows.
+        private void OnUserDataSaved(object sender, UserDataSaveEventArgs e)
+        {
+            try
+            {
+                if (e?.Item == null || e.SaveReason == UserDataSaveReason.PlaybackProgress) return;
+                RankedCopyGuard.QueueFilm(e.Item);
+            }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+        }
 
         private void RunAutoMigration()
         {
@@ -167,6 +198,14 @@ namespace HomeScreenCompanion
             ProcessItem(e.Item);
         }
 
+        // A new ranked-collection copy gets its film's real-poster badge (only on add: copies are
+        // saved often, and each rebuild of the badge map reads every movie).
+        private void OnItemAdded(object sender, ItemChangeEventArgs e)
+        {
+            if (e.Item is MediaBrowser.Controller.Entities.Movies.Movie && RankedCollections.IsRankedCopy(e.Item))
+                RealPosterBadges.RankedCopyAdded();
+        }
+
         private void ProcessItem(BaseItem item)
         {
             if (item.IsVirtualItem) return;
@@ -184,9 +223,9 @@ namespace HomeScreenCompanion
                 return;
 
             // Items under the top-list folder are .strm virtual copies. Never tag them, but DO
-            // link each one to its original movie (as an alternate version) and force a media
-            // probe so it gets a real RunTimeTicks — otherwise resume breaks and the movie is
-            // marked fully-watched on stop. This fires as soon as Emby indexes the .strm.
+            // bring each one in line with its film (text, media info, cast; merged as a version):
+            // without a runtime resume breaks and the movie is marked fully-watched on stop. This
+            // fires as soon as Emby indexes the .strm; a sync working on the folder does it itself.
             if (Plugin.Instance != null && !string.IsNullOrEmpty(item.Path))
             {
                 var topListsFolder = Path.Combine(Plugin.Instance.DataFolderPath, "toplists") + Path.DirectorySeparatorChar;
@@ -195,8 +234,9 @@ namespace HomeScreenCompanion
                     ProcessTopListStrmItem(item);
                     return;
                 }
-                // Ranked-collection copies: never tagged; the sync links and probes them.
-                if (RankedCollections.IsRankedPath(item.Path)) return;
+                // Ranked-collection copies: never tagged; the sync links and probes them, and
+                // RankedCopyGuard puts back a membership or merge a later save of the copy lost.
+                if (RankedCollections.IsRankedPath(item.Path)) { RankedCopyGuard.QueueCopy(item); return; }
             }
 
             var ids = item.ProviderIds;
@@ -207,10 +247,13 @@ namespace HomeScreenCompanion
             if (tagsFound.Count > 0)
             {
                 bool changed = false;
+                // Dry run: said, not done (the next sync tags the title once it is switched off).
+                bool dry = DryRun.On;
                 foreach (var tag in tagsFound)
                 {
                     if (!item.Tags.Contains(tag, System.StringComparer.OrdinalIgnoreCase))
                     {
+                        if (dry) { _logger.Info($"[Real-Time] [Dry run] '{item.Name}' would be tagged with '{tag}'"); continue; }
                         item.AddTag(tag);
                         changed = true;
                         _logger.Info($"[Real-Time] Automatically tagged '{item.Name}' with '{tag}'");
@@ -224,17 +267,24 @@ namespace HomeScreenCompanion
             }
         }
 
-        // Links a freshly indexed top-list .strm item to its original movie (alternate version)
-        // and queues a real ffprobe so it gets a valid RunTimeTicks + MediaStreams. Runs at most
-        // once per item per server session, on the first event where its IMDb id is resolved.
+        // Brings a freshly indexed top-list .strm item in line with its film (TopListCopies.Prepare:
+        // text, media info, cast, merged as an alternate version; a probe only when the film has
+        // no media info). Runs at most once per item per server session, on the first event where
+        // its IMDb id is resolved, one item at a time and paced by gentle mode. Copies in a folder
+        // a sync is working on are left to that sync.
         private void ProcessTopListStrmItem(BaseItem item)
         {
             try
             {
                 if (!(item is MediaBrowser.Controller.Entities.Movies.Movie)) return;
+                if (TopListCopies.IsBusy(item.Path)) return;
 
                 var imdb = item.GetProviderId("Imdb");
                 if (string.IsNullOrEmpty(imdb)) return; // metadata not resolved yet — a later ItemUpdated will carry it
+
+                // Dry run: not linked, and not marked as done, so a later event links it once it is
+                // switched off (the merge task does it too).
+                if (DryRun.On) { _logger.Debug("[TopList] [Dry run] '" + item.Name + "' would be linked to its film and probed"); return; }
 
                 // Process each .strm item once (guards against re-entrancy from our own MergeItems/probe events).
                 lock (_strmLock)
@@ -251,10 +301,16 @@ namespace HomeScreenCompanion
                 // "finishing touches in the background" operation.
                 Task.Run(async () =>
                 {
+                    await TopListCopies.Gate.WaitAsync().ConfigureAwait(false);
                     try
                     {
                         var current = _libraryManager.GetItemById(itemId);
                         if (current == null) return;
+                        if (TopListCopies.IsBusy(current.Path))
+                        {
+                            lock (_strmLock) { _processedStrmIds.Remove(current.InternalId); }
+                            return;
+                        }
 
                         var topListsFolder = Path.Combine(Plugin.Instance.DataFolderPath, "toplists") + Path.DirectorySeparatorChar;
 
@@ -275,25 +331,32 @@ namespace HomeScreenCompanion
                             && string.Equals(m.GetProviderId("Imdb"), imdb, StringComparison.OrdinalIgnoreCase))
                           .ToList();
 
-                        if (originals.Count > 0)
+                        // The film the .strm points at; else the first with the IMDb id (merged with that one).
+                        BaseItem? primary = originals.Count > 0 ? originals[0] : null;
+                        var film = TopListCopies.FilmOf(current, _libraryManager) ?? primary;
+                        int writes = 0;
+                        if (film != null)
                         {
-                            var primary = originals[0];
-                            try { _libraryManager.MergeItems(new[] { primary, current }); }
-                            catch (Exception ex) { _logger.Warn("[TopList] Merge failed for '" + itemName + "': " + ex.Message); }
+                            writes = TopListCopies.Prepare(current, film, primary ?? film, null, false,
+                                _libraryManager, _providerManager, _fileSystem, m => _logger.Warn("[TopList] " + m), null, CancellationToken.None);
 
                             // Optional: same collection memberships as the originals.
-                            if (TopListCollectionMirror.Enabled)
+                            if (TopListCollectionMirror.Enabled && originals.Count > 0)
                                 await TopListCollectionMirror.SyncCopy(_libraryManager.GetItemById(itemId) ?? current, originals);
                         }
-
-                        // Idempotent — skips if the item already has a runtime.
-                        MergeTopListVersionsTask.QueueStrmProbe(_providerManager, _fileSystem, current);
-                        _logger.Info("[TopList] Linked + probed '" + itemName + "'");
+                        // No film in the library: Emby probes the copy (low priority), idempotent.
+                        else if (MergeTopListVersionsTask.QueueStrmProbe(_providerManager, _fileSystem, current)) writes++;
+                        if (writes > 0)
+                        {
+                            _logger.Info("[TopList] Linked '" + itemName + "' to its film (" + writes + " write" + (writes == 1 ? "" : "s") + ")");
+                            await GentleMode.WroteAsync(CancellationToken.None, writes).ConfigureAwait(false);
+                        }
                     }
                     catch (Exception ex)
                     {
                         _logger.Error("[TopList] ProcessTopListStrmItem(bg) error: " + ex.Message);
                     }
+                    finally { TopListCopies.Gate.Release(); }
                 });
             }
             catch (Exception ex)
@@ -307,6 +370,8 @@ namespace HomeScreenCompanion
         // check keep that from looping.
         private void ProcessShowCopy(BaseItem item)
         {
+            // Dry run: a later event (or the next top-list sync) updates it once it is switched off.
+            if (DryRun.On) { _logger.Debug("[TopList] [Dry run] Show copy '" + item.Name + "' would be updated"); return; }
             var internalId = item.InternalId;
             lock (_strmLock)
             {
@@ -333,10 +398,12 @@ namespace HomeScreenCompanion
         public void Dispose()
         {
             _libraryManager.ItemAdded -= OnItemChanged;
+            _libraryManager.ItemAdded -= OnItemAdded;
             _libraryManager.ItemUpdated -= OnItemChanged;
             _collectionManager.CollectionCreated -= OnCollectionCreated;
             _collectionManager.ItemsAddedToCollection -= OnItemsAddedToCollection;
             _collectionManager.ItemsRemovedFromCollection -= OnItemsRemovedFromCollection;
+            _userDataManager.UserDataSaved -= OnUserDataSaved;
             _libraryWatcher?.Dispose();
             MissingTitlesExport.Dispose();
             PluginLog.Flush();
