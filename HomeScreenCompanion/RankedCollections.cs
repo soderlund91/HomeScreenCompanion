@@ -263,12 +263,9 @@ namespace HomeScreenCompanion
             var keepFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { MarkerFile };
             foreach (var w in wanted)
             {
-                var strm = w.BaseName + ".strm";
-                var nfo = w.BaseName + ".nfo";
-                keepFiles.Add(strm); keepFiles.Add(nfo);
-                filesChanged |= WriteIfChanged(Path.Combine(folderPath, nfo), BuildNfo(w.Item));
-                // .strm last: Emby creates the item when it sees it, the nfo must be there already.
-                filesChanged |= WriteIfChanged(Path.Combine(folderPath, strm), w.Item.Path);
+                keepFiles.Add(w.BaseName + ".strm"); keepFiles.Add(w.BaseName + ".nfo");
+                // New copies are written below, a few at a time while someone is watching.
+                if (!newFiles.Contains(w.BaseName)) filesChanged |= WriteCopyFiles(folderPath, w.BaseName, w.Item);
             }
             foreach (var f in Directory.GetFiles(folderPath))
             {
@@ -282,7 +279,8 @@ namespace HomeScreenCompanion
             int removedCopies = 0;
             foreach (var stale in CopiesIn(libraryManager, folderPath).Where(c => !expectedPaths.Contains(c.Path)))
             {
-                try { libraryManager.DeleteItem(stale, new DeleteOptions { DeleteFileLocation = false }); removedCopies++; } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                try { GentleMode.Timed("copy delete", () => libraryManager.DeleteItem(stale, new DeleteOptions { DeleteFileLocation = false })); removedCopies++; } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                await GentleMode.WroteAsync(cancellationToken).ConfigureAwait(false);
             }
 
             // One hidden library per ranked source.
@@ -295,6 +293,7 @@ namespace HomeScreenCompanion
                 created = true;
             }
             if (!long.TryParse(lib.ItemId, out var libInternalId)) return null;
+            UseLocalMetadataOnly(libraryManager, libInternalId, lib.Name, log);
             GrantRestrictedUsers(lib, movies, libraryManager, userManager, log);
             // Every sync (not only on creation), so turning "Hide HSC libraries" on or off reaches
             // ranked libraries without a top-list sync (that one stops early when there are no top-lists).
@@ -302,9 +301,32 @@ namespace HomeScreenCompanion
             if (visChanged > 0)
                 log.Info($"    HSC libraries {(config.HideTopListLibraries ? "hidden from" : "shown again in")} My Media and Latest for {RunLog.Plural(visChanged, "user")}");
 
-            // Refresh only this library (never a full scan).
-            if (filesChanged || created || CopiesIn(libraryManager, folderPath).Count < wanted.Count)
+            // Emby adds the copies when it refreshes this library (never a full scan), a batch per
+            // refresh, each waited for: a few while someone is watching, with a pause after it
+            // (GentleMode); 25 with nobody watching, so a viewer who starts mid-run is noticed
+            // after one batch. A copy is only changed and merged
+            // once Emby's refresh of it has finished: merging a copy Emby is still saving fails
+            // ("FOREIGN KEY constraint failed").
+            var pendingNew = wanted.Where(w => newFiles.Contains(w.BaseName)).ToList();
+            int written = wanted.Count - pendingNew.Count;
+            int writtenWithImdb = wanted.Count(w => !newFiles.Contains(w.BaseName) && !string.IsNullOrEmpty(w.Item.GetProviderId("Imdb")));
+            bool needRefresh = filesChanged || created || CountCopies(libraryManager, folderPath) < written;
+            int refreshes = 0;
+            bool timedOut = false;
+            var phaseStart = DateTime.Now;
+            while (pendingNew.Count > 0 || needRefresh)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                int take = timedOut ? pendingNew.Count : Math.Min(GentleMode.BatchSize, pendingNew.Count);
+                foreach (var w in pendingNew.Take(take))
+                {
+                    WriteCopyFiles(folderPath, w.BaseName, w.Item);
+                    if (!string.IsNullOrEmpty(w.Item.GetProviderId("Imdb"))) writtenWithImdb++;
+                }
+                pendingNew.RemoveRange(0, take);
+                written += take;
+                needRefresh = false;
+                if (timedOut) break;
                 try
                 {
                     providerManager.QueueRefresh(libInternalId, new MetadataRefreshOptions(fileSystem)
@@ -312,32 +334,34 @@ namespace HomeScreenCompanion
                         Recursive = true,
                         MetadataRefreshMode = MetadataRefreshMode.Default,
                         ImageRefreshMode = MetadataRefreshMode.Default
-                    }, RefreshPriority.High);
+                    }, RefreshPriority.Normal);
+                    refreshes++;
                 }
-                catch (Exception ex) { log.Warn($"Ranked library '{lib.Name}' could not be refreshed: {ex.Message}"); }
+                catch (Exception ex) { log.Warn($"Ranked library '{lib.Name}' could not be refreshed: {ex.Message}"); break; }
+                // Up to 90 s for Emby to index and finish these copies.
+                if (!await WaitForCopiesAsync(providerManager, libraryManager, libInternalId, folderPath, written, writtenWithImdb, TimeSpan.FromSeconds(90), cancellationToken).ConfigureAwait(false))
+                    timedOut = true;
+                int newDone = added - pendingNew.Count;
+                if (added >= 100 && newDone / 50 > (newDone - take) / 50 && pendingNew.Count > 0 && DateTime.Now - phaseStart >= ProgressAfter)
+                    log.Info($"    Ranked '{cName}': {newDone}/{added} new copies added  ·  {RunLog.Elapsed(DateTime.Now - phaseStart)}");
+                if (pendingNew.Count > 0) await GentleMode.WroteAsync(cancellationToken, take).ConfigureAwait(false);
             }
+            if (refreshes > 1) log.Debug($"  Ranked library '{lib.Name}': new copies added in {RunLog.Plural(refreshes, "refresh", "refreshes")}");
 
-            // Wait until Emby has indexed and identified the copies (up to 90 s).
             var filmByPath = wanted.ToDictionary(w => Path.Combine(folderPath, w.BaseName + ".strm"), w => w.Item, StringComparer.OrdinalIgnoreCase);
-            var deadline = DateTime.UtcNow.AddSeconds(90);
-            Dictionary<string, BaseItem> byPath;
-            while (true)
-            {
-                byPath = new Dictionary<string, BaseItem>(StringComparer.OrdinalIgnoreCase);
-                foreach (var c in CopiesIn(libraryManager, folderPath))
-                    if (expectedPaths.Contains(c.Path)) byPath[c.Path] = c;
-                bool ready = byPath.Count >= expectedPaths.Count
-                             && byPath.Values.All(c => !string.IsNullOrEmpty(c.GetProviderId("Imdb"))
-                                                    || (filmByPath.TryGetValue(c.Path, out var f) && string.IsNullOrEmpty(f.GetProviderId("Imdb"))));
-                if (ready || DateTime.UtcNow > deadline) break;
-                await Task.Delay(2000, cancellationToken).ConfigureAwait(false);
-            }
+            var byPath = new Dictionary<string, BaseItem>(StringComparer.OrdinalIgnoreCase);
+            foreach (var c in CopiesIn(libraryManager, folderPath))
+                if (expectedPaths.Contains(c.Path)
+                    && (!string.IsNullOrEmpty(c.GetProviderId("Imdb")) || (filmByPath.TryGetValue(c.Path, out var f) && string.IsNullOrEmpty(f.GetProviderId("Imdb")))))
+                    byPath[c.Path] = c;
 
             var members = new List<long>();
             var toProbe = new List<BaseItem>();
             int missing = 0, reranked = 0, prepared = 0;
+            var prepareStart = DateTime.Now;
             foreach (var w in wanted)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 log.Count($"Ranked collections — {cName}:", ++prepared, wanted.Count, "copies");
                 var path = Path.Combine(folderPath, w.BaseName + ".strm");
                 if (!byPath.TryGetValue(path, out var copy))
@@ -346,9 +370,13 @@ namespace HomeScreenCompanion
                     missing++;
                     continue;
                 }
-                if (PrepareCopy(copy, w.Item, w.Rank, libraryManager, log) && !newFiles.Contains(w.BaseName)) reranked++;
+                var (rerankedNow, writes, needsProbe) = PrepareCopy(copy, w.Item, w.Rank, libraryManager, log, cancellationToken);
+                if (rerankedNow && !newFiles.Contains(w.BaseName)) reranked++;
                 members.Add(copy.InternalId);
-                toProbe.Add(copy);
+                if (needsProbe) toProbe.Add(copy);
+                await GentleMode.WroteAsync(cancellationToken, writes).ConfigureAwait(false);
+                if (wanted.Count >= 100 && prepared % 50 == 0 && prepared < wanted.Count && DateTime.Now - prepareStart >= ProgressAfter)
+                    log.Info($"    Ranked '{cName}': {prepared}/{wanted.Count} copies prepared  ·  {RunLog.Elapsed(DateTime.Now - prepareStart)}");
             }
             members.AddRange(others.Select(o => o.InternalId));
 
@@ -359,13 +387,16 @@ namespace HomeScreenCompanion
             return (members, toProbe);
         }
 
-        // Queues the media probe of the copies (so they get a runtime). Called after the collection
-        // is updated: a probe still running saves the item it loaded and would drop a membership
-        // added meanwhile.
-        internal static void Probe(List<BaseItem>? copies, IProviderManager providerManager, IFileSystem fileSystem)
+        // Copies whose film had no media info to copy (never probed) get a probe instead, so they
+        // still get a runtime. Called after the collection is updated: a probe still running saves
+        // the item it loaded and would drop a membership added meanwhile.
+        internal static void Probe(List<BaseItem>? copies, IProviderManager providerManager, IFileSystem fileSystem, CancellationToken cancellationToken = default)
         {
             foreach (var c in copies ?? new List<BaseItem>())
-                MergeTopListVersionsTask.QueueStrmProbe(providerManager, fileSystem, c);
+            {
+                if (MergeTopListVersionsTask.QueueStrmProbe(providerManager, fileSystem, c))
+                    GentleMode.Wrote(cancellationToken);
+            }
         }
 
         // Collections HSC switched to sort by SortName, so it can switch them back.
@@ -431,10 +462,13 @@ namespace HomeScreenCompanion
             if (changed) SaveSorted(sorted);
         }
 
-        // Rank as locked SortName, the real film's images, merged as a version. True when the rank changed.
-        private static bool PrepareCopy(BaseItem copy, BaseItem film, string rank, ILibraryManager libraryManager, RunLog log)
+        // Rank as locked SortName, the real film's images, metadata and media info (one save),
+        // merged as a version. Returns whether the rank changed, how many writes it made (for
+        // GentleMode) and whether the copy still needs a probe (its film has no media info).
+        private static (bool Reranked, int Writes, bool NeedsProbe) PrepareCopy(BaseItem copy, BaseItem film, string rank, ILibraryManager libraryManager, RunLog log, CancellationToken cancellationToken)
         {
             bool changed = false, reranked = false;
+            int writes = 0;
             if (!string.Equals(copy.SortName, rank, StringComparison.Ordinal))
             {
                 copy.SortName = rank;
@@ -447,22 +481,195 @@ namespace HomeScreenCompanion
                 copy.LockedFields = locked.ToArray();
                 changed = true;
             }
+            // The film's own poster / backdrop / logo, so the collection looks the same as before.
             if (MatchFilmImages(copy, film)) changed = true;
+            // The details page shows the film's own text and media info: the ranked library
+            // fetches nothing online and Emby never probes a .strm during a scan (a copy without a
+            // runtime is marked played when stopped instead of getting a resume point).
+            changed |= ShowTopList.SyncMetadata(copy, film, isSeries: true);
+            changed |= ShowTopList.SyncVideoInfo(copy, film);
             if (changed)
             {
-                try { libraryManager.UpdateItem(copy, copy.Parent, ItemUpdateType.MetadataEdit, null); }
+                try { GentleMode.Timed("copy save", () => libraryManager.UpdateItem(copy, copy.Parent, ItemUpdateType.MetadataEdit, null)); writes++; }
                 catch (Exception ex) { log.Warn($"Ranked copy '{copy.Name}' could not be updated: {ex.Message}"); }
             }
+            bool needsProbe = false;
+            try
+            {
+                if (GentleMode.TimedIfWrote("media streams", () => ShowTopList.CopyMediaStreams(copy, film))) writes++;
+                needsProbe = (copy.RunTimeTicks ?? 0) <= 0;
+            }
+            catch (Exception ex) { log.Warn($"Ranked copy '{copy.Name}': media info could not be copied: {ex.Message}"); needsProbe = (copy.RunTimeTicks ?? 0) <= 0; }
+            try
+            {
+                if (CopyPeople(copy, film, libraryManager, cancellationToken, "cast", m => log.Debug(m))) writes++;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { log.Debug($"  Ranked copy '{copy.Name}': cast could not be copied: {ex.Message}"); }
 
             // Merge once: merging saves the real film again (and its nfo, when the library writes nfo files).
             try
             {
                 bool merged = film is Video v && v.GetAlternateVersionIds().Contains(copy.InternalId);
                 if (!merged && copy.Id != film.Id)
-                    libraryManager.MergeItems(new[] { film, copy });
+                {
+                    GentleMode.Timed("merge", () => libraryManager.MergeItems(new[] { film, copy }));
+                    writes += 2;
+                }
             }
             catch (Exception ex) { log.Warn($"Ranked copy '{copy.Name}' could not be merged with '{film.Name}': {ex.Message}"); }
-            return reranked;
+            return (reranked, writes, needsProbe);
+        }
+
+        // The film's cast and crew, once (the copy's library fetches no people itself): the copy's
+        // details page shows them (Cast & Crew, Director), and has none without them. Used for
+        // ranked and top-list copies; kind names the write in the run summary.
+        // Emby looks every new person up when it saves a cast, all inside one database write that
+        // holds up every other write (playback progress too); on a large library one lookup can
+        // take a long time. The people go with their provider ids: Emby then finds them by id
+        // (and the exact person rather than a namesake), and remembers them, so people saved in an
+        // earlier step cost next to nothing in the next one (each save replaces the whole list).
+        // While someone is watching the cast goes in steps, each its own short write: CastFirstStep
+        // new people first, then as many as the last step's time per person says fit in
+        // CastStepTarget (at most twice the last step); a step over the target halves the next one
+        // (down to 1 person). A step that still took over GentleMode.LongStep is followed by a
+        // longer pause (GentleMode.AfterStep). Nobody watching: the whole cast in one write.
+        private const int CastFirstStep = 2;
+        private const int CastMaxStep = 50;
+        private static readonly TimeSpan CastStepTarget = TimeSpan.FromMilliseconds(50);
+
+        // A ranked collection of 100+ copies logs its progress every 50 copies, once it has run this long.
+        private static readonly TimeSpan ProgressAfter = TimeSpan.FromSeconds(10);
+
+        internal static bool CopyPeople(BaseItem copy, BaseItem film, ILibraryManager libraryManager, CancellationToken cancellationToken,
+            string kind = "cast", Action<string>? debug = null)
+        {
+            var theirs = libraryManager.GetItemPeople(new InternalPeopleQuery { ItemIds = new[] { film.InternalId }, EnableProviderIds = true }) ?? new List<PersonInfo>();
+            if (theirs.Count == 0) return false;
+            // Done when the copy has them all; a cast left short (a run stopped between steps) is
+            // saved again from the start.
+            var mine = libraryManager.GetItemPeople(copy) ?? new List<PersonInfo>();
+            if (mine.Count >= theirs.Count) return false;
+            int done = 0, step = CastFirstStep;
+            while (done < theirs.Count)
+            {
+                bool watching = GentleMode.Streaming;
+                int upTo = watching ? Math.Min(theirs.Count, done + step) : theirs.Count;
+                var part = upTo == theirs.Count ? theirs : theirs.Take(upTo).ToList();
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                GentleMode.Timed(kind, () => libraryManager.UpdatePeople(copy, part, true));
+                var took = sw.Elapsed;
+                int added = upTo - done;
+                done = upTo;
+                if (watching) debug?.Invoke($"  '{copy.Name}': {kind} step {done}/{theirs.Count} ({added} new) {took.TotalMilliseconds:0} ms");
+                if (done >= theirs.Count) break;
+                if (took > CastStepTarget) step = Math.Max(1, step / 2);
+                else
+                {
+                    double msPerPerson = Math.Max(0.1, took.TotalMilliseconds / added);
+                    step = Math.Max(1, Math.Min(Math.Min(CastMaxStep, step * 2), (int)(CastStepTarget.TotalMilliseconds / msPerPerson)));
+                }
+                GentleMode.AfterStep(took, cancellationToken);
+            }
+            return true;
+        }
+
+        // Writes a copy's .nfo, then its .strm (Emby creates the item when it sees the .strm, the
+        // nfo must be there already). True when either changed.
+        private static bool WriteCopyFiles(string folderPath, string baseName, BaseItem film)
+        {
+            bool changed = WriteIfChanged(Path.Combine(folderPath, baseName + ".nfo"), BuildNfo(film));
+            changed |= WriteIfChanged(Path.Combine(folderPath, baseName + ".strm"), film.Path);
+            return changed;
+        }
+
+        // How many copies Emby has indexed in the folder; identified: only those saved with their
+        // IMDb id, i.e. whose first refresh is done (ids only: cheap enough to poll).
+        private static int CountCopies(ILibraryManager libraryManager, string folderPath, bool identified = false)
+        {
+            var prefix = folderPath.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            var query = new InternalItemsQuery
+            {
+                IncludeItemTypes = new[] { "Movie" },
+                Recursive = true,
+                PathStartsWith = prefix
+            };
+            if (identified) query.HasAnyProviderId = new[] { "Imdb" };
+            return libraryManager.GetInternalItemIds(query).Length;
+        }
+
+        // Waits until Emby's refresh of the library is no longer running or queued, at least
+        // `expected` copies are indexed and `identified` of them saved with their IMDb id (Emby's
+        // refresh of the library reports done before the refreshes of its new items are). Polls
+        // every 2 s, then 5 s, then every 10 s.
+        internal static async Task<bool> WaitForCopiesAsync(IProviderManager providerManager, ILibraryManager libraryManager, long libInternalId,
+            string folderPath, int expected, int identified, TimeSpan max, CancellationToken cancellationToken)
+        {
+            var deadline = DateTime.UtcNow + max;
+            var steps = new[] { 2, 5, 10 };
+            for (int i = 0; ; i++)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(steps[Math.Min(i, steps.Length - 1)]), cancellationToken).ConfigureAwait(false);
+                bool busy;
+                try
+                {
+                    busy = providerManager.GetRefreshProgress(libInternalId).HasValue
+                        || (providerManager.GetRefreshQueue() ?? new List<Tuple<long, MetadataRefreshOptions>>()).Any(q => q.Item1 == libInternalId);
+                }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); busy = false; }
+                if (!busy && CountCopies(libraryManager, folderPath) >= expected
+                    && (identified == 0 || CountCopies(libraryManager, folderPath, identified: true) >= identified)) return true;
+                if (DateTime.UtcNow > deadline) return false;
+            }
+        }
+
+        // Ranked and movie top-list copies take everything from their film (nfo with its ids, images,
+        // text and media info copied by PrepareCopy / TopListCopies.Prepare), so their library
+        // fetches nothing online. Libraries made by older builds fetched TheMovieDb metadata and
+        // images for every copy: they are switched over once.
+        // Nor does Emby watch the folder (real-time monitoring): HSC writes many files into it at
+        // once, and Emby's monitor would refresh the whole library (at high priority) for each of
+        // them. HSC refreshes the library itself, once, after it has written.
+        private static readonly string[] LocalFetchers = { "Nfo" };
+        internal static readonly string[] MovieTypes = { "Movie" };
+        internal static readonly string[] ShowTypes = { "Series", "Season", "Episode" };
+
+        private static void UseLocalMetadataOnly(ILibraryManager libraryManager, long libInternalId, string? libName, RunLog log) =>
+            UseHscLibraryOptions(libraryManager, libInternalId, libName, MovieTypes, "Ranked library", log);
+
+        internal static void UseHscLibraryOptions(ILibraryManager libraryManager, long libInternalId, string? libName, string[] typeNames, string label, RunLog log)
+        {
+            try
+            {
+                if (!(libraryManager.GetItemById(libInternalId) is CollectionFolder folder)) return;
+                var options = folder.GetLibraryOptions();
+                if (options == null) return;
+                var types = (options.TypeOptions ?? Array.Empty<TypeOptions>()).ToList();
+                bool fetchers = false;
+                foreach (var typeName in typeNames)
+                {
+                    var t = types.FirstOrDefault(x => string.Equals(x.Type, typeName, StringComparison.OrdinalIgnoreCase));
+                    if (t != null && (t.MetadataFetchers ?? Array.Empty<string>()).SequenceEqual(LocalFetchers)
+                        && (t.ImageFetchers ?? Array.Empty<string>()).Length == 0)
+                        continue;
+                    if (t == null) { t = new TypeOptions { Type = typeName }; types.Add(t); }
+                    t.MetadataFetchers = LocalFetchers.ToArray();
+                    t.MetadataFetcherOrder = LocalFetchers.ToArray();
+                    t.ImageFetchers = Array.Empty<string>();
+                    t.ImageFetcherOrder = Array.Empty<string>();
+                    fetchers = true;
+                }
+                bool monitor = options.EnableRealtimeMonitor;
+                if (!fetchers && !monitor) return;
+                options.TypeOptions = types.ToArray();
+                options.EnableRealtimeMonitor = false;
+                folder.UpdateLibraryOptions(options);
+                var what = new List<string>();
+                if (fetchers) what.Add("no longer fetches metadata and images online (the copies take them from their films)");
+                if (monitor) what.Add("no longer watched for file changes (HSC refreshes it after writing)");
+                log.Info($"    {label} '{libName}': {string.Join("; ", what)}");
+            }
+            catch (Exception ex) { log.Warn($"{label} '{libName}': its metadata settings could not be updated: {ex.Message}"); }
         }
 
         private static readonly ImageType[] CopyImageTypes = { ImageType.Primary, ImageType.Backdrop, ImageType.Logo, ImageType.Thumb };
@@ -518,7 +725,7 @@ namespace HomeScreenCompanion
 
         private class PolicyState { public bool EnableAll; public string[] Folders = Array.Empty<string>(); }
 
-        // Creates the library like a top-list library (movies, nfo first). Emby may switch every
+        // Creates the library like a top-list library (movies, nfo only). Emby may switch every
         // user to "all libraries" when a library is added: each user's access is put back as it was.
         private static VirtualFolderInfo? CreateLibrary(string name, string folderPath, List<BaseItem> movies,
             ILibraryManager libraryManager, IUserManager userManager, RunLog log)
@@ -526,15 +733,16 @@ namespace HomeScreenCompanion
             var options = new LibraryOptions
             {
                 PathInfos = new[] { new MediaPathInfo { Path = folderPath } },
+                EnableRealtimeMonitor = false,
                 TypeOptions = new[]
                 {
                     new TypeOptions
                     {
                         Type = "Movie",
-                        MetadataFetchers = new[] { "Nfo", "TheMovieDb" },
-                        MetadataFetcherOrder = new[] { "Nfo", "TheMovieDb" },
-                        ImageFetchers = new[] { "TheMovieDb" },
-                        ImageFetcherOrder = new[] { "TheMovieDb" }
+                        MetadataFetchers = LocalFetchers.ToArray(),
+                        MetadataFetcherOrder = LocalFetchers.ToArray(),
+                        ImageFetchers = Array.Empty<string>(),
+                        ImageFetcherOrder = Array.Empty<string>()
                     }
                 }
             };

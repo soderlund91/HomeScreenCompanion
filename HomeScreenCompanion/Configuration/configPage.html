@@ -431,10 +431,14 @@
         /* The top row is as wide as the tab content (the form is max 900px). */
         .hsc-top-row { max-width: 900px; }
         /* "Last run" stays on the buttons' line and takes the room left; a long status
-           (step, elapsed, waiting runs) is cut with an ellipsis, full text in its tooltip. */
+           (step, elapsed, waiting runs) wraps onto a second line, and only past that is it
+           cut with an ellipsis (full text in its tooltip). */
         #lastRunIndicator { flex: 1 1 0; min-width: 0; }
         #lastRunIndicator > span:not(#lastRunStatusLabel) { flex-shrink: 0; }
-        #lastRunStatusLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #lastRunStatusLabel {
+            min-width: 0; overflow: hidden; overflow-wrap: anywhere; line-height: 1.3;
+            display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+        }
 
         .qs-checklist { margin: 6px 0 0; padding-left: 18px; line-height: 1.7; }
         .qs-starter {
@@ -908,6 +912,22 @@
         .src-folder-head:hover .src-folder-actions, .src-folder-actions:focus-within { opacity: 1; }
         .src-folder-actions button { border: none; background: transparent; color: inherit; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
         .src-folder-actions button:hover { background: rgba(128,128,128,0.2); }
+        /* Run all groups in folder: only on an open folder with sources, under its header, just above
+           the first source (the header holds it, so the list's own children stay header + rows).
+           Secondary look, the play icon in the Run colour. */
+        .src-folder-head { position: relative; }
+        .src-folder-head.hsc-has-run:not(.closed) { margin-bottom: 46px; }
+        .btnFolderRun {
+            display: none; position: absolute; top: calc(100% + 9px); left: 18px;
+            align-items: center; gap: 4px; cursor: pointer;
+            padding: 3px 10px 3px 6px; border-radius: 6px; border: 1px solid var(--hsc-hairline);
+            background: var(--hsc-tint-1); color: inherit; font: inherit; font-size: 0.85em; font-weight: 500; white-space: nowrap;
+        }
+        .btnFolderRun:hover { background: var(--hsc-tint-2); }
+        .src-folder-head:has(.btnFolderRun:hover) { background: rgba(128,128,128,0.1); }
+        .btnFolderRun:disabled { opacity: 0.6; cursor: default; }
+        .src-folder-head .btnFolderRun .md-icon { font-size: 1.15em; color: var(--hsc-activity-text); }
+        .src-folder-head.hsc-has-run:not(.closed) .btnFolderRun { display: inline-flex; }
         .txtFolderName { font-weight: 600; font-size: 0.95em; padding: 3px 6px; min-width: 200px; box-sizing: border-box; }
         .src-folder-none { display: flex; align-items: baseline; gap: 8px; padding: 6px 12px 6px; margin: 18px 0 8px; border-top: 1px solid var(--hsc-hairline); user-select: none; }
         .src-folder-none-name { font-weight: 600; font-size: 0.9em; color: var(--theme-text-secondary); white-space: nowrap; }
@@ -1957,6 +1977,16 @@
                             <div class="fieldDescription">Only count titles someone actually watched. Titles you just marked as watched are ignored by the Last Played and Popular rules and by the AI.</div>
                         </div>
 
+                        <div class="hsc-eyebrow" style="margin-top: 24px; margin-bottom: 8px;">Syncs</div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="chkGentleModeEnabled" />
+                                <span>Gentle mode</span>
+                            </label>
+                            <div class="fieldDescription">While someone is watching (paused counts too), syncs make their changes a few at a time with short pauses in between, so playback is not held up. The sync takes longer then, most of all when a new top-list or ranked collection is made. With nobody watching it runs at full speed.</div>
+                        </div>
+
                         <div class="hsc-eyebrow" style="margin-top: 24px; margin-bottom: 8px;">Features</div>
 
                         <div class="checkboxContainer checkboxContainer-withDescription">
@@ -2447,7 +2477,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">folder</i>
-                    <div><strong>Folders</strong> — sort a long list of sources into folders that open and close. A folder only changes how the list looks; nothing a source does depends on it. <em>New folder</em> makes one at the top of the list, with the sources in no folder under <em>No folder</em>. A new source lands first under <em>No folder</em>. Drag a source past a folder's header to move it in, or down under <em>No folder</em> to take it out. On a folder's header you can move it, rename it, or remove it (its sources stay). Searching and filtering also look inside closed folders, and sorting by name sorts within each folder. Which folders are open is remembered in your browser. Click <strong>Save</strong> to keep your folders.</div>
+                    <div><strong>Folders</strong> — sort a long list of sources into folders that open and close. A folder only changes how the list looks; nothing a source does depends on it. <em>New folder</em> makes one at the top of the list, with the sources in no folder under <em>No folder</em>. A new source lands first under <em>No folder</em>. Drag a source past a folder's header to move it in, or down under <em>No folder</em> to take it out. On a folder's header you can move it, rename it, or remove it (its sources stay). An open folder has <strong>Run all groups in folder</strong> above its first source: it runs <em>Run Group</em> on each active source in the folder, one after another in list order (disabled sources are left out, as their Run Group is), and shows a summary at the end. With unsaved changes it first asks to save. Searching and filtering also look inside closed folders, and sorting by name sorts within each folder. Which folders are open is remembered in your browser. Click <strong>Save</strong> to keep your folders.</div>
                 </div>
                 <div class="hsc-eyebrow" style="margin:14px 0 8px;">More about the source types</div>
                 <div id="help-more-rotating" class="help-feature-row">
@@ -2793,7 +2823,7 @@
                     <i class="md-icon help-feat-icon">format_list_numbered</i>
                     <div><strong>Keep the list order — movies only (experimental)</strong> — shown when <em>Ranked collections</em> is switched on under <em>Advanced Settings</em> in the Settings tab (and saved). The collection then opens in the order of the list instead of Emby's own order.
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
-                            <li>For each movie HSC makes a hidden copy that carries its rank, linked to the real film as a version (so it appears once in search and shares its watched status).</li>
+                            <li>For each movie HSC makes a hidden copy that carries its rank, linked to the real film as a version (so it appears once in search and shares its watched status). The copy takes its text, images, cast and media info from the film: its library fetches nothing online.</li>
                             <li>The copies sit in a hidden library "&lt;collection&gt; (ranked)" that is hidden from My Media and Latest like the top-list libraries (setting <em>Hide HSC libraries</em>). It is also always added to the excluded libraries of every user's other home rows (Continue Watching, library rows and so on, also rows made before it), so the copies never show twice; collection and playlist rows are left as they are.</li>
                             <li>When the list order changes, only the ranks of the copies change: a copy is added only for a new film and removed only when its film leaves the list, so nothing is rebuilt on a reorder.</li>
                             <li>Only movies are ranked: shows in the list keep their normal place after the ranked movies.</li>
@@ -3030,7 +3060,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">visibility_off</i>
-                    <div><strong>Libraries and collections</strong> — each top-list has its own library. <em>Hide HSC libraries</em> (on by default) keeps it out of the sidebar, "My Media" and "Latest", and <em>Show collections on top-list items</em> makes "Included in &lt;collection&gt;" show on a movie opened from a top-list. Both are in the Settings tab, see <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-sec-8b').scrollIntoView({behavior:'smooth'});return false;">Advanced Settings</a>.</div>
+                    <div><strong>Libraries and collections</strong> — each top-list has its own library. Its titles are copies of your movies and shows: a movie copy takes its film's text, media info and cast and is linked to it as a version, so the library reads only the copies' own nfo files and fetches nothing online. Emby does not watch these folders for changes: HSC refreshes the library itself, once, after it has written its files. <em>Hide HSC libraries</em> (on by default) keeps it out of the sidebar, "My Media" and "Latest", and <em>Show collections on top-list items</em> makes "Included in &lt;collection&gt;" show on a movie opened from a top-list. Both are in the Settings tab, see <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-sec-8b').scrollIntoView({behavior:'smooth'});return false;">Advanced Settings</a>.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">lock_open</i>
@@ -3165,6 +3195,10 @@
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">play_circle</i>
                     <div><strong>Run button</strong> — Start a run by hand at any time; hover an option to see what it does. <em>Full sync</em> (the two below together), <em>Sync tags and collections</em> (every active source: tags, collections, playlists, home rows and top-lists) and <em>Sync home screen</em> (copies the source user's home screen to the selected users). <em>Other</em> opens the runs that also start by themselves: <em>Bump Continue Watching</em>, <em>Sync top-list rows</em> (each top-list row shows only its own library; also runs when a library is created in Emby) and <em>Merge top-list versions</em> (links top-list movies to the library movie as an extra version). While a sync, Run Group, Home Screen Sync or top-list sync is busy, <em>Last run</em> at the top of the page shows the step it is on and how long it has been running, e.g. <em>Running · Playlists — Top 10: 34/88 users · 1m 12s</em>. Runs never overlap: a sync, Run Group, Home Screen Sync or top-list sync started while another is busy waits for it to finish (shown as <em>… waiting for … to finish</em>) and then runs.</div>
+                </div>
+                <div id="help-gentle-mode" class="help-feature-row">
+                    <i class="md-icon help-feat-icon">slow_motion_video</i>
+                    <div><strong>Gentle mode</strong> — <em>Settings → Syncs → Gentle mode</em>, on by default. With it off every run goes at full speed, as if nobody were watching. With it on: when a run starts or goes on while someone is watching something on the server (playing or paused), HSC makes its many small changes (copies, collection members, tags, playlists, home rows) a few at a time with a pause after each few, so playback is not held up. A slow change gets a slice of its own, and the pause after a slice is twice as long as its changes took (3 to 15 seconds). The cast of a ranked or top-list copy goes in short steps, each its own change: two people first, then as many as fit in about 50 ms going by the step before (a slow step halves the next one, down to one person; after a step of more than 0.3 seconds the pause is three times that step). A top-list that changes (one film out, one in) adds its new copies a few at a time, with one refresh of its library each. (Home rows that are already right are never written again, with Gentle mode on or off.) The run then takes longer; the log says so at the start (<em>3 people are watching: the sync runs in gentle mode and takes longer.</em>) and its summary shows how many slices and how much pausing there was, how long the item saves, media info, cast and merges of ranked and top-list copies took, and the longest single change. A ranked collection of 100 or more copies that takes a while logs its progress every 50 copies. With nobody watching a run goes at full speed, in batches of 25, so someone who starts watching mid-run is noticed after one batch.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">schedule</i>

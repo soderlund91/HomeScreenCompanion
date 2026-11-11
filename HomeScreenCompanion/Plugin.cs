@@ -50,7 +50,7 @@ namespace HomeScreenCompanion
             if (configuration is PluginConfiguration incoming && Configuration is PluginConfiguration current)
             {
                 incoming.HomeSyncAdditions = (current.HomeSyncAdditions ?? new List<HomeSyncAddition>())
-                    .Select(a => new HomeSyncAddition { List = a.List, Key = a.Key, UserId = a.UserId, Picked = a.Picked, SectionId = a.SectionId }).ToList();
+                    .Select(a => new HomeSyncAddition { List = a.List, Key = a.Key, UserId = a.UserId, Picked = a.Picked, SectionId = a.SectionId, FromCopyAll = a.FromCopyAll }).ToList();
                 HomeSectionSyncTask.KeepKeysOfRenamedSources(current, incoming);
                 // A Position that points at a rotating source's row follows when the source is renamed.
                 RowPlacement.FollowRenamedSources(incoming, RotatingRow.Renames(current, incoming));
