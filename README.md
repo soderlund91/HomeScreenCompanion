@@ -188,7 +188,8 @@ Every source is set up in tabs, so you only turn on what you need.
 Turn any source into a home screen row for the users you choose. The plugin creates the row, keeps it up to date and removes it when it is no longer needed.
 
 - **Row types:** a collection, a tag row (dynamic media), or each user's own playlist.
-- **Look:** custom title, position (top, bottom or after a chosen row), cards or Emby's large Spotlight banner, poster or landscape images, card size, horizontal or grid layout.
+- **Look:** custom title or no title at all (**Hide row title**), position (top, bottom or after a chosen row), cards or Emby's large Spotlight banner, poster or landscape images, card size, horizontal or grid layout.
+- **How the plugin knows its rows:** by each row's id in Emby. If that id is lost, for example when Copy & Sync makes a user's rows again, the row is found by what it shows: its tag, collection or playlist, never by its title. A row you made yourself in Emby that shows exactly the same tag or collection as a source's row is therefore taken over as that row.
 - **Sorting:** list order, rating, date added, release date, name, runtime or random (a new mix on every load).
 - **Who sees it:** tick users one by one, or use **Unrestricted** and **Restricted** to give adults and kids different rows. A coloured chip shows each user's parental rating limit.
 - **TV or phone:** show a row only in TV apps, only on phones and browsers, or always.

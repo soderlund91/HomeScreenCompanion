@@ -2262,6 +2262,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         if (isRotatingRow(hseTab && hseTab.closest('.tag-row'))) orig = '{name}';
         var cn = (hseSettings.CustomName || '').trim();
         if (!cn || (orig && cn === orig)) delete hseSettings.CustomName;
+        // "Hide row title" is stored only when on, so a row without it saves as before.
+        if (hseSettings._hideTitle !== 'true') delete hseSettings._hideTitle;
     }
 
     function readRowAsConfig(row) {
@@ -6465,9 +6467,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         return title.toUpperCase().indexOf(HSE_INACTIVE_PREFIX) === 0 ? title.substring(HSE_INACTIVE_PREFIX.length) : title;
     }
 
+    // The server's copy: HomeScreenCompanionTask.SectionKey (a row without a title: also its tags).
     function hseSectionKey(s) {
         var cn = stripInactive(s.CustomName).trim();
-        return cn ? 'name:' + cn.toLowerCase() : 'type:' + (s.SectionType || '').toLowerCase() + '|' + (s.ParentId || '');
+        if (cn) return 'name:' + cn.toLowerCase();
+        var tags = ((s.Query && s.Query.TagIds) || []).filter(function (t) { return t && String(t).trim(); })
+            .map(function (t) { return String(t).trim(); }).sort().join(',');
+        return 'type:' + (s.SectionType || '').toLowerCase() + '|' + (s.ParentId || '') + (tags ? '|tag:' + tags : '');
     }
 
     var HSC_POSITION_DESC = 'Where the row goes when it is made, and where every user\'s row moves to when you change this. ' +
@@ -6531,9 +6537,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
 
     // A rotating source's own row for this user: its title cannot tell it (it changes with the turn).
-    function ownRotatingRowId(root, userId) {
+    // The user's row of this source (its tracked id): left out of the source's own Position list.
+    // A rotating row's title changes, and a hidden title cannot be told apart by its title.
+    function ownTrackedRowId(root, userId) {
         var tab = root.closest && root.closest('.homescreen-tab');
-        if (!tab || !isRotatingRow(tab.closest('.tag-row'))) return '';
+        if (!tab) return '';
         function norm(id) { return (id || '').replace(/-/g, '').toLowerCase(); }
         try {
             var t = JSON.parse(decodeURIComponent(tab.dataset.hseTracked || '[]')).find(function (x) { return norm(x.UserId) === norm(userId); });
@@ -6585,14 +6593,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var own = typeof ownName === 'function' ? ownName() : ownName;
                 own = (own || '').trim().toLowerCase();
                 var current = sel.value;
-                var rotating = (data && data.RotatingKeys) || {}, ownRow = ownRotatingRowId(root, userId);
+                var rotating = (data && data.RotatingKeys) || {}, ownRow = ownTrackedRowId(root, userId);
                 ((data && data.Sections) || []).forEach(function (s, i) {
                     if (ownRow && s.Id === ownRow) return;
                     var rotatingKey = rotating[s.Id];
                     var key = rotatingKey || hseSectionKey(s);
                     if (own && key === 'name:' + own) return;
+                    // A row with a hidden title (one space) has no name to show.
                     var label = rotatingKey ? hsePositionKeyLabel(rotatingKey)
-                        : stripInactive(s.CustomName || '') || s.Name || s.SectionType || ('Row ' + (i + 1));
+                        : stripInactive(s.CustomName || '').trim() || (s.Name || '').trim()
+                          || ((s.CustomName ? '(no title) ' : '') + (s.SectionType || ('Row ' + (i + 1))));
                     var existing = Array.from(sel.options).find(function (o) { return o.value === key; });
                     if (existing) { existing.textContent = label; return; }
                     var o = document.createElement('option');
@@ -6661,7 +6671,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
         var customName = ((s.CustomName || '').trim() === (defaultName || '').trim() ? '' : (s.CustomName || '')).replace(/"/g, '&quot;');
         var customNamePlaceholder = (defaultName || '').replace(/"/g, '&quot;');
-        html += '<div style="margin-bottom:12px;"><input is="emby-input" type="text" class="hse-field-str" data-field="CustomName" label="Custom Title" value="' + customName + '" placeholder="' + customNamePlaceholder + '"/><div class="fieldDescription hsc-rot-only"><code>{name}</code> becomes the name of what the row shows, e.g. <code>Now Showing: {name}</code>. Leave it empty for just the name.</div></div>';
+        var hideTitle = s._hideTitle === 'true';
+        html += '<div style="margin-bottom:12px;"><input is="emby-input" type="text" class="hse-field-str" data-field="CustomName" label="Custom Title" value="' + customName + '" placeholder="' + customNamePlaceholder + '"' + (hideTitle ? ' disabled' : '') + '/><div class="fieldDescription hsc-rot-only"><code>{name}</code> becomes the name of what the row shows, e.g. <code>Now Showing: {name}</code>. Leave it empty for just the name.</div></div>';
+        // Written to Emby as a title of one space, which Emby's apps show as no title.
+        html += '<div class="checkboxContainer" style="margin:-4px 0 12px;"><label><input is="emby-checkbox" type="checkbox" class="chkHseHideTitle" data-field="_hideTitle"' + (hideTitle ? ' checked' : '') + '/><span>Hide row title</span></label>' +
+            '<div class="fieldDescription">The row is shown without a title on the home screen. Tested in Emby\'s web app; other Emby apps may still show a title.</div></div>';
 
         // Where the row goes. The Row list is the first selected user's rows (filled in by
         // fillPositionRows); the saved choice is shown until that list has loaded.
@@ -6875,6 +6889,18 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                                     : ''
                 };
 
+                // A title of only spaces is a hidden one (set here, or in Emby's own home screen
+                // settings): the box is ticked and the Custom Title text is kept.
+                var hiddenInEmby = !!section.CustomName && !stripInactive(section.CustomName).trim();
+                if (hiddenInEmby) {
+                    delete fieldMap.CustomName;
+                    var hideEl = tab.querySelector('.chkHseHideTitle');
+                    if (hideEl && !hideEl.checked) {
+                        hideEl.checked = true;
+                        var titleEl = tab.querySelector('[data-field="CustomName"]');
+                        if (titleEl) titleEl.disabled = true;
+                    }
+                }
                 // A rotating row's live title and type come from its turn, not from the form.
                 if (isRotatingRow(tab.closest('.tag-row'))) { delete fieldMap.CustomName; delete fieldMap.SectionType; }
                 Object.keys(fieldMap).forEach(function(field) {
@@ -6991,6 +7017,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 tab.querySelector('.hse-fields-inner').innerHTML = buildHomeSectionFormHtml(savedSettings, defaultSectionType, defaultTagName, tagEnabled, collEnabled, libraryOptions, savedLibraryId, allLibraries, plEnabled);
                 wireHomeSectionTypeChange(tab);
                 wirePositionField(tab);
+                // A hidden title is never shown, so the Custom Title cannot be edited (it is kept).
+                var hideChk = tab.querySelector('.chkHseHideTitle');
+                if (hideChk) hideChk.addEventListener('change', function () {
+                    var t = tab.querySelector('[data-field="CustomName"]');
+                    if (t) t.disabled = hideChk.checked;
+                });
                 refreshAdvanced(tab);
                 fillPositionRows(tab, savedUserIds[0] || ((users || [])[0] || {}).Id, function () {
                     var nameEl = tab.querySelector('[data-field="CustomName"]');

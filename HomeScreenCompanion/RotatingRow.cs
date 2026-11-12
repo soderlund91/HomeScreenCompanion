@@ -367,7 +367,7 @@ namespace HomeScreenCompanion
         {
             var settings = Settings(t, json);
             settings.TryGetValue("CustomName", out var custom);
-            settings["CustomName"] = Title(custom, pick.Name);
+            settings["CustomName"] = HomeScreenCompanionTask.IsTitleHidden(settings) ? HomeScreenCompanionTask.HiddenTitle : Title(custom, pick.Name);
             settings["SectionType"] = pick.SectionType;
             settings.Remove("_queryTagId");
             if (pick.TagId != null)

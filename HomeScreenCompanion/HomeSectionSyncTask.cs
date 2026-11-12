@@ -1127,7 +1127,8 @@ namespace HomeScreenCompanion
                 string title = !string.IsNullOrWhiteSpace(s.CustomName) ? s.CustomName : !string.IsNullOrWhiteSpace(s.Name) ? s.Name : "";
                 if (string.IsNullOrEmpty(title))
                 {
-                    title = s.SectionType ?? "Row";
+                    // A hidden title (one space) is not shown: say so.
+                    title = (!string.IsNullOrEmpty(s.CustomName) ? "(no title) " : "") + (s.SectionType ?? "Row");
                     if (!string.IsNullOrEmpty(s.ParentId) && Guid.TryParse(s.ParentId, out var g) && libraryManager.GetItemById(g) is { } lib)
                         title += " · " + lib.Name;
                 }
@@ -1349,13 +1350,7 @@ namespace HomeScreenCompanion
                     (tc.HomeSectionTracked ?? new List<HomeSectionTracking>()).Any(t => NormId(t.UserId) == user && t.SectionId == s.Id));
 
             // The tag ids (Query.TagIds) and the parent (ParentId) a row shows.
-            private static HashSet<string> RowShows(ContentSection s)
-            {
-                var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var t in s.Query?.TagIds ?? Array.Empty<string>()) if (!string.IsNullOrEmpty(t)) ids.Add(t.Trim());
-                if (!string.IsNullOrEmpty(s.ParentId)) ids.Add(s.ParentId.Trim().Replace("-", ""));
-                return ids;
-            }
+            private static HashSet<string> RowShows(ContentSection s) => HomeScreenCompanionTask.RowShows(s);
 
             // The user's id as the source's home-row users list has it (null: not one of them).
             public string? SourceUserId(TagConfig tc, string user)

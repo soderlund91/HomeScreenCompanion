@@ -3622,7 +3622,14 @@ namespace HomeScreenCompanion
                                 SectionMarker = SectionMarker(t),
                                 // A rotating row goes by its id only: a row of the user's own can have its title.
                                 HomeSectionSettings = RotatingRow.Is(t) ? "{}" : t.HomeSectionSettings ?? "{}",
-                                DefaultTitle = RotatingRow.Is(t) ? "" : DefaultRowTitle(t)
+                                DefaultTitle = RotatingRow.Is(t) ? "" : DefaultRowTitle(t),
+                                // What the row shows (found by that when its id is gone); a rotating row: by its id only.
+                                SectionType = RotatingRow.Is(t) ? "" : (SourceTopLists.Json != null ? SectionTypeOf(t, SourceTopLists.Json) : DefaultSectionType(t)),
+                                Tag = RotatingRow.Is(t) ? "" : (t.Tag ?? "").Trim(),
+                                CollectionName = RotatingRow.Is(t) || !t.EnableCollection ? "" : t.CollectionName ?? "",
+                                HomeSectionLibraryId = RotatingRow.Is(t) ? "" : t.HomeSectionLibraryId ?? "",
+                                PlaylistId = RotatingRow.Is(t) ? "" : (t.PlaylistMappings ?? new List<PlaylistMapping>())
+                                    .FirstOrDefault(m => string.Equals(m.UserId, r.UserId, StringComparison.OrdinalIgnoreCase))?.PlaylistId ?? ""
                             });
                             queueChanged = true;
                         }
@@ -3670,7 +3677,8 @@ namespace HomeScreenCompanion
                     catch { continue; }
                     try
                     {
-                        if (DeleteSectionForUser(uid, r.UserId, r.SectionId, r.SectionMarker, r.HomeSectionSettings, cancellationToken, r.DefaultTitle)) n++;
+                        if (DeleteSectionForUser(uid, r.UserId, r.SectionId, r.SectionMarker, r.HomeSectionSettings, cancellationToken, r.DefaultTitle,
+                                SourceRowShows(_libraryManager, r.SectionType, r.Tag, r.CollectionName, r.HomeSectionLibraryId, r.PlaylistId), r.SectionType)) n++;
                     }
                     catch (Exception ex)
                     {
@@ -4072,9 +4080,20 @@ namespace HomeScreenCompanion
             }
         }
 
-        // An empty Custom Title is the pre-filled one: the group's name, else its tag.
+        // "Hide row title" (HomeSectionSettings "_hideTitle" = "true"): the row is written with a
+        // title of one space, which Emby's web app shows as an empty title (sectionscontroller.js:
+        // `" " === section.Name ? "&nbsp;"`). An empty title would get Emby's default name instead.
+        internal const string HideTitleKey = "_hideTitle";
+        internal const string HiddenTitle = " ";
+
+        internal static bool IsTitleHidden(IDictionary<string, string>? settings)
+            => settings != null && settings.TryGetValue(HideTitleKey, out var v) && string.Equals(v, "true", StringComparison.OrdinalIgnoreCase);
+
+        // An empty Custom Title is the pre-filled one: the group's name, else its tag. A hidden
+        // title wins over both.
         internal static void FillDefaultCustomName(Dictionary<string, string> settings, TagConfig tc)
         {
+            if (IsTitleHidden(settings)) { settings["CustomName"] = HiddenTitle; return; }
             if (settings.TryGetValue("CustomName", out var cn) && !string.IsNullOrWhiteSpace(cn)) return;
             var name = DefaultRowTitle(tc);
             if (name.Length > 0) settings["CustomName"] = name;
@@ -4697,7 +4716,9 @@ namespace HomeScreenCompanion
                                     // Switched off by its schedule (or made inactive): remember where the row
                                     // was, so it comes back at the same place when it switches on again.
                                     if (plainRow) RememberRowPosition(hsKey, tracking.UserId, uid, tracking.SectionId, cancellationToken);
-                                    if (DeleteSectionForUser(uid, tracking.UserId, tracking.SectionId, sectionMarker, tc.HomeSectionSettings, cancellationToken, DefaultRowTitle(tc))) _removedHs++;
+                                    var _delType = SectionTypeOf(tc, _jsonSerializer);
+                                    if (DeleteSectionForUser(uid, tracking.UserId, tracking.SectionId, sectionMarker, tc.HomeSectionSettings, cancellationToken, DefaultRowTitle(tc),
+                                            SourceRowShows(_libraryManager, tc, _delType, tracking.UserId), _delType)) _removedHs++;
                                 }
                                 catch (Exception ex)
                                 {
@@ -4815,7 +4836,8 @@ namespace HomeScreenCompanion
                     try
                     {
                         var uid = _userManager.GetInternalId(t.UserId);
-                        DeleteSectionForUser(uid, t.UserId, t.SectionId, sectionMarker, tc.HomeSectionSettings, cancellationToken, DefaultRowTitle(tc));
+                        DeleteSectionForUser(uid, t.UserId, t.SectionId, sectionMarker, tc.HomeSectionSettings, cancellationToken, DefaultRowTitle(tc),
+                            SourceRowShows(_libraryManager, tc, sectionType ?? "", t.UserId), sectionType);
                     }
                     catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                     tc.HomeSectionTracked.Remove(t);
@@ -4859,18 +4881,27 @@ namespace HomeScreenCompanion
                         var currentSections = _userManager.GetHomeSections(userInternalId, cancellationToken);
                         var allCurrentSections = currentSections?.Sections ?? Array.Empty<ContentSection>();
 
-                        // Hitta vår sektion: 1) via spårat ID, 2) via CustomName-fallback (skyddar mot att Emby tilldelar nytt ID vid omordning)
+                        // Our row: 1) by its tracked id, 2) the id is gone (e.g. Copy & Sync made the
+                        // user's rows again): the row that shows what this one shows (ShowsSame), 3) only
+                        // when that is not known (no tag or collection yet): by its title.
                         ContentSection? ownedSection = null;
                         if (tracked != null && !string.IsNullOrEmpty(tracked.SectionId) && !tracked.SectionId.StartsWith("hsc__"))
                             ownedSection = allCurrentSections.FirstOrDefault(s => s.Id == tracked.SectionId);
-                        // The title fallback never takes a row another group or top-list owns: two sources
-                        // with the same Custom Title for one user would otherwise share (and keep
+                        // The fallbacks never take a row another group or top-list owns: two sources
+                        // with the same tag or Custom Title for one user would otherwise share (and keep
                         // overwriting) one row. Nor any row on a top-list's library, tracked or not: it
                         // would turn the top-list's row into this source's row.
-                        if (ownedSection == null && settingsDict.TryGetValue("CustomName", out var _hsFallbackName) && !string.IsNullOrEmpty(_hsFallbackName))
-                            ownedSection = allCurrentSections.FirstOrDefault(s => SameTitle(s.CustomName, _hsFallbackName)
-                                && !SectionOwnedElsewhere(config, hsKey, userId, s.Id)
-                                && !TopListSyncTask.IsTopListRow(s, topListLibraries));
+                        bool _hsMayTake(ContentSection s) => !SectionOwnedElsewhere(config, hsKey, userId, s.Id)
+                            && !TopListSyncTask.IsTopListRow(s, topListLibraries);
+                        var _hsShows = RowShows(BuildContentSection(_jsonSerializer, settingsDict, userLibraryId));
+                        if (ownedSection == null && _hsShows.Count > 0)
+                        {
+                            ownedSection = allCurrentSections.FirstOrDefault(s => ShowsSame(s, sectionType, _hsShows) && _hsMayTake(s));
+                            if (ownedSection != null)
+                                _log.Debug($"  {UserName(userId)}: row {ownedSection.Id} that shows the same taken over (the saved id {(string.IsNullOrEmpty(tracked?.SectionId) ? "none" : tracked!.SectionId)} was gone)");
+                        }
+                        else if (ownedSection == null && settingsDict.TryGetValue("CustomName", out var _hsFallbackName) && !string.IsNullOrWhiteSpace(_hsFallbackName))
+                            ownedSection = allCurrentSections.FirstOrDefault(s => SameTitle(s.CustomName, _hsFallbackName) && _hsMayTake(s));
 
                         if (ownedSection != null)
                         {
@@ -5270,9 +5301,17 @@ namespace HomeScreenCompanion
         // A home row's identity across users (section ids differ per user): its custom title, else
         // its type and library. The settings page offers "After <row>" with the same key.
         // An inactive row keeps its key: the title counts without InactivePrefix.
+        // A hidden title (HiddenTitle) counts as no title; such a row is told apart by the tags it
+        // shows ("|tag:<ids>"), so two tag rows with hidden titles are two rows (in Copy & Sync and
+        // in Position). The page's copy: hseSectionKey in configPage.js.
         internal static string SectionKey(ContentSection s)
-            => !string.IsNullOrWhiteSpace(s.CustomName) ? "name:" + StripInactive(s.CustomName).Trim().ToLowerInvariant()
-                : "type:" + (s.SectionType ?? "").ToLowerInvariant() + "|" + (s.ParentId ?? "");
+        {
+            var title = StripInactive(s.CustomName).Trim();
+            if (title.Length > 0) return "name:" + title.ToLowerInvariant();
+            var tags = string.Join(",", (s.Query?.TagIds ?? Array.Empty<string>()).Where(t => !string.IsNullOrWhiteSpace(t))
+                .Select(t => t.Trim()).OrderBy(t => t, StringComparer.Ordinal));
+            return "type:" + (s.SectionType ?? "").ToLowerInvariant() + "|" + (s.ParentId ?? "") + (tags.Length > 0 ? "|tag:" + tags : "");
+        }
 
         // The key a Position knows this user's rows by: a rotating source's row by its source (see
         // RotatingRow.PositionKeys), any other row by its SectionKey.
@@ -5432,22 +5471,101 @@ namespace HomeScreenCompanion
                 MarkInactive(settings);
         }
 
+        // A hidden title (HiddenTitle) gets the prefix too: the row is empty and Emby hides it, and in
+        // the home screen settings it reads "[INACTIVE]".
         internal static void MarkInactive(Dictionary<string, string> settings)
         {
-            if (settings.TryGetValue("CustomName", out var cn) && !string.IsNullOrWhiteSpace(cn))
+            if (settings.TryGetValue("CustomName", out var cn) && !string.IsNullOrEmpty(cn))
                 settings["CustomName"] = InactivePrefix + StripInactive(cn);
         }
 
-        // Same row title, with or without InactivePrefix.
+        // Same row title, with or without InactivePrefix. A hidden title (HiddenTitle) or an empty
+        // one is never the same as anything: every row with a hidden title has the same one.
         internal static bool SameTitle(string? a, string? b)
-            => !string.IsNullOrEmpty(a) && !string.IsNullOrEmpty(b)
-               && string.Equals(StripInactive(a).Trim(), StripInactive(b).Trim(), StringComparison.OrdinalIgnoreCase);
+        {
+            var x = StripInactive(a).Trim();
+            var y = StripInactive(b).Trim();
+            return x.Length > 0 && y.Length > 0 && string.Equals(x, y, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // What a row shows: the tag ids it filters on (Query.TagIds) and its parent (ParentId: a
+        // collection, a playlist, a library), ids without dashes.
+        internal static HashSet<string> RowShows(ContentSection s)
+        {
+            var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var t in s.Query?.TagIds ?? Array.Empty<string>()) if (!string.IsNullOrWhiteSpace(t)) ids.Add(t.Trim().Replace("-", ""));
+            if (!string.IsNullOrWhiteSpace(s.ParentId)) ids.Add(s.ParentId.Trim().Replace("-", ""));
+            return ids;
+        }
+
+        // A row of the same type that shows any of these ids (see RowShows). How a source's row is
+        // found when its tracked id is gone: by what it shows, not by its title, since several rows
+        // can have the same title (or a hidden one). A row a user made by hand that shows exactly
+        // the same tag or collection is taken for the source's row (the owner's decision, 2026-11-12).
+        internal static bool ShowsSame(ContentSection s, string? sectionType, ICollection<string>? shows)
+            => shows != null && shows.Count > 0 && !string.IsNullOrEmpty(s.Id)
+               && string.Equals(s.SectionType ?? "", sectionType ?? "", StringComparison.OrdinalIgnoreCase)
+               && RowShows(s).Overlaps(shows);
+
+        // What a source's row shows for one user (see RowShows), worked out from the source: a tag
+        // row its tag, a collection row its collection, a playlist row the user's own playlist.
+        // Empty when it is not known (e.g. the tag or collection does not exist).
+        internal static HashSet<string> SourceRowShows(ILibraryManager lm, string? sectionType, string? tag, string? collectionName,
+            string? homeSectionLibraryId, string? playlistId)
+        {
+            var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            string Inv(long id) => id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            try
+            {
+                if (sectionType == "items" && !string.IsNullOrWhiteSpace(tag))
+                {
+                    var tagItem = lm.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Tag" }, Name = tag!.Trim(), Recursive = true }).FirstOrDefault();
+                    if (tagItem != null) ids.Add(Inv(tagItem.InternalId));
+                }
+                else if (sectionType == "boxset")
+                {
+                    if (!string.IsNullOrWhiteSpace(homeSectionLibraryId) && homeSectionLibraryId != "auto")
+                        ids.Add(homeSectionLibraryId!.Trim().Replace("-", ""));
+                    else if (!string.IsNullOrWhiteSpace(collectionName))
+                    {
+                        var coll = lm.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = collectionName, Recursive = true }).FirstOrDefault();
+                        if (coll != null) { ids.Add(Inv(coll.InternalId)); ids.Add(coll.Id.ToString("N")); }
+                    }
+                }
+                else if (sectionType == "playlist" && Guid.TryParse(playlistId, out var g))
+                {
+                    var pl = lm.GetItemById(g);
+                    if (pl != null && pl.GetType().Name.Contains("Playlist")) { ids.Add(Inv(pl.InternalId)); ids.Add(pl.Id.ToString("N")); }
+                }
+            }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+            return ids;
+        }
+
+        internal static HashSet<string> SourceRowShows(ILibraryManager lm, TagConfig tc, string sectionType, string userId)
+            => SourceRowShows(lm, sectionType, tc.Tag, tc.EnableCollection ? tc.CollectionName : null, tc.HomeSectionLibraryId,
+                tc.PlaylistMappings?.FirstOrDefault(m => string.Equals(m.UserId, userId, StringComparison.OrdinalIgnoreCase))?.PlaylistId);
+
+        // The row type of a source's row: the saved one, else DefaultSectionType.
+        internal static string SectionTypeOf(TagConfig tc, IJsonSerializer json)
+        {
+            var st = "";
+            try
+            {
+                var s = json.DeserializeFromString<Dictionary<string, string>>(string.IsNullOrEmpty(tc.HomeSectionSettings) ? "{}" : tc.HomeSectionSettings);
+                if (s != null) s.TryGetValue("SectionType", out st);
+            }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+            return string.IsNullOrEmpty(st) ? DefaultSectionType(tc) : st!;
+        }
 
         // Removes a group's row for one user: by its tracked id, else (the id is gone, e.g. Copy & Sync
-        // re-created the user's rows with new ids) by its marker, else by its title. True when a row
-        // was removed. Never a top-list's row: not one a top-list tracks, and by marker or title never
-        // a row on a top-list's library either — a source and a top-list can have the same title.
-        private bool DeleteSectionForUser(long userInternalId, string userId, string sectionId, string sectionMarker, string settingsJson, CancellationToken cancellationToken, string? defaultTitle = null)
+        // re-created the user's rows with new ids) by its marker, else by what it shows (shows +
+        // sectionType, see ShowsSame), else, only when that is not known, by its title. True when a
+        // row was removed. Never a top-list's row: not one a top-list tracks, and by marker, content
+        // or title never a row on a top-list's library either. Never a row another group tracks.
+        private bool DeleteSectionForUser(long userInternalId, string userId, string sectionId, string sectionMarker, string settingsJson, CancellationToken cancellationToken, string? defaultTitle = null,
+            ICollection<string>? shows = null, string? sectionType = null)
         {
             ContentSection[]? allSections = null;
             try { allSections = _userManager.GetHomeSections(userInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>(); }
@@ -5488,18 +5606,35 @@ namespace HomeScreenCompanion
                 }
             }
 
+            // Never a row another group tracks (same content or title, different source).
+            var trackedIds = new HashSet<string>(
+                (cfg?.Tags ?? new List<TagConfig>()).SelectMany(t => t.HomeSectionTracked ?? new List<HomeSectionTracking>())
+                    .Select(t => t.SectionId).Where(id => !string.IsNullOrEmpty(id) && id != sectionId));
+
+            if (shows != null && shows.Count > 0)
+            {
+                var byContent = allSections
+                    .Where(s => ShowsSame(s, sectionType, shows) && !trackedIds.Contains(s.Id) && !IsTopListRow(s))
+                    .Select(s => s.Id).ToArray();
+                if (byContent.Length > 0)
+                {
+                    _userManager.DeleteHomeSections(userInternalId, byContent, cancellationToken);
+                    _log.Debug($"  {UserName(userId)}: {RunLog.Plural(byContent.Length, "row")} removed by what it shows (the saved id {(realId ? sectionId : "-")} was gone)");
+                    return true;
+                }
+                // Known content and no row shows it: no other row is this one's.
+                return false;
+            }
+
             try
             {
                 var hint = _jsonSerializer.DeserializeFromString<Dictionary<string, string>>(settingsJson ?? "{}");
                 var cn = hint != null && hint.TryGetValue("CustomName", out var savedName) ? savedName : "";
                 // An empty saved title: the row was written with the default one (FillDefaultCustomName).
-                if (string.IsNullOrWhiteSpace(cn)) cn = defaultTitle ?? "";
-                if (!string.IsNullOrEmpty(cn))
+                // A hidden title is never searched for (SameTitle).
+                if (string.IsNullOrWhiteSpace(cn) && !IsTitleHidden(hint)) cn = defaultTitle ?? "";
+                if (!string.IsNullOrWhiteSpace(cn))
                 {
-                    // Never a row another group or top-list tracks (same title, different source).
-                    var trackedIds = new HashSet<string>(
-                        (cfg?.Tags ?? new List<TagConfig>()).SelectMany(t => t.HomeSectionTracked ?? new List<HomeSectionTracking>())
-                            .Select(t => t.SectionId).Where(id => !string.IsNullOrEmpty(id)));
                     var sameTitle = allSections.Where(s => SameTitle(s.CustomName, cn) && !string.IsNullOrEmpty(s.Id)).ToList();
                     foreach (var s in sameTitle.Where(IsTopListRow))
                         _log.Debug($"  {UserName(userId)}: '{s.CustomName}' ({s.Id}) kept — a top-list's row with the same title");

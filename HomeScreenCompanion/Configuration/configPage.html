@@ -2740,12 +2740,13 @@
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li><strong>Show this section</strong> — <em>Always</em>, or only when Emby's <em>TV Display Mode</em> is on (TV apps) or off (phones and browsers), e.g. a bigger row for the living room.</li>
                             <li><strong>Media Type</strong> — what a tag row shows: movies, shows, both, episodes, collections and more. Playlist rows always show the whole playlist.</li>
-                            <li><strong>Custom Title</strong> — the row's name on the home screen; empty uses the source's name.</li>
+                            <li><strong>Custom Title</strong> — the row's name on the home screen; empty uses the source's name. <strong>Hide row title</strong> shows the row without a title (tested in Emby's web app).</li>
                             <li><strong>Position</strong> — where a new row goes: <em>Bottom</em> (default), <em>Top</em> or after a chosen row. A row you later move in Emby's home screen settings keeps its new place.</li>
                             <li><strong>View Type</strong> — <em>Cards</em> or Emby's large <em>Spotlight</em> banner. <strong>Image Type</strong> — <em>Auto</em>, <em>Primary</em> (poster) or <em>Thumb</em> (landscape). <strong>Card Size</strong> — see <em>Card size</em> under Home Screen.</li>
                             <li><strong>Sort By</strong> and <strong>Sort Order</strong> — <em>(Default)</em> uses Emby's own order for that kind of row (a playlist row keeps the playlist's order); or sort by rating, date added, name, runtime, release date, year or <em>Random</em> (a new mix on every load).</li>
                             <li><strong>Scroll Direction</strong> — <em>Horizontal</em> (one swipeable line) or <em>Vertical</em> (a grid). <strong>Playstate</strong> — show only <em>Played</em> or <em>Unplayed</em> titles, per user.</li>
                             <li>Every sync puts these settings back on the row, so change them here, not in Emby's own row editor.</li>
+                            <li>The plugin knows each row by its id. If the id is lost (for example when Copy &amp; Sync makes a user's rows again), it finds the row by the tag, collection or playlist it shows, not by its title. A row you made yourself that shows exactly the same tag or collection is taken over as the source's row.</li>
                         </ul></details></div>
                 </div>
 

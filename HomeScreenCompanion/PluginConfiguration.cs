@@ -463,6 +463,13 @@ namespace HomeScreenCompanion
         public string HomeSectionSettings { get; set; } = "{}";
         // The title the row got when its Custom Title was empty (the group's name, else its tag).
         public string DefaultTitle { get; set; } = "";
+        // What the row showed, so it is found by that when its id is gone (see
+        // HomeScreenCompanionTask.SourceRowShows). Empty in files written before 4.8.0.x.
+        public string SectionType { get; set; } = "";
+        public string Tag { get; set; } = "";
+        public string CollectionName { get; set; } = "";
+        public string HomeSectionLibraryId { get; set; } = "";
+        public string PlaylistId { get; set; } = "";
     }
 
     public class MediaInfoFilter
