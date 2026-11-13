@@ -1448,7 +1448,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var users = [];
 
         function loading(text) {
-            return '<div class="stm-empty"><i class="md-icon" style="font-size:2em;display:block;margin-bottom:8px;">hourglass_empty</i>' + escapeHtml(text) + '</div>';
+            return '<div class="stm-empty"><i class="md-icon stm-wait-icon" aria-hidden="true">hourglass_empty</i><div class="stm-wait-text" role="status">' + escapeHtml(text) + '</div></div>';
         }
 
         // Your Next Watch: picks are per user — preview one user at a time (picker on top).
@@ -5488,7 +5488,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     '<button type="button" class="stm-close" title="Close"><i class="md-icon">close</i></button>' +
                 '</div>' +
                 '<div class="stm-body" style="display:flex;flex-direction:column;min-height:0;flex:1;">' +
-                    '<div class="stm-empty"><i class="md-icon" style="font-size:2em;display:block;margin-bottom:8px;">hourglass_empty</i>' + esc(loadingText || 'Fetching source…') + '</div>' +
+                    '<div class="stm-empty"><i class="md-icon stm-wait-icon" aria-hidden="true">hourglass_empty</i><div class="stm-wait-text" role="status">' + esc(loadingText || 'Fetching source…') + '</div></div>' +
                 '</div>' +
             '</div>';
         document.body.appendChild(overlay);

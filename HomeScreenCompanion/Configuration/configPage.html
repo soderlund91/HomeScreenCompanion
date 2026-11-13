@@ -612,6 +612,11 @@
         .stm-status.in { background: rgba(82,181,75,0.15); color: var(--hsc-primary-text); }
         .stm-status.out { background: rgba(229,115,115,0.15); color: var(--hsc-danger-text); }
         .stm-empty { text-align: center; padding: 30px; color: var(--plugin-popup-muted, #aaa); }
+        /* Waiting for a preview: the hourglass turns over, rests, turns again (still with reduced motion). */
+        .stm-wait-icon { display: inline-block; font-size: 2em; margin-bottom: 8px; animation: hsc-hourglass 2.4s cubic-bezier(.65,0,.35,1) infinite; }
+        .stm-wait-text { animation: hsc-wait-text 2.4s ease-in-out infinite; }
+        @keyframes hsc-hourglass { 0%, 30% { transform: rotate(0deg); } 50%, 80% { transform: rotate(180deg); } 100% { transform: rotate(360deg); } }
+        @keyframes hsc-wait-text { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
         .stm-footer { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--plugin-popup-border, rgba(255,255,255,0.12)); font-size: 0.82em; color: var(--plugin-popup-muted, #aaa); }
         .stm-footer button { margin-left: auto; cursor: pointer; border: 1px solid var(--plugin-popup-border, var(--hsc-hairline-strong)); background: var(--hsc-tint-1); color: inherit; border-radius: 8px; padding: 8px 16px; font-family: inherit; font-size: 1.05em; font-weight: 500; }
         .stm-footer button:hover { background: var(--plugin-popup-hover, var(--hsc-tint-2)); }
