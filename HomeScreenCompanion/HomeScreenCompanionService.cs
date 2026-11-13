@@ -478,6 +478,13 @@ namespace HomeScreenCompanion
         public List<string> Ids { get; set; } = new List<string>();
     }
 
+    // Whether a collection with this name is in Emby and was not made by HSC (nor imported): the
+    // delete dialog then lists it as kept.
+    [Route("/HomeScreenCompanion/Collections/Owner", "GET")]
+    [Authenticated(Roles = "Admin")]
+    public class GetCollectionOwnerRequest : IReturn<GetCollectionOwnerResponse> { public string Name { get; set; } = ""; }
+    public class GetCollectionOwnerResponse { public bool Exists { get; set; } public bool NotMadeByHsc { get; set; } }
+
     [Route("/HomeScreenCompanion/Manage/DeleteTag", "POST")]
     [Authenticated(Roles = "Admin")]
     public class DeleteManagedTagRequest : IReturn<DeleteManagedTagResponse> { public string TagName { get; set; } = ""; }
@@ -2556,6 +2563,19 @@ public class HomeScreenCompanionService : IService
                     result[cName] = string.IsNullOrWhiteSpace(t.Name) ? (t.Tag ?? "") : t.Name;
             }
             return result;
+        }
+
+        public object Get(GetCollectionOwnerRequest request)
+        {
+            var name = (request.Name ?? "").Trim();
+            var coll = name.Length == 0 ? null : _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = name, Recursive = true })
+                .FirstOrDefault(c => !TagAnchor.IsAnchor(c, _jsonSerializer));
+            return new GetCollectionOwnerResponse
+            {
+                Exists = coll != null,
+                NotMadeByHsc = coll != null && !CollectionOwnership.IsCreated(coll, _libraryManager)
+                    && !HomeScreenCompanionTask.RecordImportedCollections(Plugin.Instance?.Configuration).Contains(name)
+            };
         }
 
         public object Get(GetImportCollectionsRequest request)
