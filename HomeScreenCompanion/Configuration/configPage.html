@@ -2526,6 +2526,19 @@
                             <li>The order is kept: a top-list made from the tag and a playlist follow it. An Emby collection still shows Emby's own sort order (see <em>Keep the list order</em> under Tags &amp; Collections).</li>
                             <li>Titles later deleted from the library are skipped. Copy/paste matches the titles on another server by IMDb/TMDb/TVDb id.</li>
                             <li><em>Preview</em> lists the titles that would get the tag, in your order.</li>
+                            <li><em>Max items</em> caps how many of the titles are used (0 = all of them).</li>
+                            <li><em>Pinned</em>: a <em>Random pick</em> source with the same tag counts these titles in its Max and never picks them itself (see <em>Random pick</em> below). To pin a title for a while only, give the pinned source a Schedule.</li>
+                        </ul></div>
+                </div>
+                <div id="help-more-randompick" class="help-feature-row">
+                    <i class="md-icon help-feat-icon">shuffle</i>
+                    <div><strong>Random pick</strong> — on the Source tab of every source type that tags titles (not <em>Rotating from existing</em> or <em>Your Next Watch</em>).
+                        <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
+                            <li>Each <em>Max items</em> is filled with titles picked at random from everything the source finds, instead of the first ones. With Max 0 nothing is picked: all titles are used.</li>
+                            <li><em>New pick every</em> <strong>Day</strong> or <strong>Week</strong> (from Monday). Every sync on the same day (or week) picks the same titles while the source's titles stay the same, so tags do not change back and forth; the next day or week brings a new pick. A list that changes between syncs (an AI source, a live list) can change the pick. The day changes at midnight, server time.</li>
+                            <li>Here Max counts Emby items: a film with two versions takes two places, so exactly Max items have the tag.</li>
+                            <li><em>Pinned titles with the same tag count toward Max</em>: the titles of <em>Pinned</em> Manual List sources with the same tag (on and in schedule) are part of the Max. With 1 pinned title and Max 8, 7 are picked, and 8 titles have the tag. Off: Max titles are picked and the pinned ones come on top. Pinned titles are never picked twice.</li>
+                            <li>For a home row in Emby's <em>Spotlight</em> view: the Emby web app asks for up to <strong>8</strong> items for a spotlight row. With the row's tag on exactly 8 items (Max 8), the row always shows the pinned titles; the others change with each pick.</li>
                         </ul></div>
                 </div>
                 <div id="help-more-mediainfo" class="help-feature-row">
@@ -2676,7 +2689,7 @@
                 <div class="src-cards" style="grid-template-columns: repeat(3, 1fr);">
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">input</i> Source tab</div>
-                        Choose the source type and add URLs, local sources, or hand-picked titles. Set the <strong>Max items</strong> limit to cap how many items are fetched (0 = no limit). When the last run found fewer titles than <strong>Max items</strong>, the card header shows an amber chip such as <strong>9 of 10</strong>.
+                        Choose the source type and add URLs, local sources, or hand-picked titles. Set the <strong>Max items</strong> limit to cap how many items are fetched (0 = no limit), or tick <em>Random pick</em> to fill it with a new random pick each day or week (<a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-more-randompick').scrollIntoView({behavior:'smooth'});return false;">more below</a>). When the last run found fewer titles than <strong>Max items</strong>, the card header shows an amber chip such as <strong>9 of 10</strong>.
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">label</i> Tag tab</div>

@@ -214,6 +214,16 @@ namespace HomeScreenCompanion
         public List<string> MediaInfoConditions { get; set; } = new List<string>();
         public List<MediaInfoFilter> MediaInfoFilters { get; set; } = new List<MediaInfoFilter>();
 
+        // "Pinned" (Manual sources): its titles always have the tag, and a Random pick source with
+        // the same tag and RandomPickCountPinned counts them in its Max (see RandomPick).
+        public bool Pinned { get; set; } = false;
+        // "Random pick": each Max is filled with titles picked at random from everything the source
+        // matches, the same pick all day / week (RandomPickEvery "Day" or "Week"). With
+        // RandomPickCountPinned the pinned titles of the same tag are part of the Max.
+        public bool RandomPick { get; set; } = false;
+        public string RandomPickEvery { get; set; } = "Day";
+        public bool RandomPickCountPinned { get; set; } = true;
+
         // AI source settings
         public string AiProvider { get; set; } = "OpenAI";
         public string AiPrompt { get; set; } = "";

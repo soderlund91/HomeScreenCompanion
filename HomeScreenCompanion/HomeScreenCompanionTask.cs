@@ -700,7 +700,7 @@ namespace HomeScreenCompanion
                     var groupTimer = System.Diagnostics.Stopwatch.StartNew();
                     try
                     {
-                        int effectiveLimit = tagConfig.Limit <= 0 ? NoLimit : tagConfig.Limit;
+                        int effectiveLimit = FetchLimit(tagConfig);
                         _log.Section($"[{gs.GroupIndex}/{gs.GroupTotal}] {displayName}");
                         _log.Debug("  " + DescribeSourceDetail(tagConfig, effectiveLimit));
                         var blacklist = new HashSet<string>(tagConfig.Blacklist ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
@@ -708,6 +708,7 @@ namespace HomeScreenCompanion
                         List<BaseItem> tagOutputItems = matchedLocalItems;
                         List<BaseItem> collectionOutputItems = matchedLocalItems;
                         int matchCount = 0;
+                        int? randomCounted = null;   // Random pick: the items counted in its Max (pinned ones included)
                         string? fetchError = null;   // why a list / the AI came back empty (ListFetcher.LastError)
                         Dictionary<long, List<string>>? seriesEpisodeNamesCache = null;
                         if (GetAllCriteria(tagConfig).Any(c => c.TrimStart('!').StartsWith("EpisodeTitle:", StringComparison.OrdinalIgnoreCase)))
@@ -765,7 +766,7 @@ namespace HomeScreenCompanion
                                         continue;
                                     }
 
-                                    if (tagConfig.EnableTag && !tagConfig.OnlyCollection && !HasFilterConditions(tagConfig))
+                                    if (tagConfig.EnableTag && !tagConfig.OnlyCollection && CachesWholeList(tagConfig))
                                         foreach (var t in outTags) TagCacheManager.Instance.AddToCache($"imdb_{extItem.Imdb}", t);
 
                                     if (imdbLookup.TryGetValue(extItem.Imdb, out var localItems))
@@ -945,6 +946,13 @@ namespace HomeScreenCompanion
                                 }
                             }
                             OrderByPopularity(tagConfig, matchedLocalItems, effectiveLimit);
+                            if (RandomPick.On(tagConfig))
+                            {
+                                var _rp = ApplyRandomPick(config, tagConfig, matchedLocalItems);
+                                matchedLocalItems.Clear();
+                                matchedLocalItems.AddRange(_rp.Items);
+                                randomCounted = _rp.Counted;
+                            }
                             if (!dryRun)
                                 RankWeekAgo(tagName, tagConfig, itemsToScan.Where(i => i.LocationType == LocationType.FileSystem && !blacklist.Contains(i.GetProviderId("Imdb") ?? "")),
                                     i => ItemMatchesMediaInfo(i, tagConfig, debug, seriesEpisodeCache, personCache, userDataCache, mediaInfoCache.TryGetValue(i.InternalId, out var wci) ? wci : (CachedMediaInfo?)null,
@@ -1039,7 +1047,7 @@ namespace HomeScreenCompanion
                                         continue;
                                     }
 
-                                    if (tagConfig.EnableTag && !tagConfig.OnlyCollection && !HasFilterConditions(tagConfig))
+                                    if (tagConfig.EnableTag && !tagConfig.OnlyCollection && CachesWholeList(tagConfig))
                                         foreach (var t in outTags) TagCacheManager.Instance.AddToCache($"imdb_{imdbId}", t);
 
                                     if (imdbLookup.TryGetValue(imdbId, out var localItems))
@@ -1096,6 +1104,13 @@ namespace HomeScreenCompanion
                                 aiConfigChanged = true;
                             }
                         }
+                        if (tagConfig.SourceType != "MediaInfo" && RandomPick.On(tagConfig))
+                        {
+                            var _rp = ApplyRandomPick(config, tagConfig, matchedLocalItems);
+                            matchedLocalItems.Clear();
+                            matchedLocalItems.AddRange(_rp.Items);
+                            randomCounted = _rp.Counted;
+                        }
                         // For non-MediaInfo sources, apply output level selection (expand down from Series/Movie)
                         if (tagConfig.SourceType != "MediaInfo")
                         {
@@ -1124,7 +1139,7 @@ namespace HomeScreenCompanion
                         // with two versions, or a show tagged with its seasons, is one title.
                         if (!IsNextWatch(tagConfig)) gs.MatchCount = tagConfig.SourceType == "MediaInfo" ? allOutputIds.Count : TitleCount(matchedLocalItems);
                         matchCount += allOutputIds.Count;
-                        if (!dryRun && !gs.BoxSetHse) RecordLastRun(new[] { (tagConfig, TitleCount(matchedLocalItems)) }, gs);
+                        if (!dryRun && !gs.BoxSetHse) RecordLastRun(new[] { (tagConfig, randomCounted ?? TitleCount(matchedLocalItems)) }, gs);
 
                         // Collect rank order so top-list .strm files can be numbered in list order.
                         // Accumulated across all flat entries of the tag; written once after the loop.
@@ -2388,7 +2403,7 @@ namespace HomeScreenCompanion
             RecordImportedCollections(Plugin.Instance?.Configuration);
             string tagName = tagConfig.Tag.Trim();
             string cName = string.IsNullOrWhiteSpace(tagConfig.CollectionName) ? tagName : tagConfig.CollectionName.Trim();
-            int effectiveLimit = tagConfig.Limit <= 0 ? NoLimit : tagConfig.Limit;
+            int effectiveLimit = FetchLimit(tagConfig);
             var blacklist = new HashSet<string>(tagConfig.Blacklist ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
             var passesFilters = FilterConditionsCheck(tagConfig, seriesEpisodeCache, personCache, userDataCache, mediaInfoCache,
                 preloadedUsers, seriesLastPlayedCache, collectionMembershipCache, seriesEpisodeNamesCache);
@@ -2411,6 +2426,8 @@ namespace HomeScreenCompanion
                 foreach (var t in outTags.Where(t => !_sharedTags.Contains(t))) TagCacheManager.Instance.RemoveTagFromAllEntries(t);
             var matchedLocalItems = new List<BaseItem>();
             var _srcTitles = new Dictionary<TagConfig, int>();   // per URL / local source of the group
+            var _perSrc = new List<(TagConfig Src, List<BaseItem> Items)>();   // each URL's / local source's titles, for Random pick
+            int? _randomCounted = null;   // Random pick: the items counted in its Max (pinned ones included)
             List<BaseItem> tagOutputItems = matchedLocalItems;
             List<BaseItem> collectionOutputItems = matchedLocalItems;
             int _listCount = 0;
@@ -2449,7 +2466,7 @@ namespace HomeScreenCompanion
                     foreach (var src in groupEntries)
                     {
                         if (string.IsNullOrWhiteSpace(src.Url)) continue;
-                        int srcLimit = src.Limit <= 0 ? NoLimit : src.Limit;
+                        int srcLimit = FetchLimit(src);
                         var fetchTimer = System.Diagnostics.Stopwatch.StartNew();
                         var items = await fetcher.FetchItems(src.Url, srcLimit, config.TraktClientId, config.MdblistApiKey, config.TmdbApiKey, cancellationToken,
                             CountsTowardLimit(imdbLookup, blacklist, passesFilters));
@@ -2475,17 +2492,22 @@ namespace HomeScreenCompanion
                         if (items.Count == 0) _emptySources.Add(src.Url.Trim() + (fetcher.LastError != null ? $" ({fetcher.LastError})" : ""));
                         if (items.Count == 0 && ListFetcher.IsFailure(fetcher.LastError)) _failedSources.Add(_emptySources[_emptySources.Count - 1]);
                         int _srcMatched = 0, _srcBlacklisted = 0, _srcMissingBefore = gs.MissingItems.Count;
+                        var _srcItems = new List<BaseItem>();
+                        _perSrc.Add((src, _srcItems));
                         foreach (var extItem in items)
                         {
                             if (string.IsNullOrEmpty(extItem.Imdb)) continue;
                             if (blacklist.Contains(extItem.Imdb)) { _srcBlacklisted++; _log.Debug($"    Blacklisted: {extItem.Name} ({extItem.Imdb})"); continue; }
-                            if (_preview == null && tagConfig.EnableTag && !tagConfig.OnlyCollection && !HasFilterConditions(tagConfig))
+                            if (_preview == null && tagConfig.EnableTag && !tagConfig.OnlyCollection && CachesWholeList(tagConfig))
                                 foreach (var t in outTags) TagCacheManager.Instance.AddToCache($"imdb_{extItem.Imdb}", t);
                             if (imdbLookup.TryGetValue(extItem.Imdb, out var localItems))
                             {
                                 _srcMatched++;
                                 foreach (var localItem in localItems)
+                                {
                                     if (!matchedLocalItems.Contains(localItem)) matchedLocalItems.Add(localItem);
+                                    if (!_srcItems.Contains(localItem)) _srcItems.Add(localItem);
+                                }
                             }
                             else
                             {
@@ -2507,7 +2529,7 @@ namespace HomeScreenCompanion
                     foreach (var src in groupEntries)
                     {
                         if (string.IsNullOrEmpty(src.LocalSourceId)) continue;
-                        int srcLimit = src.Limit <= 0 ? NoLimit : src.Limit;
+                        int srcLimit = FetchLimit(src);
                         var localSourceFolder = allFolders.FirstOrDefault(i => string.Equals(i.Name, src.LocalSourceId, StringComparison.OrdinalIgnoreCase));
                         if (localSourceFolder == null)
                         {
@@ -2538,6 +2560,7 @@ namespace HomeScreenCompanion
                             srcMatched = srcMatched.Take(srcLimit).ToList();
                         foreach (var m in srcMatched)
                             if (!matchedLocalItems.Contains(m)) matchedLocalItems.Add(m);
+                        _perSrc.Add((src, srcMatched));
                         _srcTitles[src] = TitleCount(srcMatched);
                         _log.Debug($"  '{src.LocalSourceId}'  →  {children.Count} items, {srcMatched.Count} usable movies/series");
                     }
@@ -2555,7 +2578,7 @@ namespace HomeScreenCompanion
                 }
                 else if (tagConfig.SourceType == "Manual")
                 {
-                    matchedLocalItems = ManualItems(tagConfig, blacklist, tagConfig.Limit <= 0 ? NoLimit : tagConfig.Limit, gs, passesFilters);
+                    matchedLocalItems = ManualItems(tagConfig, blacklist, effectiveLimit, gs, passesFilters);
                     _listCount = tagConfig.ManualItemIds?.Count ?? 0;
                     _log.Debug($"  {matchedLocalItems.Count} of {_listCount} hand-picked items found");
                 }
@@ -2607,6 +2630,13 @@ namespace HomeScreenCompanion
                         }
                     }
                     OrderByPopularity(tagConfig, matchedLocalItems, effectiveLimit);
+                    if (RandomPick.On(tagConfig))
+                    {
+                        var _rp = ApplyRandomPick(config, tagConfig, matchedLocalItems);
+                        matchedLocalItems.Clear();
+                        matchedLocalItems.AddRange(_rp.Items);
+                        _randomCounted = _rp.Counted;
+                    }
                     if (_preview != null)
                     {
                         var _popDays = PopularRuleDays(tagConfig);
@@ -2695,7 +2725,7 @@ namespace HomeScreenCompanion
                         {
                             var imdbId = aiItem.imdb_id!.Trim();
                             if (blacklist.Contains(imdbId)) { _aiBlacklisted++; _log.Debug($"    Blacklisted: {_aiLabel} ({imdbId})"); continue; }
-                            if (_preview == null && tagConfig.EnableTag && !tagConfig.OnlyCollection && !HasFilterConditions(tagConfig))
+                            if (_preview == null && tagConfig.EnableTag && !tagConfig.OnlyCollection && CachesWholeList(tagConfig))
                                 foreach (var t in outTags) TagCacheManager.Instance.AddToCache($"imdb_{imdbId}", t);
                             if (imdbLookup.TryGetValue(imdbId, out var localItems))
                             {
@@ -2802,6 +2832,26 @@ namespace HomeScreenCompanion
                 _log.Debug($"  Filter conditions: {beforeCount} → {matchedLocalItems.Count} items");
             }
 
+            // Random pick (MediaInfo picked above): each URL / local source picks its own Max from
+            // its titles that passed the filters.
+            if (tagConfig.SourceType != "MediaInfo" && RandomPick.On(tagConfig))
+            {
+                var _passed = new HashSet<BaseItem>(matchedLocalItems);
+                var _picked = new List<BaseItem>();
+                int _counted = 0;
+                foreach (var (src, items) in _perSrc.Count > 0 ? _perSrc : new List<(TagConfig, List<BaseItem>)> { (tagConfig, matchedLocalItems.ToList()) })
+                {
+                    if (!RandomPick.On(src)) { _picked.AddRange(items.Where(_passed.Contains)); continue; }
+                    var _rp = ApplyRandomPick(config, src, items.Where(_passed.Contains).ToList());
+                    foreach (var i in _rp.Items) if (!_picked.Contains(i)) _picked.Add(i);
+                    _srcTitles[src] = _rp.Counted;
+                    _counted += _rp.Counted;
+                }
+                matchedLocalItems.Clear();
+                matchedLocalItems.AddRange(_picked);
+                _randomCounted = _counted;
+            }
+
             // Preview of a list source: the matches in list order plus what is not in the library.
             if (_preview != null)
             {
@@ -2873,7 +2923,7 @@ namespace HomeScreenCompanion
             if (_preview == null && !dryRun && !gs.BoxSetHse)
                 RecordLastRun(groupEntries.Count > 1
                     ? groupEntries.Select(t => (t, _srcTitles.TryGetValue(t, out var n) ? n : -1))
-                    : new[] { (tagConfig, TitleCount(matchedLocalItems)) }, gs);
+                    : new[] { (tagConfig, _randomCounted ?? TitleCount(matchedLocalItems)) }, gs);
             if (gs.MissingItems.Count > 0 && debug)
             {
                 _log.Debug($"  Not in library ({gs.MissingItems.Count}):");
@@ -2904,7 +2954,7 @@ namespace HomeScreenCompanion
             var _isBoxSetHse = IsBoxSetHomeSectionEntry(tagConfig); // computed once, not per-item
             // A list source with filter conditions caches only the titles that passed them (see
             // HasFilterConditions) — before the tags are written, as the full run does.
-            if (!dryRun && tagConfig.EnableTag && !tagConfig.OnlyCollection && !_isBoxSetHse && IsListSource(tagConfig) && HasFilterConditions(tagConfig))
+            if (!dryRun && tagConfig.EnableTag && !tagConfig.OnlyCollection && !_isBoxSetHse && IsListSource(tagConfig) && !CachesWholeList(tagConfig))
                 foreach (var _imdb in tagOutputItems.Select(i => i.GetProviderId("Imdb")).Where(id => !string.IsNullOrEmpty(id)))
                     foreach (var t in outTags) TagCacheManager.Instance.AddToCache($"imdb_{_imdb}", t);
             int updateCount = 0;
@@ -6110,6 +6160,39 @@ namespace HomeScreenCompanion
             return result;
         }
 
+        // The Limit a source is read with: none with Random pick, which picks its Max from
+        // everything the source matches afterwards (ApplyRandomPick).
+        private static int FetchLimit(TagConfig t) => t.Limit <= 0 || RandomPick.On(t) ? NoLimit : t.Limit;
+
+        // The pinned titles of the source's tag: Manual sources marked Pinned (not the source's own
+        // group) that are on, in schedule and write that tag.
+        private List<BaseItem> PinnedFor(PluginConfiguration config, TagConfig tc)
+        {
+            var tag = (tc.Tag ?? "").Trim();
+            var pinned = new List<BaseItem>();
+            if (tag.Length == 0) return pinned;
+            foreach (var t in (config.Tags ?? new List<TagConfig>()).Where(t => RandomPick.IsPinnedSource(t) && t.Active && t.EnableTag && !t.OnlyCollection
+                && IsScheduleActive(t.ActiveIntervals)
+                && !string.Equals(GroupKey(t), GroupKey(tc), StringComparison.OrdinalIgnoreCase)
+                && t.AllTags().Contains(tag, StringComparer.OrdinalIgnoreCase)))
+            {
+                var bl = new HashSet<string>(t.Blacklist ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+                foreach (var i in ManualItems(t, bl, t.Limit <= 0 ? NoLimit : t.Limit, new GroupRunStats()))
+                    if (!pinned.Contains(i)) pinned.Add(i);
+            }
+            return pinned;
+        }
+
+        // Random pick: the source's Max picked from all it matched (see RandomPick).
+        private RandomPick.Result ApplyRandomPick(PluginConfiguration config, TagConfig tc, List<BaseItem> pool)
+        {
+            var r = RandomPick.Apply(tc, pool, PinnedFor(config, tc), DateTime.Now);
+            _log.Info($"  Random pick ({r.Period}): {r.Items.Count} of {r.Pool} titles"
+                + (r.Pinned > 0 ? $" + {r.Pinned} pinned = {r.Counted} of Max {tc.Limit}" : $", Max {tc.Limit}")
+                + (r.Items.Count > 0 ? " — " + string.Join(", ", r.Items.Take(10).Select(i => i.Name)) : ""));
+            return r;
+        }
+
         // Single run: the titles the other groups in schedule put on tag, when every one of them is
         // a plain Manual List (titles known without reading anything: no filter conditions, tags
         // only the titles themselves, no priority override). Null when any is not: the run then only
@@ -6130,8 +6213,9 @@ namespace HomeScreenCompanion
             foreach (var t in others)
             {
                 var bl = new HashSet<string>(t.Blacklist ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
-                foreach (var i in ManualItems(t, bl, t.Limit <= 0 ? NoLimit : t.Limit, new GroupRunStats()))
-                    if (!titles.Contains(i)) titles.Add(i);
+                var items = ManualItems(t, bl, FetchLimit(t), new GroupRunStats());
+                if (RandomPick.On(t)) items = RandomPick.Apply(t, items, PinnedFor(config, t), DateTime.Now).Items;
+                foreach (var i in items) if (!titles.Contains(i)) titles.Add(i);
             }
             return titles;
         }
@@ -6144,6 +6228,11 @@ namespace HomeScreenCompanion
         // filter would get the tag back from the real-time tagger the moment the sync takes it off
         // (the sync's own UpdateItem raises ItemUpdated). Such a source caches only the titles that
         // passed its filters.
+        // A list source caches its whole list in the real-time tag cache, unless it has filter
+        // conditions or a Random pick: then only the titles it ends up with (else the real-time
+        // tagger would put the tag back on the ones left out).
+        private static bool CachesWholeList(TagConfig t) => !HasFilterConditions(t) && !RandomPick.On(t);
+
         internal static bool HasFilterConditions(TagConfig t) =>
             t.MediaInfoFilters?.Any(f => f?.Criteria?.Count > 0) == true || t.MediaInfoConditions?.Count > 0;
 
@@ -7271,7 +7360,9 @@ namespace HomeScreenCompanion
             }
             if (tc.SourceType != "MediaInfo" && (tc.MediaInfoFilters?.Count > 0 || tc.MediaInfoConditions?.Count > 0))
                 parts.Add($"{GetAllCriteria(tc).Count()} extra filter conditions");
-            parts.Add(effectiveLimit >= NoLimit ? "no limit" : $"limit {effectiveLimit}");
+            parts.Add(RandomPick.On(tc) ? $"random pick of {tc.Limit} every {(RandomPick.Weekly(tc) ? "week" : "day")}"
+                : effectiveLimit >= NoLimit ? "no limit" : $"limit {effectiveLimit}");
+            if (RandomPick.IsPinnedSource(tc)) parts.Add("pinned");
             if ((tc.Blacklist?.Count ?? 0) > 0) parts.Add($"{tc.Blacklist!.Count} blacklisted");
             var features = new List<string>();
             if (tc.EnableTag && !tc.OnlyCollection) features.Add("tag");

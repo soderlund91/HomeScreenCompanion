@@ -2387,7 +2387,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             TagBackgroundPath: readTagArt(row).TagBackgroundPath, TagArtTitle: readTagArt(row).TagArtTitle,
             TagPosterOptions: readTagArt(row).TagPosterOptions, TagBackgroundOptions: readTagArt(row).TagBackgroundOptions,
             OverrideWhenActive: overrideWhenActive, SourceType: st,
-            Urls: urls, LocalSources: localSources, Limit: miLimit, ManualItemIds: readManualIds(row),
+            Urls: urls, LocalSources: localSources, Limit: st === 'Manual' ? readManualLimit(row) : miLimit, ManualItemIds: readManualIds(row),
             MediaInfoFilters: miFilters, MediaInfoConditions: [],
             EnableHomeSection: enableHse, HomeSectionLibraryId: hseLibraryId,
             HomeSectionUserIds: hseUserIds, HomeSectionSettings: JSON.stringify(hseSettings),
@@ -2417,7 +2417,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             NextWatchSeedDays: readNwSeedDays(row), NextWatchUseTaste: readNwUseTaste(row),
             MediaInfoTargetEpisode: false, MediaInfoTargetSeason: false, MediaInfoTargetSeries: false,
             MediaInfoTargetType: '', MediaInfoSeasonMode: false,
-        }, readTopListTab(row), readRotation(row), { ListFolder: folderOfRow(row) });
+        }, readRandomPick(row), readTopListTab(row), readRotation(row), { ListFolder: folderOfRow(row) });
     }
 
     var _formAc = null;
@@ -3212,6 +3212,43 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         return c ? c.checked : true;
     }
 
+    // Random pick and Pinned (RandomPick.cs). Random pick applies to every source that tags titles
+    // from what it matches: not to Rotating from existing (tags nothing) nor Your Next Watch (per user).
+    function randomPickApplies(type) {
+        return !!type && type !== 'RotatingExisting' && type !== 'NextWatch';
+    }
+    function randomPickHtml(t, type) {
+        var every = t.RandomPickEvery === 'Week' ? 'Week' : 'Day';
+        return '<div class="random-pick-box" style="display:' + (randomPickApplies(type) ? 'block' : 'none') + '; margin:4px 0 14px;">' +
+            '<div class="checkboxContainer" style="margin-bottom:0;"><label>' +
+                '<input type="checkbox" is="emby-checkbox" class="chkRandomPick"' + (t.RandomPick ? ' checked' : '') + ' />' +
+                '<span>Random pick</span></label></div>' +
+            '<div class="random-pick-options" style="display:' + (t.RandomPick ? 'block' : 'none') + '; margin:10px 0 0 20px; padding-left:15px; border-left:2px solid var(--line-color);">' +
+                '<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px;">' +
+                    '<label style="font-size:0.9em; white-space:nowrap; margin:0;">New pick every</label>' +
+                    '<select is="emby-select" class="selRandomPickEvery" style="width:140px;">' +
+                        '<option value="Day"' + (every === 'Day' ? ' selected' : '') + '>Day</option>' +
+                        '<option value="Week"' + (every === 'Week' ? ' selected' : '') + '>Week</option>' +
+                    '</select></div>' +
+                '<div class="checkboxContainer" style="margin-bottom:0;"><label>' +
+                    '<input type="checkbox" is="emby-checkbox" class="chkRandomPickCountPinned"' + (t.RandomPickCountPinned !== false ? ' checked' : '') + ' />' +
+                    '<span>Pinned titles with the same tag count toward Max</span></label></div>' +
+            '</div></div>';
+    }
+    function readRandomPick(row) {
+        var on = row.querySelector('.chkRandomPick'), every = row.querySelector('.selRandomPickEvery'),
+            counted = row.querySelector('.chkRandomPickCountPinned'), pinned = row.querySelector('.chkPinned');
+        return {
+            RandomPick: !!(on && on.checked),
+            RandomPickEvery: every && every.value === 'Week' ? 'Week' : 'Day',
+            RandomPickCountPinned: counted ? counted.checked : true,
+            Pinned: !!(pinned && pinned.checked)
+        };
+    }
+    function readManualLimit(row) {
+        return parseInt((row.querySelector('.txtManualLimit') || {}).value, 10) || 0;
+    }
+
     // Must match HomeScreenCompanionTask.DefaultNextWatchDescription (used when the description is empty).
     var NEXT_WATCH_DEFAULT_DESCRIPTION = 'Picked just for you from what you\'ve been watching — fresh recommendations every day.';
     var NEXT_WATCH_HINT = 'Each user ticked on the Playlist tab gets their own playlist with their own picks: titles like the ones they watched lately (local scoring, no AI). Show it on their home screen with Section Type "This source\'s playlist" on the Home Screen tab.';
@@ -3565,6 +3602,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <div class="manualSearchResults" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:200;background:var(--plugin-popup-bg,#2a2a2a);border:1px solid var(--line-color);border-radius:6px;max-height:240px;overflow-y:auto;margin-top:2px;box-shadow:var(--hsc-shadow-float);"></div>
                         </div>
                         <div class="manualItemList" style="max-height:420px;overflow-y:auto;border:1px solid var(--line-color);border-radius:6px;padding:4px 8px;min-height:44px;"></div>
+                        <div style="display:flex; align-items:center; gap:12px; margin-top:12px; flex-wrap:wrap;">
+                            <label style="font-size:0.9em; white-space:nowrap; margin:0;">Max items</label>
+                            <input is="emby-input" class="txtManualLimit" type="number" value="${sourceType === 'Manual' ? (tagConfig.Limit || 0) : 0}" min="0" style="width:90px;" />
+                        </div>
+                        <div class="checkboxContainer" style="margin-top:10px; margin-bottom:10px;">
+                            <label>
+                                <input type="checkbox" is="emby-checkbox" class="chkPinned" ${tagConfig.Pinned ? 'checked' : ''} />
+                                <span>Pinned</span>
+                            </label>
+                        </div>
                     </div>
 
                     <div class="source-rotating-container" style="display: ${sourceType === 'RotatingExisting' ? 'block' : 'none'};">${rotatingSettingsHtml(tagConfig)}</div>
@@ -3632,6 +3679,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <span class="ai-test-result" style="margin-left:10px; font-size:0.85em; opacity:0.7;"></span>
                         </div>
                     </div>
+
+                    ${randomPickHtml(tagConfig, sourceType)}
 
                     <div class="source-mediainfo-container" style="display: ${(sourceType && sourceType !== '') ? 'block' : 'none'};">
                         <div class="mi-limit-row" style="display:${sourceType === 'MediaInfo' || sourceType === 'NextWatch' ? 'flex' : 'none'}; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap;">
@@ -4610,6 +4659,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     _hint.textContent = _hints[type] || '';
                 }
 
+                var _rpBox = row.querySelector('.random-pick-box');
+                if (_rpBox) _rpBox.style.display = randomPickApplies(type) ? 'block' : 'none';
                 var isMi = type === 'MediaInfo';
                 var miLimitRow      = row.querySelector('.mi-limit-row');
                 var miToggleRow     = row.querySelector('.mi-toggle-row');
@@ -4808,6 +4859,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             updateHseSectionAvailability(row);
             updateBadges(row);
         });
+
+        var chkRandomPick = row.querySelector('.chkRandomPick');
+        if (chkRandomPick) {
+            chkRandomPick.addEventListener('change', function () {
+                var opts = row.querySelector('.random-pick-options');
+                if (opts) opts.style.display = this.checked ? 'block' : 'none';
+            });
+        }
 
         var chkAiWatched = row.querySelector('.chkAiRecentlyWatched');
         if (chkAiWatched) {
@@ -7208,7 +7267,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 NextWatchUsersMigrated: row.dataset.nwMigrated === '1',
                 NextWatchSeedDays: readNwSeedDays(row), NextWatchUseTaste: readNwUseTaste(row)
             };
-            Object.assign(baseTag, readTopListTab(row), readRotation(row), { ListFolder: folderOfRow(row) });
+            Object.assign(baseTag, readRandomPick(row), readTopListTab(row), readRotation(row), { ListFolder: folderOfRow(row) });
 
             if (st === 'External') {
                 var pushedExternal = false;
@@ -7235,7 +7294,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     flatTags.push(Object.assign({}, baseTag, { Url: "", Limit: firstLocalLimit, LocalSourceId: "" }));
                 }
             } else if (st === 'Manual') {
-                flatTags.push(Object.assign({}, baseTag, { Url: "", Limit: 0, LocalSourceId: "", ManualItemIds: readManualIds(row) }));
+                flatTags.push(Object.assign({}, baseTag, { Url: "", Limit: readManualLimit(row), LocalSourceId: "", ManualItemIds: readManualIds(row) }));
             } else if (st === 'AI') {
                 var aiLimitVal = parseInt((row.querySelector('.txtAiLimit') || {}).value, 10) || 0;
                 flatTags.push(Object.assign({}, baseTag, {
@@ -7910,6 +7969,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     TopListMaxItems: t.TopListMaxItems || 0, TopListBadgeStyle: t.TopListBadgeStyle || 'neutral',
                     TopListBadgeOptions: t.TopListBadgeOptions || '', TopListRealPoster: t.TopListRealPoster || '',
                     TopListLibraryIds: t.TopListLibraryIds || [],
+                    Pinned: !!t.Pinned, RandomPick: !!t.RandomPick, RandomPickEvery: t.RandomPickEvery === 'Week' ? 'Week' : 'Day',
+                    RandomPickCountPinned: t.RandomPickCountPinned !== false,
                     LastRuns: [],
                 };
             }
@@ -7919,6 +7980,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             if (t.SourceType === 'LocalCollection' || t.SourceType === 'LocalPlaylist') grouped[key].LocalSources.push({ id: t.LocalSourceId || '', limit: t.Limit });
             if (t.SourceType === 'MediaInfo') grouped[key].Limit = t.Limit;
             if (t.SourceType === 'AI') grouped[key].Limit = t.Limit;
+            if (t.SourceType === 'Manual') grouped[key].Limit = t.Limit;
             if (t.SourceType === 'NextWatch') {
                 grouped[key].Limit = t.Limit;
                 // Older Your Next Watch configs kept their users on the Home Screen tab: the Playlist
