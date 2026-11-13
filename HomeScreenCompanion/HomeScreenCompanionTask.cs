@@ -249,7 +249,6 @@ namespace HomeScreenCompanion
                 var collectionOrder = new Dictionary<string, List<BaseItem>>(StringComparer.OrdinalIgnoreCase);
                 var collectionDescriptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 var collectionSortNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                var collectionPosters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 var collectionSources = new Dictionary<string, TagConfig>(StringComparer.OrdinalIgnoreCase);
                 // Tag art (ApplyTagArt): the source that owns each tag and its titles in list order,
                 // across all flat entries of the tag.
@@ -527,7 +526,7 @@ namespace HomeScreenCompanion
                 var tagAddedByTag = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
                 var tagRemovedByTag = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
                 var collCreatedSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var collCreatedArt = new List<(string Name, TagConfig Source, IList<BaseItem> Items)>();
+                var collChangedArt = new List<(string Name, TagConfig Source, IList<BaseItem> Items)>();
                 var collItemsAdded = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
                 var collItemsRemoved = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
@@ -675,7 +674,7 @@ namespace HomeScreenCompanion
                     {
                         activeCollections.Add(cName);
                         collectionSortNames[cName] = (tagConfig.CollectionSortName ?? "").Trim();
-                        CollectCollectionMeta(tagConfig, cName, collectionDescriptions, collectionPosters);
+                        CollectCollectionMeta(tagConfig, cName, collectionDescriptions);
                         collectionSources[cName] = tagConfig;
                     }
 
@@ -1559,14 +1558,14 @@ namespace HomeScreenCompanion
                                 collCreatedSet.Add(cName);
                                 collItemsAdded[cName] = desiredIds.Count;
                                 _log.Debug($"  {cName}  →  created ({desiredIds.Count} items)");
-                                if (collectionDescriptions.ContainsKey(cName) || collectionPosters.ContainsKey(cName))
-                                    ApplyCollectionMeta(createdRef, cName, collectionDescriptions, collectionPosters, debug);
+                                if (collectionDescriptions.ContainsKey(cName))
+                                    ApplyCollectionMeta(createdRef, cName, collectionDescriptions, debug);
                                 ApplyCollectionSortName(createdRef, cName, collectionSortNames.GetValueOrDefault(cName));
                                 if (collectionSources.TryGetValue(cName, out var _artSrc))
                                 {
                                     var _artItems = _ranked ? RankedArtItems(collectionOrder[cName]) : OrderedItems(allItemsById, desiredIds);
                                     ApplyCollectionArt(createdRef, cName, _artSrc, _artItems);
-                                    collCreatedArt.Add((cName, _artSrc, _artItems));
+                                    collChangedArt.Add((cName, _artSrc, _artItems));
                                 }
                             }
                         }
@@ -1607,12 +1606,16 @@ namespace HomeScreenCompanion
                             {
                                 _log.Debug($"  {cName}  →  up to date ({currentMembers.Count} items)");
                             }
-                            if (!dryRun && (collectionDescriptions.ContainsKey(cName) || collectionPosters.ContainsKey(cName)))
-                                ApplyCollectionMeta(existingColl, cName, collectionDescriptions, collectionPosters, debug);
+                            if (!dryRun && collectionDescriptions.ContainsKey(cName))
+                                ApplyCollectionMeta(existingColl, cName, collectionDescriptions, debug);
                             if (!dryRun)
                                 ApplyCollectionSortName(existingColl, cName, collectionSortNames.GetValueOrDefault(cName));
                             if (!dryRun && collectionSources.TryGetValue(cName, out var _artSrc2))
-                                ApplyCollectionArt(existingColl, cName, _artSrc2, _ranked ? RankedArtItems(collectionOrder[cName]) : OrderedItems(allItemsById, desiredIds));
+                            {
+                                var _artItems2 = _ranked ? RankedArtItems(collectionOrder[cName]) : OrderedItems(allItemsById, desiredIds);
+                                ApplyCollectionArt(existingColl, cName, _artSrc2, _artItems2);
+                                if (toAdd.Count > 0 || toRemove.Count > 0) collChangedArt.Add((cName, _artSrc2, _artItems2));
+                            }
                         }
                         if (_ranked)
                             RankedCollections.SetDisplayOrder(_libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = cName, Recursive = true }).FirstOrDefault(), _libraryManager);
@@ -1627,7 +1630,7 @@ namespace HomeScreenCompanion
                     }
                 }
                 if (!dryRun) RankedCollections.RestoreDisplayOrders(rankedSources.Keys, _libraryManager);
-                await ReapplyNewCollectionArtAsync(collCreatedArt, cancellationToken);
+                await ReapplyCollectionArtAsync(collChangedArt, cancellationToken);
                 foreach (var gs in statsList)
                 {
                     if (gs.CollectionName != null)
@@ -3180,7 +3183,7 @@ namespace HomeScreenCompanion
                         catch (Exception ex) { _log.Warn($"Ranked collection '{cName}' failed, the real films are used: {ex.Message}"); }
                     }
                     var existingColl = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = cName, Recursive = true }).FirstOrDefault();
-                    bool _newCollArt = false;
+                    bool _collArtCheck = false;
                     if (existingColl == null)
                     {
                         var createdColl = await CreateCollectionGently(cName, desiredIds.ToList(), cancellationToken);
@@ -3189,7 +3192,7 @@ namespace HomeScreenCompanion
                         _collItemsAdded = desiredIds.Count;
                         _log.Debug($"  {cName}  →  created ({desiredIds.Count} items)");
                         if (createdColl != null) ApplyCollectionSortName(createdColl, cName, tagConfig.CollectionSortName);
-                        _newCollArt = true;
+                        _collArtCheck = true;
                     }
                     else
                     {
@@ -3202,6 +3205,7 @@ namespace HomeScreenCompanion
                         if (toRemove.Count > 0 && existingColl is BoxSet boxSet) await RemoveFromCollectionGently(boxSet, toRemove, cancellationToken);
                         ApplyCollectionSortName(existingColl, cName, tagConfig.CollectionSortName);
                         collResult = toAdd.Count + toRemove.Count;
+                        _collArtCheck = collResult > 0;
                         _collItemsAdded = toAdd.Count;
                         _collItemsRemoved = toRemove.Count;
                         if (debug)
@@ -3218,16 +3222,15 @@ namespace HomeScreenCompanion
                     var _artColl = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = cName, Recursive = true }).FirstOrDefault();
                     if (_artColl != null)
                     {
-                        // Same description / uploaded poster handling as the full sync.
+                        // Same description handling as the full sync.
                         var _collDescs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                        var _collPosters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                        CollectCollectionMeta(tagConfig, cName, _collDescs, _collPosters);
-                        if (_collDescs.Count > 0 || _collPosters.Count > 0)
-                            ApplyCollectionMeta(_artColl, cName, _collDescs, _collPosters, debug);
+                        CollectCollectionMeta(tagConfig, cName, _collDescs);
+                        if (_collDescs.Count > 0)
+                            ApplyCollectionMeta(_artColl, cName, _collDescs, debug);
                         var _artItems = _ranked ? RankedArtItems(collectionOutputItems) : collectionOutputItems;
                         ApplyCollectionArt(_artColl, cName, tagConfig, _artItems);
-                        if (_newCollArt)
-                            await ReapplyNewCollectionArtAsync(new List<(string, TagConfig, IList<BaseItem>)> { (cName, tagConfig, _artItems) }, cancellationToken);
+                        if (_collArtCheck)
+                            await ReapplyCollectionArtAsync(new List<(string, TagConfig, IList<BaseItem>)> { (cName, tagConfig, _artItems) }, cancellationToken);
                         if (_ranked) RankedCollections.SetDisplayOrder(_artColl, _libraryManager);
                     }
                     RankedCollections.Probe(_rankProbe, _providerManager, _fileSystem, cancellationToken);
@@ -7845,29 +7848,39 @@ namespace HomeScreenCompanion
         private static List<BaseItem> OrderedItems(Dictionary<long, BaseItem> byId, IEnumerable<long> ids)
             => ids.Select(id => byId.TryGetValue(id, out var it) ? it : null).Where(i => i != null).Select(i => i!).ToList();
 
-        // New collections with generated or uploaded art: Emby refreshes a collection right after
-        // CreateCollection, and that refresh can save the item it loaded before the art was put on
-        // it (the art then only shows after the next sync). Two short checks put the art back; when
-        // it is still there nothing is written (SetGeneratedArt compares path and date).
-        private async Task ReapplyNewCollectionArtAsync(List<(string Name, TagConfig Source, IList<BaseItem> Items)> created, CancellationToken cancellationToken)
+        // Collections created or with members added / removed this run, with generated or uploaded
+        // art: Emby refreshes a collection after its members change, and that refresh can save the
+        // item it loaded before the art was put on it, or swap in an image file kept in the
+        // collection's own metadata folder (the art then only shows after the next sync). Two short
+        // checks put the art back; when it is still there nothing is written (SetGeneratedArt
+        // compares path and date).
+        private async Task ReapplyCollectionArtAsync(List<(string Name, TagConfig Source, IList<BaseItem> Items)> changed, CancellationToken cancellationToken)
         {
-            var withArt = created.Where(c => CollectionArtRenderer.IsStyle(c.Source.CollectionPosterStyle)
+            var withArt = changed.Where(c => CollectionArtRenderer.IsStyle(c.Source.CollectionPosterStyle)
+                || !string.IsNullOrWhiteSpace(c.Source.CollectionPosterPath)
                 || CollectionArtRenderer.IsStyle(c.Source.CollectionBackgroundStyle)
                 || !string.IsNullOrWhiteSpace(c.Source.CollectionBackgroundPath)
                 || CollectionArtRenderer.IsStyle(c.Source.CollectionThumbStyle)
                 || !string.IsNullOrWhiteSpace(c.Source.CollectionThumbPath)
                 || !string.IsNullOrWhiteSpace(c.Source.CollectionBannerPath)).ToList();
             if (withArt.Count == 0) return;
-            foreach (var delay in new[] { 3000, 5000 })
+            _artRecheck = true;   // the sync itself already warned about a missing upload
+            try
             {
-                await Task.Delay(delay, cancellationToken);
-                foreach (var (name, source, items) in withArt)
+                foreach (var delay in new[] { 3000, 5000 })
                 {
-                    var coll = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = name, Recursive = true }).FirstOrDefault();
-                    if (coll != null) ApplyCollectionArt(coll, name, source, items);
+                    await Task.Delay(delay, cancellationToken);
+                    foreach (var (name, source, items) in withArt)
+                    {
+                        var coll = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = name, Recursive = true }).FirstOrDefault();
+                        if (coll != null) ApplyCollectionArt(coll, name, source, items);
+                    }
                 }
             }
+            finally { _artRecheck = false; }
         }
+
+        private bool _artRecheck;
 
         // Generated poster / background (CollectionArtRenderer) and "top of Collections" for a
         // source's collection. Art is drawn from the first titles in list order and only redrawn
@@ -7877,7 +7890,7 @@ namespace HomeScreenCompanion
             try
             {
                 if (SetGeneratedArt(coll, cName, "collection_art", tc.CollectionPosterStyle, tc.CollectionBackgroundStyle,
-                        tc.CollectionArtTitle, tc.CollectionBackgroundPath, items, false,
+                        tc.CollectionArtTitle, tc.CollectionBackgroundPath, items, false, posterPath: tc.CollectionPosterPath,
                         posterOptions: tc.CollectionPosterOptions, backgroundOptions: tc.CollectionBackgroundOptions,
                         thumb: (tc.CollectionThumbStyle ?? "", tc.CollectionThumbOptions ?? "", tc.CollectionThumbPath ?? ""),
                         banner: (tc.CollectionBannerStyle ?? "", tc.CollectionBannerPath ?? "")))
@@ -7999,6 +8012,10 @@ namespace HomeScreenCompanion
                     path = upload;   // Custom: the uploaded image
                 else
                 {
+                    // Emby deletes an image file when it replaces the image (a refresh that replaces
+                    // all images, or a new image set in Emby): the upload is then gone for good.
+                    if (!string.IsNullOrWhiteSpace(upload) && !_artRecheck)
+                        _log.Warn($"\"{name}\": the uploaded {file} image is missing ({upload}) – upload it again.");
                     if (removeWhenNone && current != null && IsPluginTagArt(current.Path))
                     {
                         var kept = (target.ImageInfos ?? Array.Empty<ItemImageInfo>()).Where(i => i.Type != type).ToList();
@@ -8061,20 +8078,15 @@ namespace HomeScreenCompanion
             }
         }
 
-        // Shared by the full sync and Run Group: records a source's collection description and
-        // uploaded poster (when set) for ApplyCollectionMeta.
-        private static void CollectCollectionMeta(TagConfig tc, string cName,
-            Dictionary<string, string> descriptions, Dictionary<string, string> posters)
+        // Shared by the full sync and Run Group: records a source's collection description for
+        // ApplyCollectionMeta. The uploaded poster is put on with the rest of the art (ApplyCollectionArt).
+        private static void CollectCollectionMeta(TagConfig tc, string cName, Dictionary<string, string> descriptions)
         {
             if (!string.IsNullOrWhiteSpace(tc.CollectionDescription))
                 descriptions[cName] = tc.CollectionDescription;
-            if (!CollectionArtRenderer.IsKeep(tc.CollectionPosterStyle)
-                && !string.IsNullOrWhiteSpace(tc.CollectionPosterPath) && File.Exists(tc.CollectionPosterPath))
-                posters[cName] = tc.CollectionPosterPath;
         }
 
-        private void ApplyCollectionMeta(BaseItem item, string cName,
-            Dictionary<string, string> descriptions, Dictionary<string, string> posters, bool debug)
+        private void ApplyCollectionMeta(BaseItem item, string cName, Dictionary<string, string> descriptions, bool debug)
         {
             bool metaChanged = false;
 
@@ -8082,22 +8094,6 @@ namespace HomeScreenCompanion
             {
                 item.Overview = desc;
                 metaChanged = true;
-            }
-
-            if (posters.TryGetValue(cName, out var posterPath) && File.Exists(posterPath))
-            {
-                var imageInfo = new ItemImageInfo
-                {
-                    Path = posterPath,
-                    Type = ImageType.Primary,
-                    DateModified = File.GetLastWriteTimeUtc(posterPath)
-                };
-                var otherImages = (item.ImageInfos ?? Array.Empty<ItemImageInfo>())
-                    .Where(i => i.Type != ImageType.Primary).ToList();
-                otherImages.Add(imageInfo);
-                item.ImageInfos = otherImages.ToArray();
-                _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.ImageUpdate, null);
-                _log.Debug($"  {cName}  →  poster applied");
             }
 
             if (metaChanged)
