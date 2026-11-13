@@ -4882,8 +4882,9 @@ namespace HomeScreenCompanion
                         var allCurrentSections = currentSections?.Sections ?? Array.Empty<ContentSection>();
 
                         // Our row: 1) by its tracked id, 2) the id is gone (e.g. Copy & Sync made the
-                        // user's rows again): the row that shows what this one shows (ShowsSame), 3) only
-                        // when that is not known (no tag or collection yet): by its title.
+                        // user's rows again): the row that shows what this one shows (ShowsSame), 3) none
+                        // does: by its title, a row that shows only what is gone (e.g. its collection was
+                        // made again with a new id).
                         ContentSection? ownedSection = null;
                         if (tracked != null && !string.IsNullOrEmpty(tracked.SectionId) && !tracked.SectionId.StartsWith("hsc__"))
                             ownedSection = allCurrentSections.FirstOrDefault(s => s.Id == tracked.SectionId);
@@ -4894,14 +4895,21 @@ namespace HomeScreenCompanion
                         bool _hsMayTake(ContentSection s) => !SectionOwnedElsewhere(config, hsKey, userId, s.Id)
                             && !TopListSyncTask.IsTopListRow(s, topListLibraries);
                         var _hsShows = RowShows(BuildContentSection(_jsonSerializer, settingsDict, userLibraryId));
+                        string _hsSaved = string.IsNullOrEmpty(tracked?.SectionId) ? "none" : tracked!.SectionId;
                         if (ownedSection == null && _hsShows.Count > 0)
                         {
                             ownedSection = allCurrentSections.FirstOrDefault(s => ShowsSame(s, sectionType, _hsShows) && _hsMayTake(s));
                             if (ownedSection != null)
-                                _log.Debug($"  {UserName(userId)}: row {ownedSection.Id} that shows the same taken over (the saved id {(string.IsNullOrEmpty(tracked?.SectionId) ? "none" : tracked!.SectionId)} was gone)");
+                                _log.Debug($"  {UserName(userId)}: row {ownedSection.Id} that shows the same taken over (the saved id {_hsSaved} was gone)");
                         }
-                        else if (ownedSection == null && settingsDict.TryGetValue("CustomName", out var _hsFallbackName) && !string.IsNullOrWhiteSpace(_hsFallbackName))
-                            ownedSection = allCurrentSections.FirstOrDefault(s => SameTitle(s.CustomName, _hsFallbackName) && _hsMayTake(s));
+                        // 3) Last: by its title, only a row that shows nothing that still exists (ShowsOnlyGone).
+                        if (ownedSection == null && settingsDict.TryGetValue("CustomName", out var _hsFallbackName) && !string.IsNullOrWhiteSpace(_hsFallbackName))
+                        {
+                            ownedSection = allCurrentSections.FirstOrDefault(s => SameTitle(s.CustomName, _hsFallbackName) && _hsMayTake(s)
+                                && ShowsOnlyGone(s, _libraryManager));
+                            if (ownedSection != null)
+                                _log.Debug($"  {UserName(userId)}: row {ownedSection.Id} with the same title that showed what is gone taken over (the saved id {_hsSaved} was gone)");
+                        }
 
                         if (ownedSection != null)
                         {
@@ -5507,6 +5515,28 @@ namespace HomeScreenCompanion
                && string.Equals(s.SectionType ?? "", sectionType ?? "", StringComparison.OrdinalIgnoreCase)
                && RowShows(s).Overlaps(shows);
 
+        // A row that shows only what is no longer there: it shows something (RowShows) and none of it
+        // exists (a collection or playlist made again with a new id, a tag that is gone). Only such a
+        // row may be found by its title (the last step, after the tracked id and ShowsSame): a row
+        // that shows something that exists, e.g. a user's own row with the same title, never is.
+        internal static bool ShowsOnlyGone(ContentSection s, ILibraryManager lm)
+        {
+            var ids = RowShows(s);
+            if (ids.Count == 0) return false;
+            foreach (var id in ids)
+            {
+                try
+                {
+                    // An id that is neither a Guid nor an internal id counts as there.
+                    if (Guid.TryParse(id, out var g) ? lm.GetItemById(g) != null
+                        : !long.TryParse(id, out var l) || lm.GetItemById(l) != null)
+                        return false;
+                }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); return false; }
+            }
+            return true;
+        }
+
         // What a source's row shows for one user (see RowShows), worked out from the source: a tag
         // row its tag, a collection row its collection, a playlist row the user's own playlist.
         // Empty when it is not known (e.g. the tag or collection does not exist).
@@ -5561,8 +5591,8 @@ namespace HomeScreenCompanion
 
         // Removes a group's row for one user: by its tracked id, else (the id is gone, e.g. Copy & Sync
         // re-created the user's rows with new ids) by its marker, else by what it shows (shows +
-        // sectionType, see ShowsSame), else, only when that is not known, by its title. True when a
-        // row was removed. Never a top-list's row: not one a top-list tracks, and by marker, content
+        // sectionType, see ShowsSame), else by its title, only rows that show what is gone
+        // (ShowsOnlyGone). True when a row was removed. Never a top-list's row: not one a top-list tracks, and by marker, content
         // or title never a row on a top-list's library either. Never a row another group tracks.
         private bool DeleteSectionForUser(long userInternalId, string userId, string sectionId, string sectionMarker, string settingsJson, CancellationToken cancellationToken, string? defaultTitle = null,
             ICollection<string>? shows = null, string? sectionType = null)
@@ -5622,9 +5652,10 @@ namespace HomeScreenCompanion
                     _log.Debug($"  {UserName(userId)}: {RunLog.Plural(byContent.Length, "row")} removed by what it shows (the saved id {(realId ? sectionId : "-")} was gone)");
                     return true;
                 }
-                // Known content and no row shows it: no other row is this one's.
-                return false;
             }
+
+            // Last: by its title, only rows that show nothing that still exists (ShowsOnlyGone), so a
+            // row a user made with the same title is never removed.
 
             try
             {
@@ -5639,7 +5670,7 @@ namespace HomeScreenCompanion
                     foreach (var s in sameTitle.Where(IsTopListRow))
                         _log.Debug($"  {UserName(userId)}: '{s.CustomName}' ({s.Id}) kept — a top-list's row with the same title");
                     var fallbackIds = sameTitle
-                        .Where(s => !trackedIds.Contains(s.Id) && !IsTopListRow(s))
+                        .Where(s => !trackedIds.Contains(s.Id) && !IsTopListRow(s) && ShowsOnlyGone(s, _libraryManager))
                         .Select(s => s.Id).ToArray();
                     if (fallbackIds.Length > 0)
                     {

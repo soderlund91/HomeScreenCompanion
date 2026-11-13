@@ -2183,17 +2183,18 @@ public class HomeScreenCompanionService : IService
                         var currentSections = _userManager.GetHomeSections(userInternalId, CancellationToken.None);
                         var allSections = currentSections?.Sections ?? Array.Empty<ContentSection>();
 
-                        // The id is gone: the row that shows what this one shows, else (not known) by
-                        // its title. Only a row no other source or top-list owns, and never a row on a
-                        // top-list's library (a top-list can have the same title). As the full sync.
+                        // The id is gone: the row that shows what this one shows, else by its title a
+                        // row that shows only what is gone (ShowsOnlyGone). Only a row no other source
+                        // or top-list owns, and never a row on a top-list's library. As the full sync.
                         ContentSection ownedSection = allSections.FirstOrDefault(s => s.Id == tracking.SectionId);
                         bool MayTake(ContentSection s) => !HomeScreenCompanionTask.SectionOwnedElsewhere(config, tc, userId, s.Id)
                             && !TopListSyncTask.IsTopListRow(s, topListLibraries);
                         var shows = HomeScreenCompanionTask.SourceRowShows(_libraryManager, tc, sectionType ?? "", userId);
                         if (ownedSection == null && shows.Count > 0)
                             ownedSection = allSections.FirstOrDefault(s => HomeScreenCompanionTask.ShowsSame(s, sectionType, shows) && MayTake(s));
-                        else if (ownedSection == null && settingsDict.TryGetValue("CustomName", out var _applyFallbackName) && !string.IsNullOrWhiteSpace(_applyFallbackName))
-                            ownedSection = allSections.FirstOrDefault(s => HomeScreenCompanionTask.SameTitle(s.CustomName, _applyFallbackName) && MayTake(s));
+                        if (ownedSection == null && settingsDict.TryGetValue("CustomName", out var _applyFallbackName) && !string.IsNullOrWhiteSpace(_applyFallbackName))
+                            ownedSection = allSections.FirstOrDefault(s => HomeScreenCompanionTask.SameTitle(s.CustomName, _applyFallbackName) && MayTake(s)
+                                && HomeScreenCompanionTask.ShowsOnlyGone(s, _libraryManager));
 
                         if (ownedSection == null) continue;
 

@@ -1206,7 +1206,7 @@ namespace HomeScreenCompanion
 
             public static ManagedRows Build(PluginConfiguration config, ILibraryManager libraryManager, IJsonSerializer json)
             {
-                var m = new ManagedRows();
+                var m = new ManagedRows { _libraryManager = libraryManager };
                 foreach (var tc in config.Tags ?? new List<TagConfig>())
                 {
                     if (tc.PlaylistMappings == null || tc.PlaylistMappings.Count == 0) continue;
@@ -1241,20 +1241,14 @@ namespace HomeScreenCompanion
                     // row its collection. Rows of several sources can share a title (e.g. every
                     // user's own "Recommended for you"), so this tells them apart.
                     var sectionType = settings.TryGetValue("SectionType", out var st) && !string.IsNullOrEmpty(st) ? st : HomeScreenCompanionTask.DefaultSectionType(tc);
-                    try
+                    // As the full sync works it out (HomeScreenCompanionTask.SourceRowShows): also a
+                    // collection row on a chosen collection. Playlist rows: PlaylistRow.
+                    if (sectionType == "items" || sectionType == "boxset")
                     {
-                        if (sectionType == "items" && !string.IsNullOrWhiteSpace(tc.Tag))
-                        {
-                            var tag = libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Tag" }, Name = tc.Tag.Trim(), Recursive = true }).FirstOrDefault();
-                            if (tag != null) m._sourceShows[tc] = new[] { tag.InternalId.ToString(System.Globalization.CultureInfo.InvariantCulture) };
-                        }
-                        else if (sectionType == "boxset" && tc.EnableCollection && !string.IsNullOrWhiteSpace(tc.CollectionName))
-                        {
-                            var coll = libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = tc.CollectionName, Recursive = true }).FirstOrDefault();
-                            if (coll != null) m._sourceShows[tc] = new[] { coll.InternalId.ToString(System.Globalization.CultureInfo.InvariantCulture), coll.Id.ToString("N") };
-                        }
+                        var shows = HomeScreenCompanionTask.SourceRowShows(libraryManager, sectionType, tc.Tag,
+                            tc.EnableCollection ? tc.CollectionName : null, tc.HomeSectionLibraryId, null);
+                        if (shows.Count > 0) m._sourceShows[tc] = shows.ToArray();
                     }
-                    catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                     m._sourceTypes[tc] = sectionType;
                 }
                 foreach (var tl in config.TopLists ?? new List<TopListHomeSection>())
@@ -1334,6 +1328,8 @@ namespace HomeScreenCompanion
                 var rest = users.Where(tc => !_sourceShows.ContainsKey(tc)).ToList();
                 var tracked = rest.FirstOrDefault(Tracks);
                 if (tracked != null) return tracked;
+                // By title only a row that shows nothing that still exists (as the full sync's last step).
+                if (_libraryManager != null && !HomeScreenCompanionTask.ShowsOnlyGone(s, _libraryManager)) return null;
                 var byTitle = rest.Where(tc => HomeScreenCompanionTask.SameTitle(s.CustomName, _sourceTitles[tc])
                     && !HomeScreenCompanionTask.SectionOwnedElsewhere(config, tc, SourceUserId(tc, user)!, s.Id)).ToList();
                 // One source only (a source with several URLs or local sources is several entries
@@ -1368,6 +1364,7 @@ namespace HomeScreenCompanion
                 return _sourceTitles.TryGetValue(tc, out var title) && HomeScreenCompanionTask.SameTitle(s.CustomName, title);
             }
 
+            private ILibraryManager? _libraryManager;   // ShowsOnlyGone for the title step in SourceRow
             private readonly List<TagConfig> _rotating = new List<TagConfig>();
             private readonly List<TagConfig> _sources = new List<TagConfig>();
             private readonly Dictionary<TagConfig, string> _sourceTitles = new Dictionary<TagConfig, string>();
