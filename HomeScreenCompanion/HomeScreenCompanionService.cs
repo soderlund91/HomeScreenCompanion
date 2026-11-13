@@ -651,6 +651,25 @@ namespace HomeScreenCompanion
         public List<MovieItem> Movies { get; set; } = new List<MovieItem>();
     }
 
+    // The Manual source's title search: Emby's own search without HSC's copies (ranked and top-list).
+    [Route("/HomeScreenCompanion/SearchTitles", "GET")]
+    [Authenticated(Roles = "Admin")]
+    public class SearchTitlesRequest : IReturn<SearchTitlesResponse>
+    {
+        public string SearchTerm { get; set; } = "";
+    }
+    public class SearchTitleItem
+    {
+        public string Id { get; set; } = "";          // InternalId, as the web API shows ids
+        public string Name { get; set; } = "";
+        public int? ProductionYear { get; set; }
+        public string Type { get; set; } = "";
+    }
+    public class SearchTitlesResponse
+    {
+        public List<SearchTitleItem> Items { get; set; } = new List<SearchTitleItem>();
+    }
+
     // Series for the manual show top-list picker (same shape as AllMovies).
     [Route("/HomeScreenCompanion/TopList/AllSeries", "GET")]
     [Authenticated(Roles = "Admin")]
@@ -2597,9 +2616,9 @@ public class HomeScreenCompanionService : IService
 
                     // The current titles, in the collection's own order (sort title). A Manual List
                     // holds movies and shows (and music); a film's other versions stay out, as on
-                    // every HSC collection. Top-list copies are added by the top-list mirror, not here.
+                    // every HSC collection. HSC's copies (top-list, ranked) are never a source's titles.
                     var members = _libraryManager.GetItemList(new InternalItemsQuery { CollectionIds = new[] { coll.InternalId }, Recursive = true, IsVirtualItem = false })
-                        .Where(i => !TopListCollectionMirror.IsTopListItem(i))
+                        .Where(TopListCollectionMirror.IsOriginal)
                         .OrderBy(i => i.SortName ?? i.Name ?? "", StringComparer.OrdinalIgnoreCase).ThenBy(i => i.InternalId)
                         .ToList();
                     var usable = members.Where(HomeScreenCompanionTask.IsTaggableTopLevelItem).ToList();
@@ -2974,6 +2993,7 @@ public class HomeScreenCompanionService : IService
                 var movies = items
                     .Where(i => !string.IsNullOrEmpty(i.Path)
                              && !i.Path.StartsWith(toplistsFolder, StringComparison.OrdinalIgnoreCase)
+                             && !RankedCollections.IsRankedCopy(i)
                              && libraries.Contains(i))
                     .OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase)
                     .ThenBy(i => i.ProductionYear)
@@ -2998,6 +3018,40 @@ public class HomeScreenCompanionService : IService
             catch { return new GetAllMoviesResponse { Movies = new List<MovieItem>() }; }
         }
 
+        // Copies are dropped before the limit, page by page in Emby's search order, so 20 real titles still show.
+        public object Get(SearchTitlesRequest request)
+        {
+            const int Wanted = 20, Page = 50;
+            var response = new SearchTitlesResponse();
+            var term = (request.SearchTerm ?? "").Trim();
+            if (term.Length == 0) return response;
+            try
+            {
+                for (int start = 0; response.Items.Count < Wanted; start += Page)
+                {
+                    var page = _libraryManager.GetItemList(new InternalItemsQuery
+                    {
+                        SearchTerm = term,
+                        IncludeItemTypes = new[] { "Movie", "Series" },
+                        Recursive = true,
+                        StartIndex = start,
+                        Limit = Page
+                    });
+                    foreach (var i in page.Where(TopListCollectionMirror.IsOriginal).Take(Wanted - response.Items.Count))
+                        response.Items.Add(new SearchTitleItem
+                        {
+                            Id = i.InternalId.ToString(),
+                            Name = i.Name ?? "",
+                            ProductionYear = i.ProductionYear,
+                            Type = i.GetType().Name
+                        });
+                    if (page.Length < Page) break;
+                }
+            }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+            return response;
+        }
+
         public object Get(GetAllSeriesRequest request)
         {
             try
@@ -3005,7 +3059,7 @@ public class HomeScreenCompanionService : IService
                 var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var libraries = SearchLibraries(request.LibraryIds);
                 var series = ShowTopList.AllSeries(_libraryManager)
-                    .Where(libraries.Contains)
+                    .Where(i => !RankedCollections.IsRankedCopy(i) && libraries.Contains(i))
                     .OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase)
                     .ThenBy(i => i.ProductionYear)
                     .Select(i => new MovieItem

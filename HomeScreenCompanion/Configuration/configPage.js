@@ -3150,9 +3150,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         function search(q) {
             var seq = ++searchSeq;
             if (q.length < 2) { results.style.display = 'none'; results.innerHTML = ''; return; }
-            window.ApiClient.getJSON(window.ApiClient.getUrl('Items', {
-                SearchTerm: q, IncludeItemTypes: 'Movie,Series', Recursive: true, Limit: 20, Fields: 'ProductionYear'
-            })).then(function (res) {
+            window.ApiClient.getJSON(window.ApiClient.getUrl('HomeScreenCompanion/SearchTitles', { SearchTerm: q })).then(function (res) {
                 if (seq !== searchSeq) return;
                 var hits = res.Items || [];
                 if (hits.length === 0) { results.innerHTML = '<div style="padding:7px 12px;opacity:0.6;font-size:0.9em;">No matches</div>'; results.style.display = 'block'; return; }
