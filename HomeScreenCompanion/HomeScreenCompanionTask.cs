@@ -63,7 +63,10 @@ namespace HomeScreenCompanion
 
         private struct CachedMediaInfo
         {
-            public bool Is4k, Is8k, Is1080, Is720, IsSd;
+            public bool Is4k, Is8k, Is1440, Is1080, Is720, IsSd;
+            // Emby gave the file a resolution label we know (see ApplyResolution). False = not probed
+            // or an unknown word: such a file matches no resolution rule, not even "not 1080p".
+            public bool ResolutionKnown;
             public bool IsHevc, IsAv1, IsH264;
             public bool IsHdr, IsHdr10, IsDv;
             public bool IsAtmos, IsTrueHd, IsDtsHdMa, IsDts, IsAc3, IsAac;
@@ -408,13 +411,15 @@ namespace HomeScreenCompanion
                 }
 
                 var mediaInfoCache = new Dictionary<long, CachedMediaInfo>();
+                _otherVersions.Clear();
+                _seriesInfo.Clear();
                 if (config.Tags.Any(t => t.Active && NeedsMediaDetails(t)))
                 {
                     foreach (var item in allItems)
                     {
-                        if (item.LocationType != LocationType.FileSystem) continue;
-                        var resolved = ResolveItemForMediaInfo(item, seriesEpisodeCache);
-                        mediaInfoCache[item.InternalId] = ExtractMediaInfo(resolved);
+                        // A show's details come from all its episodes, made when a rule needs them (SeriesMediaInfo).
+                        if (item.LocationType != LocationType.FileSystem || IsSeries(item)) continue;
+                        mediaInfoCache[item.InternalId] = ExtractMediaInfo(item);
                     }
                 }
 
@@ -2206,6 +2211,8 @@ namespace HomeScreenCompanion
             var personCache = new Dictionary<string, HashSet<long>>(StringComparer.OrdinalIgnoreCase);
             var collectionMembershipCache = new Dictionary<string, HashSet<long>>(StringComparer.OrdinalIgnoreCase);
             var mediaInfoCache = new Dictionary<long, CachedMediaInfo>();
+            _otherVersions.Clear();
+            _seriesInfo.Clear();
             var userDataCache = new Dictionary<(Guid, long), (bool Played, DateTimeOffset? LastPlayedDate, int PlayCount)>();
             var seriesLastPlayedCache = new Dictionary<(Guid, long), DateTimeOffset?>();
             var preloadedUsers = _userManager.GetUserList(new UserQuery { IsDisabled = false });
@@ -2279,9 +2286,9 @@ namespace HomeScreenCompanion
                 {
                     foreach (var item in allItems)
                     {
-                        if (item.LocationType != LocationType.FileSystem) continue;
-                        var resolved = ResolveItemForMediaInfo(item, seriesEpisodeCache);
-                        mediaInfoCache[item.InternalId] = ExtractMediaInfo(resolved);
+                        // A show's details come from all its episodes, made when a rule needs them (SeriesMediaInfo).
+                        if (item.LocationType != LocationType.FileSystem || IsSeries(item)) continue;
+                        mediaInfoCache[item.InternalId] = ExtractMediaInfo(item);
                     }
                 }
                 var singleTagCollPlCriteria = GetAllCriteria(tagConfig)
@@ -6512,23 +6519,6 @@ namespace HomeScreenCompanion
             return (t >= from && DayOk(now.DayOfWeek)) || (t < to && DayOk(now.AddDays(-1).DayOfWeek));
         }
 
-        private BaseItem ResolveItemForMediaInfo(BaseItem item, Dictionary<long, BaseItem> seriesEpisodeCache)
-        {
-            if (!item.GetType().Name.Contains("Series")) return item;
-            if (!seriesEpisodeCache.TryGetValue(item.InternalId, out var cached))
-            {
-                cached = _libraryManager.GetItemList(new InternalItemsQuery
-                {
-                    IncludeItemTypes = new[] { "Episode" },
-                    Parent = item,
-                    Recursive = true,
-                    Limit = 1
-                }).FirstOrDefault() ?? item;
-                seriesEpisodeCache[item.InternalId] = cached;
-            }
-            return cached;
-        }
-
         private DateTimeOffset? GetSeriesLastPlayed(User user, BaseItem seriesItem,
             Dictionary<(Guid, long), DateTimeOffset?> cache,
             Dictionary<(Guid, long), (bool Played, DateTimeOffset? LastPlayedDate, int PlayCount)>? userDataCache = null)
@@ -6574,14 +6564,10 @@ namespace HomeScreenCompanion
             try
             {
                 dynamic dynItem = itemToCheck;
-                try {
-                    int defaultWidth = (int)dynItem.Width;
-                    if (defaultWidth >= 7680) info.Is8k = true;
-                    else if (defaultWidth >= 3800) info.Is4k = true;
-                    else if (defaultWidth >= 1900 && !info.Is4k && !info.Is8k) info.Is1080 = true;
-                    else if (defaultWidth >= 1200 && !info.Is1080 && !info.Is4k && !info.Is8k) info.Is720 = true;
-                    else if (defaultWidth > 0 && !info.Is720 && !info.Is1080 && !info.Is4k && !info.Is8k) info.IsSd = true;
-                } catch { }
+                // The resolution is the one Emby shows: the first word of the main video stream's
+                // DisplayTitle ("1080p H264"). The default stream if one is marked, else the first.
+                string? resolutionLabel = null;
+                bool labelFromDefault = false;
 
                 System.Collections.IEnumerable? streams = null;
                 try { streams = dynItem.GetMediaStreams(); } catch { }
@@ -6607,7 +6593,17 @@ namespace HomeScreenCompanion
 
                             if (type.Equals("Video", StringComparison.OrdinalIgnoreCase))
                             {
-                                try { int w = (int)stream.Width; if (w >= 7680) info.Is8k = true; else if (w >= 3800) info.Is4k = true; else if (w >= 1900 && !info.Is4k && !info.Is8k) info.Is1080 = true; else if (w >= 1200 && !info.Is1080 && !info.Is4k && !info.Is8k) info.Is720 = true; else if (w > 0 && !info.Is720 && !info.Is1080 && !info.Is4k && !info.Is8k) info.IsSd = true; } catch { }
+                                try
+                                {
+                                    bool isDefault = false;
+                                    try { isDefault = (bool)stream.IsDefault; } catch { }
+                                    if (resolutionLabel == null || (isDefault && !labelFromDefault))
+                                    {
+                                        resolutionLabel = stream.DisplayTitle?.ToString() ?? "";
+                                        labelFromDefault = isDefault;
+                                    }
+                                }
+                                catch { }
                                 if (codec.IndexOf("hevc", StringComparison.OrdinalIgnoreCase) >= 0 || codec.IndexOf("h265", StringComparison.OrdinalIgnoreCase) >= 0) info.IsHevc = true;
                                 if (codec.IndexOf("av1", StringComparison.OrdinalIgnoreCase) >= 0) info.IsAv1 = true;
                                 if (codec.IndexOf("h264", StringComparison.OrdinalIgnoreCase) >= 0 || codec.IndexOf("avc", StringComparison.OrdinalIgnoreCase) >= 0) info.IsH264 = true;
@@ -6633,6 +6629,7 @@ namespace HomeScreenCompanion
                         catch { }
                     }
                 }
+                ApplyResolution(ref info, resolutionLabel);
 
                 info.DateModifiedDays = TryGetDateModified(itemToCheck);
                 info.FileSizeMb = TryGetFileSize(itemToCheck);
@@ -6642,6 +6639,174 @@ namespace HomeScreenCompanion
             }
             catch { }
             return info;
+        }
+
+        // Emby's resolution words (first word of a video stream's DisplayTitle) → the filter's classes.
+        // 1440p, 1440i and 2K are one class ("1440p / 2K", owner 2026-11-13). The rarer 5K and 6K are known
+        // but in no class: they match no resolution rule and every "not" rule. Any other word (or none)
+        // leaves the resolution unknown.
+        private static void ApplyResolution(ref CachedMediaInfo info, string? displayTitle)
+        {
+            var title = (displayTitle ?? "").Trim();
+            int space = title.IndexOf(' ');
+            var word = (space < 0 ? title : title.Substring(0, space)).ToUpperInvariant();
+            switch (word)
+            {
+                case "8K": case "4320P": info.Is8k = true; break;
+                case "4K": case "2160P": info.Is4k = true; break;
+                case "1080P": case "1080I": info.Is1080 = true; break;
+                case "720P": case "720I": info.Is720 = true; break;
+                case "576P": case "576I": case "480P": case "480I": case "SD": info.IsSd = true; break;
+                case "1440P": case "1440I": case "2K": info.Is1440 = true; break;
+                case "5K": case "6K": break;
+                default: return;
+            }
+            info.ResolutionKnown = true;
+        }
+
+        private static readonly HashSet<string> ResolutionCriteria = new HashSet<string>(StringComparer.Ordinal)
+            { "8K", "4K", "1440p", "1080p", "720p", "SD" };
+
+        // A rule read from a file (stream flags, audio language, file size …): it can differ between a
+        // film's versions. NeedsMediaDetails uses it too.
+        private static bool IsFileCriterion(string criterion)
+        {
+            var crit = criterion.TrimStart('!');
+            int colon = crit.IndexOf(':');
+            return colon < 0 ? crit.Length > 0 : MediaDetailProperties.Contains(crit.Substring(0, colon));
+        }
+
+        // A film's or episode's other versions (Emby's own links, Video.GetAlternateVersionIds) with their
+        // file details, per run. Top-list and ranked copies are linked as versions too and never count.
+        private System.Collections.Concurrent.ConcurrentDictionary<long, List<(BaseItem Item, CachedMediaInfo Info)>> _otherVersions
+            = new System.Collections.Concurrent.ConcurrentDictionary<long, List<(BaseItem Item, CachedMediaInfo Info)>>();
+
+        // Movies and episodes have versions; an episode's versions are episodes.
+        private static bool HasVersions(BaseItem item) =>
+            item is MediaBrowser.Controller.Entities.Movies.Movie || item is MediaBrowser.Controller.Entities.TV.Episode;
+
+        private List<(BaseItem Item, CachedMediaInfo Info)> OtherVersions(BaseItem item)
+        {
+            if (!HasVersions(item) || !(item is Video video)) return new List<(BaseItem, CachedMediaInfo)>();
+            return _otherVersions.GetOrAdd(item.InternalId, _ =>
+            {
+                var list = new List<(BaseItem, CachedMediaInfo)>();
+                try
+                {
+                    foreach (var id in video.GetAlternateVersionIds())
+                    {
+                        if (id == item.InternalId) continue;
+                        var other = _libraryManager.GetItemById(id);
+                        if (other == null || other.GetType() != item.GetType() || !TopListCollectionMirror.IsOriginal(other)) continue;
+                        list.Add((other, ExtractMediaInfo(other)));
+                    }
+                }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                return list;
+            });
+        }
+
+        // A show's file details from all its episodes (owner 2026-11-13): each episode counts once, with
+        // its versions together (best resolution, a flag or language if any version has it). The show's
+        // resolution is the most common one among episodes with a known resolution, the higher one on a
+        // tie; a yes/no detail (HDR, codec, audio, language) counts when more than half of those episodes
+        // have it. Numbers (file size, dates) come from one episode, as before. Per run, made on demand.
+        private System.Collections.Concurrent.ConcurrentDictionary<long, CachedMediaInfo> _seriesInfo
+            = new System.Collections.Concurrent.ConcurrentDictionary<long, CachedMediaInfo>();
+
+        // Resolution classes in order; 5K/6K (known, no class) rank between 4K and 8K.
+        private static int ResolutionRank(CachedMediaInfo i) =>
+            !i.ResolutionKnown ? 0 : i.Is8k ? 7 : i.Is4k ? 5 : i.Is1440 ? 4 : i.Is1080 ? 3 : i.Is720 ? 2 : i.IsSd ? 1 : 6;
+
+        private static void SetResolutionRank(ref CachedMediaInfo i, int rank)
+        {
+            i.Is8k = rank == 7; i.Is4k = rank == 5; i.Is1440 = rank == 4; i.Is1080 = rank == 3; i.Is720 = rank == 2; i.IsSd = rank == 1;
+            i.ResolutionKnown = rank > 0;
+        }
+
+        private static bool IsSeries(BaseItem item) => item is MediaBrowser.Controller.Entities.TV.Series;
+
+        // An item's file details: a show's from its episodes, anything else's from its own file.
+        private CachedMediaInfo MediaInfoOf(BaseItem item) => IsSeries(item) ? SeriesMediaInfo(item) : ExtractMediaInfo(item);
+
+        // Rules that do not read files first: they are cheap, and "MediaType:Movie" then spares a show's
+        // episodes. The order never changes the result (AND/OR of side-effect-free checks).
+        private static IEnumerable<string> CheapFirst(IEnumerable<string> criteria) =>
+            criteria.OrderBy(c => IsFileCriterion(c) ? 1 : 0);
+
+        private CachedMediaInfo SeriesMediaInfo(BaseItem series)
+        {
+            return _seriesInfo.GetOrAdd(series.InternalId, _ =>
+            {
+                var empty = new CachedMediaInfo { AudioLanguages = new HashSet<string>(StringComparer.OrdinalIgnoreCase) };
+                List<BaseItem> episodes;
+                try
+                {
+                    episodes = _libraryManager.GetItemList(new InternalItemsQuery
+                    {
+                        IncludeItemTypes = new[] { "Episode" },
+                        SeriesIds = new[] { series.InternalId },
+                        Recursive = true,
+                        IsVirtualItem = false
+                    }).Where(e => e is MediaBrowser.Controller.Entities.TV.Episode && TopListCollectionMirror.IsOriginal(e))
+                      .OrderBy(e => e.InternalId).ToList();
+                }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); return empty; }
+                if (episodes.Count == 0) return empty;
+
+                var byId = episodes.ToDictionary(e => e.InternalId);
+                var info = new Dictionary<long, CachedMediaInfo>();
+                CachedMediaInfo InfoOf(BaseItem e) => info.TryGetValue(e.InternalId, out var ci) ? ci : (info[e.InternalId] = ExtractMediaInfo(e));
+
+                // One entry per episode: the episode and its versions in this show.
+                var units = new List<CachedMediaInfo>();
+                var seen = new HashSet<long>();
+                foreach (var ep in episodes)
+                {
+                    if (!seen.Add(ep.InternalId)) continue;
+                    var group = new List<BaseItem> { ep };
+                    try
+                    {
+                        if (ep is Video v)
+                            foreach (var id in v.GetAlternateVersionIds())
+                                if (byId.TryGetValue(id, out var other) && seen.Add(id)) group.Add(other);
+                    }
+                    catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+
+                    var u = new CachedMediaInfo { AudioLanguages = new HashSet<string>(StringComparer.OrdinalIgnoreCase) };
+                    int best = 0;
+                    foreach (var g in group)
+                    {
+                        var c = InfoOf(g);
+                        best = Math.Max(best, ResolutionRank(c));
+                        u.IsHevc |= c.IsHevc; u.IsAv1 |= c.IsAv1; u.IsH264 |= c.IsH264;
+                        u.IsHdr |= c.IsHdr; u.IsHdr10 |= c.IsHdr10; u.IsDv |= c.IsDv;
+                        u.IsAtmos |= c.IsAtmos; u.IsTrueHd |= c.IsTrueHd; u.IsDtsHdMa |= c.IsDtsHdMa; u.IsDts |= c.IsDts;
+                        u.IsAc3 |= c.IsAc3; u.IsAac |= c.IsAac;
+                        u.Is71 |= c.Is71; u.Is51 |= c.Is51; u.IsStereo |= c.IsStereo; u.IsMono |= c.IsMono;
+                        if (c.AudioLanguages != null) u.AudioLanguages.UnionWith(c.AudioLanguages);
+                    }
+                    SetResolutionRank(ref u, best);
+                    units.Add(u);
+                }
+
+                // Numbers and dates from the first episode (lowest id), as one episode gave before.
+                var result = InfoOf(episodes[0]);
+                result.AudioLanguages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var known = units.Where(u => u.ResolutionKnown).ToList();
+                int top = known.Count == 0 ? 0 : known.GroupBy(ResolutionRank)
+                    .OrderByDescending(g => g.Count()).ThenByDescending(g => g.Key).First().Key;
+                SetResolutionRank(ref result, top);
+                bool Most(Func<CachedMediaInfo, bool> has) => known.Count > 0 && known.Count(has) * 2 > known.Count;
+                result.IsHevc = Most(u => u.IsHevc); result.IsAv1 = Most(u => u.IsAv1); result.IsH264 = Most(u => u.IsH264);
+                result.IsHdr = Most(u => u.IsHdr); result.IsHdr10 = Most(u => u.IsHdr10); result.IsDv = Most(u => u.IsDv);
+                result.IsAtmos = Most(u => u.IsAtmos); result.IsTrueHd = Most(u => u.IsTrueHd); result.IsDtsHdMa = Most(u => u.IsDtsHdMa);
+                result.IsDts = Most(u => u.IsDts); result.IsAc3 = Most(u => u.IsAc3); result.IsAac = Most(u => u.IsAac);
+                result.Is71 = Most(u => u.Is71); result.Is51 = Most(u => u.Is51); result.IsStereo = Most(u => u.IsStereo); result.IsMono = Most(u => u.IsMono);
+                foreach (var lang in known.SelectMany(u => u.AudioLanguages).Distinct(StringComparer.OrdinalIgnoreCase).ToList())
+                    if (Most(u => u.AudioLanguages.Contains(lang))) result.AudioLanguages.Add(lang);
+                return result;
+            });
         }
 
         private bool ItemMatchesMediaInfo(BaseItem item, TagConfig tagConfig, bool debug,
@@ -6660,60 +6825,15 @@ namespace HomeScreenCompanion
             bool hasLegacy = legacy != null && legacy.Count > 0;
             if (!hasFilters && !hasLegacy) return true;
 
-            BaseItem itemToCheck;
-            bool is4k, is1080, is720, is8k, isSd, isHevc, isAv1, isH264;
-            bool isHdr, isHdr10, isDv, isAtmos, isTrueHd, isDtsHdMa, isDts, isAc3, isAac;
-            bool is51, is71, isStereo, isMono;
-            HashSet<string> audioLanguages;
-            double? cachedDateModifiedDays, cachedFileSizeMb;
-            double? cachedBitRate, cachedSampleRate, cachedBitsPerSample, cachedTrackNumber, cachedDiscNumber;
+            BaseItem itemToCheck = item; // metadata (Studios, Genres etc.) from the item itself
 
             if (!cachedInfo.HasValue && !NeedsMediaDetails(tagConfig))
                 cachedInfo = new CachedMediaInfo { AudioLanguages = new HashSet<string>(StringComparer.OrdinalIgnoreCase) };
 
-            if (cachedInfo.HasValue)
-            {
-                itemToCheck = item; // metadata (Studios, Genres etc.) from original item
-                var ci = cachedInfo.Value;
-                is4k = ci.Is4k; is8k = ci.Is8k; is1080 = ci.Is1080; is720 = ci.Is720; isSd = ci.IsSd;
-                isHevc = ci.IsHevc; isAv1 = ci.IsAv1; isH264 = ci.IsH264;
-                isHdr = ci.IsHdr; isHdr10 = ci.IsHdr10; isDv = ci.IsDv;
-                isAtmos = ci.IsAtmos; isTrueHd = ci.IsTrueHd; isDtsHdMa = ci.IsDtsHdMa;
-                isDts = ci.IsDts; isAc3 = ci.IsAc3; isAac = ci.IsAac;
-                is51 = ci.Is51; is71 = ci.Is71; isStereo = ci.IsStereo; isMono = ci.IsMono;
-                audioLanguages = ci.AudioLanguages ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                cachedDateModifiedDays = ci.DateModifiedDays;
-                cachedFileSizeMb = ci.FileSizeMb;
-                cachedBitRate = ci.BitRate;
-                cachedSampleRate = ci.SampleRate;
-                cachedBitsPerSample = ci.BitsPerSample;
-                cachedTrackNumber = ci.TrackNumber;
-                cachedDiscNumber = ci.DiscNumber;
-            }
-            else
-            {
-                itemToCheck = item;
-                if (item.GetType().Name.Contains("Series"))
-                    itemToCheck = seriesEpisodeCache != null
-                        ? ResolveItemForMediaInfo(item, seriesEpisodeCache)
-                        : (_libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Episode" }, Parent = item, Recursive = true, Limit = 1 }).FirstOrDefault() ?? item);
-
-                var extracted = ExtractMediaInfo(itemToCheck);
-                is4k = extracted.Is4k; is8k = extracted.Is8k; is1080 = extracted.Is1080; is720 = extracted.Is720; isSd = extracted.IsSd;
-                isHevc = extracted.IsHevc; isAv1 = extracted.IsAv1; isH264 = extracted.IsH264;
-                isHdr = extracted.IsHdr; isHdr10 = extracted.IsHdr10; isDv = extracted.IsDv;
-                isAtmos = extracted.IsAtmos; isTrueHd = extracted.IsTrueHd; isDtsHdMa = extracted.IsDtsHdMa;
-                isDts = extracted.IsDts; isAc3 = extracted.IsAc3; isAac = extracted.IsAac;
-                is51 = extracted.Is51; is71 = extracted.Is71; isStereo = extracted.IsStereo; isMono = extracted.IsMono;
-                audioLanguages = extracted.AudioLanguages;
-                cachedDateModifiedDays = extracted.DateModifiedDays;
-                cachedFileSizeMb = extracted.FileSizeMb;
-                cachedBitRate = extracted.BitRate;
-                cachedSampleRate = extracted.SampleRate;
-                cachedBitsPerSample = extracted.BitsPerSample;
-                cachedTrackNumber = extracted.TrackNumber;
-                cachedDiscNumber = extracted.DiscNumber;
-            }
+            // The file details, read only when a file rule is checked (a show's means reading all its
+            // episodes, which a "MediaType:Movie AND 4K" source never needs).
+            CachedMediaInfo? selfInfo = cachedInfo;
+            CachedMediaInfo Self() => selfInfo ??= MediaInfoOf(item);
 
             string mediaType = item.GetType().Name;
             string[] itemTags = item.Tags ?? Array.Empty<string>();
@@ -6737,40 +6857,60 @@ namespace HomeScreenCompanion
             if (ownTags.Count > 0)
                 itemTags = itemTags.Where(t => !ownTags.Contains(t, StringComparer.OrdinalIgnoreCase)).ToArray();
 
+            // One rule on one file's details (this item's, or another version's for file rules).
+            bool EvalWith(string c, BaseItem on, CachedMediaInfo ci) => EvaluateCriterion(c, on,
+                ci.Is4k, ci.Is1080, ci.Is720, ci.Is8k, ci.IsSd,
+                ci.IsHevc, ci.IsAv1, ci.IsH264, ci.IsHdr, ci.IsHdr10, ci.IsDv, ci.IsAtmos, ci.IsTrueHd, ci.IsDtsHdMa, ci.IsDts,
+                ci.IsAc3, ci.IsAac, ci.Is51, ci.Is71, ci.IsStereo, ci.IsMono, personCache,
+                ci.AudioLanguages ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase), mediaType, itemTags,
+                userDataCache, ci.DateModifiedDays, ci.FileSizeMb, preloadedUsers, seriesLastPlayedCache,
+                ci.BitRate, ci.SampleRate, ci.BitsPerSample, ci.TrackNumber, ci.DiscNumber,
+                collectionMembershipCache, seriesEpisodeNamesCache, ci.Is1440);
+
+            // Films and episodes (a show has one summary, see SeriesMediaInfo, and no versions):
+            // a positive file rule is this version's own ("4K AND HDR" needs one version that is both;
+            // the collection then gets the version that matches). A "not" file rule is the whole film's:
+            // it holds only if no version has it, so "not 1080p" skips a film in 4K and 1080p. A file
+            // with an unknown resolution matches no resolution rule; for a "not" rule the film's known
+            // versions decide, and with none known it does not match.
+            bool EvalCrit(string c)
+            {
+                bool negated = c.Length > 0 && c[0] == '!';
+                bool resolutionRule = ResolutionCriteria.Contains(negated ? c.Substring(1) : c);
+                bool fileRule = IsFileCriterion(c);
+                var self = fileRule ? Self() : (cachedInfo ?? new CachedMediaInfo { AudioLanguages = new HashSet<string>(StringComparer.OrdinalIgnoreCase) });
+                if (!negated || !fileRule)
+                    return (!resolutionRule || self.ResolutionKnown) && EvalWith(c, itemToCheck, self);
+
+                var versions = new List<(BaseItem Item, CachedMediaInfo Info)> { (itemToCheck, self) };
+                versions.AddRange(OtherVersions(item));
+                if (resolutionRule)
+                {
+                    versions = versions.Where(v => v.Info.ResolutionKnown).ToList();
+                    if (versions.Count == 0) return false;
+                }
+                return versions.All(v => EvalWith(c, v.Item, v.Info));
+            }
+
             if (hasFilters)
             {
-                bool EvalCrit(string c) => EvaluateCriterion(c, itemToCheck, is4k, is1080, is720, is8k, isSd,
-                    isHevc, isAv1, isH264, isHdr, isHdr10, isDv, isAtmos, isTrueHd, isDtsHdMa, isDts,
-                    isAc3, isAac, is51, is71, isStereo, isMono, personCache, audioLanguages, mediaType, itemTags,
-                    userDataCache, cachedDateModifiedDays, cachedFileSizeMb, preloadedUsers, seriesLastPlayedCache,
-                    cachedBitRate, cachedSampleRate, cachedBitsPerSample, cachedTrackNumber, cachedDiscNumber,
-                    collectionMembershipCache, seriesEpisodeNamesCache);
                 bool EvalGroup(MediaInfoFilter f)
                 {
                     if (f.Criteria == null || f.Criteria.Count == 0) return true;
                     bool isOr = string.Equals(f.Operator, "OR", StringComparison.OrdinalIgnoreCase);
-                    return isOr ? f.Criteria.Any(EvalCrit) : f.Criteria.All(EvalCrit);
+                    return isOr ? CheapFirst(f.Criteria).Any(EvalCrit) : CheapFirst(f.Criteria).All(EvalCrit);
                 }
                 bool result = EvalGroup(filters![0]);
                 for (int gi = 1; gi < filters.Count; gi++)
                 {
-                    bool groupResult = EvalGroup(filters[gi]);
                     bool useOr = string.Equals(filters[gi].GroupOperator, "OR", StringComparison.OrdinalIgnoreCase);
-                    result = useOr ? result || groupResult : result && groupResult;
+                    var group = filters[gi];
+                    result = useOr ? result || EvalGroup(group) : result && EvalGroup(group);
                 }
                 return result;
             }
 
-            foreach (var cond in legacy!)
-            {
-                if (!EvaluateCriterion(cond, itemToCheck, is4k, is1080, is720, is8k, isSd, isHevc, isAv1, isH264,
-                    isHdr, isHdr10, isDv, isAtmos, isTrueHd, isDtsHdMa, isDts, isAc3, isAac, is51, is71, isStereo, isMono,
-                    personCache, audioLanguages, mediaType, itemTags, userDataCache, cachedDateModifiedDays, cachedFileSizeMb,
-                    preloadedUsers, seriesLastPlayedCache, cachedBitRate, cachedSampleRate, cachedBitsPerSample, cachedTrackNumber,
-                    cachedDiscNumber, collectionMembershipCache, seriesEpisodeNamesCache))
-                    return false;
-            }
-            return true;
+            return CheapFirst(legacy!).All(EvalCrit);
         }
 
         private bool EvaluateCriterion(string cond, BaseItem item, bool is4k, bool is1080, bool is720,
@@ -6793,7 +6933,8 @@ namespace HomeScreenCompanion
             double? cachedTrackNumber = null,
             double? cachedDiscNumber = null,
             Dictionary<string, HashSet<long>>? collectionMembershipCache = null,
-            Dictionary<long, List<string>>? seriesEpisodeNamesCache = null)
+            Dictionary<long, List<string>>? seriesEpisodeNamesCache = null,
+            bool is1440 = false)
         {
             bool negate = cond.Length > 0 && cond[0] == '!';
             if (negate) cond = cond.Substring(1);
@@ -7040,7 +7181,7 @@ namespace HomeScreenCompanion
             }
             return c switch
             {
-                "4K" => is4k, "8K" => is8k, "1080p" => is1080, "720p" => is720, "SD" => isSd,
+                "4K" => is4k, "8K" => is8k, "1440p" => is1440, "1080p" => is1080, "720p" => is720, "SD" => isSd,
                 "HEVC" => isHevc, "AV1" => isAv1, "H264" => isH264,
                 "HDR" => isHdr || isDv, "HDR10" => isHdr10, "DolbyVision" => isDv,
                 "Atmos" => isAtmos, "TrueHD" => isTrueHd, "DtsHdMa" => isDtsHdMa,
@@ -7124,12 +7265,7 @@ namespace HomeScreenCompanion
         };
 
         private static bool NeedsMediaDetails(TagConfig tagConfig)
-            => GetAllCriteria(tagConfig).Any(c =>
-            {
-                var crit = c.TrimStart('!');
-                int colon = crit.IndexOf(':');
-                return colon < 0 ? crit.Length > 0 : MediaDetailProperties.Contains(crit.Substring(0, colon));
-            });
+            => GetAllCriteria(tagConfig).Any(IsFileCriterion);
 
         private static IEnumerable<string> GetAllCriteria(TagConfig tagConfig)
         {

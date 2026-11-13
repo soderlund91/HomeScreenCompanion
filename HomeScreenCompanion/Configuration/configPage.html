@@ -2919,7 +2919,7 @@
                 <div class="mi-help-grid" style="grid-template-columns: repeat(3, 1fr);">
                     <div class="mi-help-col">
                         <div class="mi-help-category">Video</div>
-                        Resolution (4K, 1080p, 720p, SD, 8K), Video codec (HEVC/H.265, AV1, H.264), HDR type (HDR10, Dolby Vision, HLG)
+                        Resolution (4K, 1440p / 2K, 1080p, 720p, SD, 8K), Video codec (HEVC/H.265, AV1, H.264), HDR type (HDR10, Dolby Vision, HLG)
                     </div>
                     <div class="mi-help-col">
                         <div class="mi-help-category">Audio</div>
@@ -3478,7 +3478,9 @@
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">text_fields</i><div><b>Contains / Exact</b> — text properties show a mode selector. <em>Contains</em> matches anywhere in the value (case-insensitive); <em>Exact</em> requires a full match. Enter one value per line — if any line matches, the rule matches (OR logic).</div></div>
 
                 <div class="help-section"><i class="md-icon help-section-icon">videocam</i>Video</div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Resolution</span> — 4K, 1080p, 720p, SD, 8K</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Resolution</span> — 8K, 4K, 1440p / 2K, 1080p, 720p, SD, as Emby shows it on the title's media info (SD = 480p, 576p and lower). A file Emby has not scanned yet has no resolution and matches no resolution rule, not even a <em>not</em> rule.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">video_library</i><div><b>Films in several versions</b> (e.g. 4K and 1080p) — the video and audio rules (and File Size) look at each version. A rule matches when one version has it, and rules combined with AND must all hold for that same version: <i>4K AND HDR</i> needs a version that is both. A <em>not</em> rule looks at the whole film and matches only when no version has it, so <i>not 1080p</i> leaves out a film that also has a 1080p version. A collection gets the version that matched. Episodes in several versions work the same way.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">tv</i><div><b>Shows</b> (Media Type = Series) — the video and audio rules look at all the show's episodes, each counted once with its best version. The show's resolution is the one most episodes have (the higher one on a tie), so <i>Series AND 1080p</i> finds shows that are mostly 1080p. HDR, codec, audio and language rules match when more than half of the episodes have them. To pick single episodes by their own file, use Media Type = Episode.</div></div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Video Codec</span> — HEVC/H.265, AV1, H.264</div></div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">HDR</span> — Any HDR, HDR10, or Dolby Vision</div></div>
 
