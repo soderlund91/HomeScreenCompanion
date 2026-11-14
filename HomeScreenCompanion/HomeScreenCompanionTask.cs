@@ -1355,6 +1355,8 @@ namespace HomeScreenCompanion
                 _log.Blank();
                 _log.Info("» Applying tags");
                 phaseTimer.Restart();
+                // A tag row back in schedule loses [INACTIVE] before its titles get the tag.
+                RestoreInactiveTitlesFirst(config, dryRun, cancellationToken);
                 int tagsAdded = 0, tagsRemoved = 0, itemsChanged = 0, updateCount = 0;
                 var _dbgTagAdded = debug ? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase) : null;
                 var _dbgTagRemoved = debug ? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase) : null;
@@ -2932,6 +2934,8 @@ namespace HomeScreenCompanion
             _log.Blank();
             _log.Info("» Applying tags");
             var phaseTimer = System.Diagnostics.Stopwatch.StartNew();
+            // A tag row back in schedule loses [INACTIVE] before its titles get the tag (see the full sync).
+            RestoreInactiveTitlesFirst(config, dryRun, cancellationToken, tagName);
             int tagsAdded = 0, tagsRemoved = 0;
             var _dbgTagAdded = debug ? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase) : null;
             var _dbgTagRemoved = debug ? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase) : null;
@@ -3603,7 +3607,7 @@ namespace HomeScreenCompanion
         {
             var tag = (tagName ?? tc.Tag ?? "").Trim();
             return tag.Length > 0 && (config.Tags ?? new List<TagConfig>()).Any(t => t.Active && t.EnableTag && !t.OnlyCollection
-                && IsScheduleActive(t.ActiveIntervals, DateTime.Now)
+                && IsScheduleActive(t.ActiveIntervals, RunGate.ScheduleNow)
                 && !string.Equals(GroupKey(t), GroupKey(tc), StringComparison.OrdinalIgnoreCase)
                 && t.AllTags().Contains(tag, StringComparer.OrdinalIgnoreCase));
         }
@@ -5086,6 +5090,16 @@ namespace HomeScreenCompanion
                         HsWarn(statsList, _hsTagName, _hsDisplayName, $"home section failed for {_hsUserName2}: {ex.Message}");
                     }
                 }
+                // Copy & Sync copies of this tag row for users who are not on the source: their title
+                // follows the source's ([INACTIVE] outside the schedule, the plain title in it), as
+                // the rows above. Only the copies Copy & Sync recorded by id (KnownTagRows).
+                if (sectionType == "items" && (scheduledOffTagRow || IsTagRow(tc, _jsonSerializer))
+                    && settingsDict.TryGetValue("_queryTagId", out var _copyTagId) && !string.IsNullOrEmpty(_copyTagId))
+                {
+                    int _copies = SetInactiveTitles(config, tc, _copyTagId, scheduledOffTagRow, true, false, cancellationToken);
+                    if (_copies > 0) _log.Ok($"{_hsDisplayName}: {(scheduledOffTagRow ? "[INACTIVE] put on" : "[INACTIVE] taken off")} {RunLog.Plural(_copies, "Copy & Sync copy", "Copy & Sync copies")}");
+                }
+
                 if (_posMove)
                 {
                     RowPlacement.MarkApplied(_posKey, _posNow);
@@ -5572,7 +5586,7 @@ namespace HomeScreenCompanion
         internal static void ApplyRowTitle(Dictionary<string, string> settings, TagConfig tc, IJsonSerializer json)
         {
             FillDefaultCustomName(settings, tc);
-            if (tc.Active && !IsScheduleActive(tc.ActiveIntervals, DateTime.Now) && IsTagRow(tc, json))
+            if (tc.Active && !IsScheduleActive(tc.ActiveIntervals, RunGate.ScheduleNow) && IsTagRow(tc, json))
                 MarkInactive(settings);
         }
 
@@ -5582,6 +5596,88 @@ namespace HomeScreenCompanion
         {
             if (settings.TryGetValue("CustomName", out var cn) && !string.IsNullOrEmpty(cn))
                 settings["CustomName"] = InactivePrefix + StripInactive(cn);
+        }
+
+        // The row's title with InactivePrefix put on (inactive) or taken off; null when it already is so.
+        internal static string? InactiveTitle(string? title, bool inactive)
+        {
+            if (string.IsNullOrEmpty(title)) return null;
+            var want = inactive ? InactivePrefix + StripInactive(title) : StripInactive(title);
+            return string.Equals(want, title, StringComparison.Ordinal) ? null : want;
+        }
+
+        // The rows of a tag row's source that HSC knows by id, per user: the source's tracked rows,
+        // and the rows Copy & Sync copied to users who are not on the source (HomeSyncAdditions
+        // "row" with the row's id; older records without an id are not known this way).
+        private static List<(string UserId, string SectionId, bool Copy)> KnownTagRows(PluginConfiguration config, TagConfig tc)
+        {
+            var rows = new List<(string, string, bool)>();
+            foreach (var t in tc.HomeSectionTracked ?? new List<HomeSectionTracking>())
+                if (!string.IsNullOrEmpty(t.SectionId) && !t.SectionId.StartsWith("hsc__"))
+                    rows.Add((t.UserId, t.SectionId, false));
+            var key = HomeSectionSyncTask.SourceKey(tc.Name, tc.Tag);
+            foreach (var a in config.HomeSyncAdditions ?? new List<HomeSyncAddition>())
+                if (a.List == HomeSyncAddition.Row && !string.IsNullOrEmpty(a.SectionId) && !string.IsNullOrEmpty(a.UserId)
+                    && string.Equals(a.Key, key, StringComparison.OrdinalIgnoreCase))
+                    rows.Add((a.UserId, a.SectionId, true));
+            return rows;
+        }
+
+        // Puts InactivePrefix on (inactive) or off the known rows of a tag row's source (KnownTagRows),
+        // only the title, and only on a row that still shows the source's tag (tagId). Disabled users
+        // are left alone. onlyCopies: the source's own rows are written by ManageHomeSections itself.
+        // Returns how many rows changed (or would, in dry run).
+        private int SetInactiveTitles(PluginConfiguration config, TagConfig tc, string tagId, bool inactive, bool onlyCopies, bool dryRun, CancellationToken cancellationToken)
+        {
+            int n = 0;
+            string display = !string.IsNullOrWhiteSpace(tc.Name) ? tc.Name.Trim() : (tc.Tag ?? "").Trim();
+            var tagKey = tagId.Replace("-", "");
+            foreach (var (userId, sectionId, copy) in KnownTagRows(config, tc))
+            {
+                if (onlyCopies && !copy) continue;
+                if (SkipDisabled(userId)) continue;
+                try
+                {
+                    var uid = _userManager.GetInternalId(userId);
+                    var row = (_userManager.GetHomeSections(uid, cancellationToken)?.Sections ?? Array.Empty<ContentSection>())
+                        .FirstOrDefault(s => s.Id == sectionId);
+                    if (row == null || !string.Equals(row.SectionType ?? "", "items", StringComparison.OrdinalIgnoreCase) || !RowShows(row).Contains(tagKey)) continue;
+                    var title = InactiveTitle(row.CustomName, inactive);
+                    if (title == null) continue;
+                    n++;
+                    if (dryRun) { _log.Debug($"  [Dry run] {UserName(userId)}: '{row.CustomName}' would be titled '{title}'{(copy ? " (Copy & Sync copy)" : "")}"); continue; }
+                    row.CustomName = title;
+                    GentleMode.Wrote(cancellationToken);
+                    _userManager.UpdateHomeSection(uid, row, cancellationToken);
+                    _log.Debug($"  {UserName(userId)}: row titled '{title}'{(copy ? " (Copy & Sync copy)" : "")}");
+                }
+                catch (Exception ex) { _log.Warn($"{display}: the title of a home section could not be {(inactive ? "marked [INACTIVE]" : "restored")}: {ex.Message}"); }
+            }
+            return n;
+        }
+
+        // Before the tags go on the titles: a tag row whose source is in schedule again loses
+        // InactivePrefix first, on the source's rows and its Copy & Sync copies. Else the row shows its
+        // titles under "[INACTIVE] …" until the home sections step at the end of the run (long in
+        // Gentle mode). ManageHomeSections still writes the rows as usual afterwards. filterTagName:
+        // Run Group (only that tag's sources). Never in Preview.
+        private void RestoreInactiveTitlesFirst(PluginConfiguration config, bool dryRun, CancellationToken cancellationToken, string? filterTagName = null)
+        {
+            if (_preview != null) return;
+            int n = 0;
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var tc in config.Tags)
+            {
+                if (filterTagName != null && !string.Equals(tc.Tag?.Trim(), filterTagName, StringComparison.OrdinalIgnoreCase)) continue;
+                if (RotatingRow.Is(tc) || !tc.Active || !SourceTopLists.PlainRow(tc) || !IsScheduleActive(tc.ActiveIntervals) || !IsTagRow(tc, _jsonSerializer)) continue;
+                // The first flat entry of a source holds its tracking (see ManageHomeSections).
+                if (!seen.Add(GroupKey(tc))) continue;
+                var tagItem = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Tag" }, Name = (tc.Tag ?? "").Trim(), Recursive = true }).FirstOrDefault();
+                if (tagItem == null) continue;
+                n += SetInactiveTitles(config, tc, tagItem.InternalId.ToString(), false, false, dryRun, cancellationToken);
+            }
+            if (n > 0) _log.Info(dryRun ? $"  Dry run — [INACTIVE] would be taken off {RunLog.Plural(n, "home section")} (back in schedule)"
+                                        : $"  [INACTIVE] taken off {RunLog.Plural(n, "home section")} (back in schedule)");
         }
 
         // Same row title, with or without InactivePrefix. A hidden title (HiddenTitle) or an empty
@@ -6316,7 +6412,8 @@ namespace HomeScreenCompanion
             return section;
         }
 
-        private bool IsScheduleActive(List<DateInterval> intervals) => IsScheduleActive(intervals, DateTime.Now);
+        // A run judges every schedule at the time it started (RunGate.ScheduleNow).
+        private bool IsScheduleActive(List<DateInterval> intervals) => IsScheduleActive(intervals, RunGate.ScheduleNow);
 
         internal static bool IsScheduleActive(List<DateInterval> intervals, DateTime now)
         {

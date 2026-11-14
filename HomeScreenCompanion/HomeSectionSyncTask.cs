@@ -867,7 +867,7 @@ namespace HomeScreenCompanion
                 foreach (var tc in entries)
                 {
                     if (!tc.Active) return false;
-                    if (!HomeScreenCompanionTask.IsScheduleActive(tc.ActiveIntervals, DateTime.Now) && !HomeScreenCompanionTask.IsTagRow(tc, _jsonSerializer)) return false;
+                    if (!HomeScreenCompanionTask.IsScheduleActive(tc.ActiveIntervals, RunGate.ScheduleNow) && !HomeScreenCompanionTask.IsTagRow(tc, _jsonSerializer)) return false;
                     if (unknownMasterRows.Any(s => managed.CouldBeSourceRow(s, tc))) return false;
                 }
                 return true;
