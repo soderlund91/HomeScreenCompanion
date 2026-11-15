@@ -5827,11 +5827,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
 
     // "Running · <step> · <elapsed>" for the Last run chip; the step comes from the Status endpoints.
+    // While gentle mode paces the run, on two lines: "Running · 1 person watching, gentle mode in use",
+    // then "<step> · …" (the label keeps line breaks, see #lastRunStatusLabel).
     function runningStepText(st, isHomeScreen, isPosters) {
         var step = st.Step || '';
         if (isHomeScreen && step.indexOf('Home Screen Sync') !== 0) step = 'Home Screen Sync · ' + step;
         if (isPosters) step = 'Original-language posters · ' + step;
-        var text = 'Running · ' + step;
+        var text = 'Running · ' + (st.Gentle ? st.Gentle + '\n' : '') + step;
         var started = st.StartedUtc ? Date.parse(st.StartedUtc) : NaN;
         if (!isNaN(started)) {
             var s = Math.max(0, Math.floor((Date.now() - started) / 1000));

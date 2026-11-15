@@ -15,26 +15,36 @@ namespace HomeScreenCompanion
     /// stall. With nobody watching every slice runs straight on, as fast as before.
     ///
     /// Heavy loops call <see cref="Wrote"/> (or <see cref="WroteAsync"/>) after each write that
-    /// really changed something. A slice is full after <see cref="SliceSize"/> writes, or sooner
-    /// when the writes timed with <see cref="Timed"/> took <see cref="SliceBudget"/> together
-    /// (one slow write fills a slice on its own). When a slice is full the sessions are counted
-    /// again: nobody watching means go on, anyone watching (playing or paused) means pause
-    /// 2 × the slice's timed write time, at least <see cref="MinPause"/> and at most
+    /// really changed something, and run the write itself in <see cref="Timed"/>. A slice is full
+    /// when its timed writes took <see cref="SliceBudget"/> together (one slow write fills a slice
+    /// on its own), or after <see cref="SliceWrites"/> writes. When a slice is full the sessions
+    /// are counted again: nobody watching means go on, anyone watching (playing or paused) means
+    /// pause 2 × the slice's timed write time, at least <see cref="MinPause"/> and at most
     /// <see cref="MaxPause"/>: the database is then free at least two thirds of the time.
     /// A batch call (one Emby call that saves many items) is split with <see cref="Slices"/>.
     ///
-    /// The numbers come from the test server (4 saves then 3 s kept segment times at their idle
-    /// level with 4 transcoding streams) and from a production server with a ~700 MB library
-    /// database, where one ranked copy's full write (save, media streams, cast, merge) could hold
-    /// a playback-progress request up for 1–3 s.
+    /// What the viewer sees is never paced: home rows, row titles ([INACTIVE]), Copy & Sync rows
+    /// and one playlist's changes are written in one go (they are small writes, and a pause in
+    /// the middle of them leaves a half-done row on the home screen). The pause comes after.
+    ///
+    /// The heavy writes come from a production server with a ~700 MB library database, where one
+    /// ranked copy's full write (save, media streams, cast, merge) could hold a playback-progress
+    /// request up for 1–3 s (PR #36). The light ones were re-measured on 2026-11-14 on a
+    /// production server (17,837 movies): a tag save takes ~15 ms, and with the old fixed slice
+    /// of 4 writes and 3 s minimum pause a full sync with one viewer took 23 min instead of 3
+    /// (392 pauses during ~1,650 tag saves), while Emby answered the viewer's progress reports in
+    /// ~2 ms throughout. Hence: slices by measured time, a short minimum pause.
     /// </summary>
     internal static class GentleMode
     {
-        internal const int SliceSize = 4;
+        /// <summary>Writes per slice when they are cheap (the timed budget is not reached first).</summary>
+        internal const int SliceWrites = 100;
+        /// <summary>Batch size of one Emby batch call (collection members, top-list files) while someone is watching.</summary>
+        internal const int WatchBatchSize = 10;
         /// <summary>Batch size with nobody watching: small enough that a viewer who starts mid-run is noticed after one batch.</summary>
-        internal const int IdleSliceSize = 25;
-        internal static readonly TimeSpan SliceBudget = TimeSpan.FromMilliseconds(1500);
-        internal static readonly TimeSpan MinPause = TimeSpan.FromSeconds(3);
+        internal const int IdleBatchSize = 25;
+        internal static readonly TimeSpan SliceBudget = TimeSpan.FromMilliseconds(1000);
+        internal static readonly TimeSpan MinPause = TimeSpan.FromMilliseconds(500);
         internal static readonly TimeSpan MaxPause = TimeSpan.FromSeconds(15);
 
         private static ISessionManager? _sessions;
@@ -73,9 +83,10 @@ namespace HomeScreenCompanion
         internal static void Begin()
         {
             _runEnabled = Plugin.Instance?.Configuration?.GentleModeEnabled == true;
+            _runDry = DryRun.On;
             lock (Sync)
             {
-                _pending = 0; _pauses = 0; _paused = TimeSpan.Zero; _sliceWork = TimeSpan.Zero; _longestPause = TimeSpan.Zero;
+                _pending = 0; _pauses = 0; _unitWrites = 0; _paused = TimeSpan.Zero; _sliceWork = TimeSpan.Zero; _longestPause = TimeSpan.Zero;
                 _longestWrite = TimeSpan.Zero; _longestKind = "";
                 Times.Clear();
                 _streamsAtStart = ActiveStreams();
@@ -83,12 +94,27 @@ namespace HomeScreenCompanion
             }
         }
 
+        // Dry run (from when the run started): nothing is written, so nothing is paced.
+        private static volatile bool _runDry;
+
+        /// <summary>
+        /// For the page's status line while a run is busy: "1 person watching, gentle mode in use" when the
+        /// run is paced right now (setting on, not a dry run, someone playing or paused), else "".
+        /// </summary>
+        internal static string StatusText()
+        {
+            if (!RunGate.Busy || _runDry) return "";
+            int n = ActiveStreams();
+            return n <= 0 ? "" : (n == 1 ? "1 person watching" : $"{n} people watching") + ", gentle mode in use";
+        }
+
         /// <summary>The run's header: one plain line when people are watching as it starts.</summary>
         internal static void Announce(RunLog? log)
         {
             int n;
             lock (Sync) n = _streamsAtStart;
-            if (n > 0 && log != null)
+            // A dry run writes nothing, so it is never paced.
+            if (n > 0 && log != null && !_runDry)
                 log.Info($"  {(n == 1 ? "1 person is" : $"{n} people are")} watching: the sync runs in gentle mode and takes longer.");
         }
 
@@ -102,7 +128,7 @@ namespace HomeScreenCompanion
             lock (Sync)
             {
                 if (_pauses > 0)
-                    lines.Add($"Gentle mode:   {_pauses + 1} slices, {RunLog.Elapsed(_paused)} of pauses ({RunLog.Plural(_pauses, "pause")}, {MinPause.TotalSeconds:0}–{Math.Max(MinPause.TotalSeconds, Math.Ceiling(_longestPause.TotalSeconds)):0}s each) while up to {(_maxStreams == 1 ? "1 person was" : $"{_maxStreams} people were")} watching");
+                    lines.Add($"Gentle mode:   {_pauses + 1} slices, {RunLog.Elapsed(_paused)} of pauses ({RunLog.Plural(_pauses, "pause")}, the longest {Ms(_longestPause)}) while up to {(_maxStreams == 1 ? "1 person was" : $"{_maxStreams} people were")} watching");
                 if (Times.Count > 0)
                     lines.Add("Write times:   " + string.Join("  ·  ", Times.Select(t =>
                         $"{t.Key} {t.Value.Count}× avg {Ms(TimeSpan.FromTicks(t.Value.Total.Ticks / t.Value.Count))}, max {Ms(t.Value.Max)}"))
@@ -201,6 +227,29 @@ namespace HomeScreenCompanion
             if (cancellationToken.WaitHandle.WaitOne(pause)) cancellationToken.ThrowIfCancellationRequested();
         }
 
+        // Writes the viewer sees (home rows, row titles, one playlist's changes), counted while a
+        // unit is written and paced only once it is done (see the class summary).
+        private static int _unitWrites;
+
+        /// <summary>A write the viewer sees: counted, never paused in the middle of its unit.</summary>
+        internal static void Unpaced(int count = 1) { lock (Sync) _unitWrites += count; }
+
+        /// <summary>A unit of writes the viewer sees is done (all users' rows of one source, one
+        /// playlist, one Copy & Sync target): the pause it earned comes now.</summary>
+        internal static void UnitDone(CancellationToken cancellationToken)
+        {
+            int n;
+            lock (Sync) { n = _unitWrites; _unitWrites = 0; }
+            if (n > 0) Wrote(cancellationToken, n);
+        }
+
+        internal static async Task UnitDoneAsync(CancellationToken cancellationToken)
+        {
+            int n;
+            lock (Sync) { n = _unitWrites; _unitWrites = 0; }
+            if (n > 0) await WroteAsync(cancellationToken, n).ConfigureAwait(false);
+        }
+
         internal static readonly TimeSpan LongStep = TimeSpan.FromMilliseconds(300);
         internal const int LongStepFactor = 3;
 
@@ -222,8 +271,8 @@ namespace HomeScreenCompanion
         }
 
         /// <summary>
-        /// The ids of one batch call in slices: <see cref="SliceSize"/> while someone is watching,
-        /// <see cref="IdleSliceSize"/> otherwise. Checked again before every slice.
+        /// The ids of one batch call in slices: <see cref="WatchBatchSize"/> while someone is watching,
+        /// <see cref="IdleBatchSize"/> otherwise. Checked again before every slice.
         /// </summary>
         internal static IEnumerable<T[]> Slices<T>(IReadOnlyList<T> items)
         {
@@ -238,7 +287,7 @@ namespace HomeScreenCompanion
         }
 
         /// <summary>How many items the next batch call may take.</summary>
-        internal static int BatchSize => Streaming ? SliceSize : IdleSliceSize;
+        internal static int BatchSize => Streaming ? WatchBatchSize : IdleBatchSize;
 
         // How long to pause now: zero until a slice is full; then the sessions decide.
         private static TimeSpan Due(int count)
@@ -254,7 +303,7 @@ namespace HomeScreenCompanion
             lock (Sync)
             {
                 _pending += count;
-                if (_pending < SliceSize && _sliceWork < SliceBudget) return TimeSpan.Zero;
+                if (_pending < SliceWrites && _sliceWork < SliceBudget) return TimeSpan.Zero;
                 _pending = 0;
                 work = _sliceWork;
                 _sliceWork = TimeSpan.Zero;

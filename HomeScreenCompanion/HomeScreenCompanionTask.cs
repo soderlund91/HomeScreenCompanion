@@ -1385,13 +1385,13 @@ namespace HomeScreenCompanion
                     {
                         foreach (var t in toRemove) { item.RemoveTag(t); tagsRemoved++; tagRemovedByTag[t] = tagRemovedByTag.GetValueOrDefault(t) + 1; }
                         foreach (var t in toAdd) { item.AddTag(t); tagsAdded++; tagAddedByTag[t] = tagAddedByTag.GetValueOrDefault(t) + 1; }
-                        GentleMode.Wrote(cancellationToken);
-                        try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); }
+                        try { GentleMode.Timed("tag save", () => _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null)); }
                         catch (Exception ex)
                         {
                             _log.Warn($"Could not save tags for '{item.Name}': {ex.Message}");
                             foreach (var t in toRemove) if (!configuredTags.Contains(t)) orphanCleanupFailed.Add(t);
                         }
+                        GentleMode.Wrote(cancellationToken);
                         if (++updateCount % 25 == 0)
                             await Task.Yield();
                     }
@@ -1424,13 +1424,13 @@ namespace HomeScreenCompanion
                     {
                         foreach (var t in toRemove) { item.RemoveTag(t); tagsRemoved++; tagRemovedByTag[t] = tagRemovedByTag.GetValueOrDefault(t) + 1; }
                         foreach (var t in toAdd) { item.AddTag(t); tagsAdded++; tagAddedByTag[t] = tagAddedByTag.GetValueOrDefault(t) + 1; }
-                        GentleMode.Wrote(cancellationToken);
-                        try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); }
+                        try { GentleMode.Timed("tag save", () => _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null)); }
                         catch (Exception ex)
                         {
                             _log.Warn($"Could not save tags for '{item.Name}': {ex.Message}");
                             foreach (var t in toRemove) if (!configuredTags.Contains(t)) orphanCleanupFailed.Add(t);
                         }
+                        GentleMode.Wrote(cancellationToken);
                         if (++updateCount % 25 == 0)
                             await Task.Yield();
                     }
@@ -1463,13 +1463,13 @@ namespace HomeScreenCompanion
                     {
                         foreach (var t in toRemove) { item.RemoveTag(t); tagsRemoved++; tagRemovedByTag[t] = tagRemovedByTag.GetValueOrDefault(t) + 1; }
                         foreach (var t in toAdd) { item.AddTag(t); tagsAdded++; tagAddedByTag[t] = tagAddedByTag.GetValueOrDefault(t) + 1; }
-                        GentleMode.Wrote(cancellationToken);
-                        try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); }
+                        try { GentleMode.Timed("tag save", () => _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null)); }
                         catch (Exception ex)
                         {
                             _log.Warn($"Could not save tags for season '{item.Name}': {ex.Message}");
                             foreach (var t in toRemove) if (!configuredTags.Contains(t)) orphanCleanupFailed.Add(t);
                         }
+                        GentleMode.Wrote(cancellationToken);
                         if (++updateCount % 25 == 0)
                             await Task.Yield();
                     }
@@ -2977,9 +2977,9 @@ namespace HomeScreenCompanion
                 if (!dryRun)
                 {
                     ApplyTagChanges(item, changes, shouldHave);
-                    GentleMode.Wrote(cancellationToken);
-                    try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); }
+                    try { GentleMode.Timed("tag save", () => _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null)); }
                     catch (Exception ex) { _log.Warn($"Could not save tags for '{item.Name}': {ex.Message}"); }
+                    GentleMode.Wrote(cancellationToken);
                     if (++updateCount % 25 == 0) await Task.Yield();
                 }
                 if (shouldHave) tagsAdded += changes.Count; else tagsRemoved += changes.Count;
@@ -3032,9 +3032,9 @@ namespace HomeScreenCompanion
                     if (!dryRun)
                     {
                         ApplyTagChanges(ep, changesEp, shouldHaveEp);
-                        GentleMode.Wrote(cancellationToken);
-                        try { _libraryManager.UpdateItem(ep, ep.Parent, ItemUpdateType.MetadataEdit, null); }
+                        try { GentleMode.Timed("tag save", () => _libraryManager.UpdateItem(ep, ep.Parent, ItemUpdateType.MetadataEdit, null)); }
                         catch (Exception ex) { _log.Warn($"Could not save tags for episode '{ep.Name}': {ex.Message}"); }
+                        GentleMode.Wrote(cancellationToken);
                         if (++updateCount % 25 == 0) await Task.Yield();
                     }
                     if (shouldHaveEp) tagsAdded += changesEp.Count; else tagsRemoved += changesEp.Count;
@@ -3089,9 +3089,9 @@ namespace HomeScreenCompanion
                     if (!dryRun)
                     {
                         ApplyTagChanges(season, changesSeason, shouldHaveSeason);
-                        GentleMode.Wrote(cancellationToken);
-                        try { _libraryManager.UpdateItem(season, season.Parent, ItemUpdateType.MetadataEdit, null); }
+                        try { GentleMode.Timed("tag save", () => _libraryManager.UpdateItem(season, season.Parent, ItemUpdateType.MetadataEdit, null)); }
                         catch (Exception ex) { _log.Warn($"Could not save tags for season '{season.Name}': {ex.Message}"); }
+                        GentleMode.Wrote(cancellationToken);
                         if (++updateCount % 25 == 0) await Task.Yield();
                     }
                     if (shouldHaveSeason) tagsAdded += changesSeason.Count; else tagsRemoved += changesSeason.Count;
@@ -3140,9 +3140,9 @@ namespace HomeScreenCompanion
                         if (!dryRun)
                         {
                             item.RemoveTag(orphan);
-                            GentleMode.Wrote(cancellationToken);
-                            try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); }
+                            try { GentleMode.Timed("tag save", () => _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null)); }
                             catch (Exception ex) { _log.Warn($"Could not save tags for '{item.Name}': {ex.Message}"); }
+                            GentleMode.Wrote(cancellationToken);
                             if (++updateCount % 25 == 0) await Task.Yield();
                         }
                         orphanRemoved++;
@@ -3465,9 +3465,9 @@ namespace HomeScreenCompanion
                     if (!dryRun)
                     {
                         item.RemoveTag(offTag);
-                        GentleMode.Wrote(cancellationToken);
-                        try { _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null); }
+                        try { GentleMode.Timed("tag save", () => _libraryManager.UpdateItem(item, item.Parent, ItemUpdateType.MetadataEdit, null)); }
                         catch (Exception ex) { _log.Warn($"Could not save tags for '{item.Name}': {ex.Message}"); }
+                        GentleMode.Wrote(cancellationToken);
                     }
                     tagsRemoved++;
                 }
@@ -4650,17 +4650,17 @@ namespace HomeScreenCompanion
                             if (entryIdsToRemove.Count > 0)
                             {
                                 try {
-                                    await _playlistManager.RemoveFromPlaylist(existingPlaylist.InternalId, entryIdsToRemove.ToArray());
+                                    await GentleMode.TimedAsync("playlist", () => _playlistManager.RemoveFromPlaylist(existingPlaylist.InternalId, entryIdsToRemove.ToArray()));
                                 } catch (Exception ex) {
                                     _log.Warn($"Playlist \"{plName}\": could not remove {entryIdsToRemove.Count} items for {plUser.Name}: {ex.Message}");
                                 }
-                                await GentleMode.WroteAsync(cancellationToken);
+                                GentleMode.Unpaced();
                             }
 
                             if (toAdd.Length > 0)
                             {
-                                _playlistManager.AddToPlaylist(existingPlaylist.InternalId, toAdd, plUser);
-                                await GentleMode.WroteAsync(cancellationToken);
+                                GentleMode.Timed("playlist", () => _playlistManager.AddToPlaylist(existingPlaylist.InternalId, toAdd, plUser));
+                                GentleMode.Unpaced();
                             }
 
                             // Reorder the playlist so it mirrors the source order. AddToPlaylist appends new
@@ -4690,7 +4690,7 @@ namespace HomeScreenCompanion
                                     int at = targetIndex == 0 ? 0 : currentOrder.IndexOf(targetOrder[targetIndex - 1]) + 1;
                                     try
                                     {
-                                        await _playlistManager.MoveItem(existingPlaylist.InternalId, wanted, at);
+                                        await GentleMode.TimedAsync("playlist", () => _playlistManager.MoveItem(existingPlaylist.InternalId, wanted, at));
                                         currentOrder.Insert(at, wanted);
                                         reordered = true;
                                     }
@@ -4699,9 +4699,12 @@ namespace HomeScreenCompanion
                                         _log.Warn($"Playlist \"{plName}\": could not reorder for {plUser.Name}: {ex.Message}");
                                         break;
                                     }
-                                    await GentleMode.WroteAsync(cancellationToken);
+                                    GentleMode.Unpaced();
                                 }
                             }
+                            // Gentle mode: one playlist is changed in one go (a pause between the
+                            // moves showed it half in order); the pause comes now.
+                            await GentleMode.UnitDoneAsync(cancellationToken);
 
                             if (entryIdsToRemove.Count > 0 || toAdd.Length > 0 || reordered)
                             {
@@ -5022,7 +5025,7 @@ namespace HomeScreenCompanion
                                 typeof(ContentSection).GetProperty("Id")?.SetValue(updateSection, ownedSection.Id);
                                 if (SectionKey(_jsonSerializer, updateSection) != _hsBefore)
                                 {
-                                    GentleMode.Wrote(cancellationToken);
+                                    GentleMode.Unpaced();
                                     _userManager.UpdateHomeSection(userInternalId, updateSection, cancellationToken);
                                     _hsAction = "updated";
                                 }
@@ -5052,7 +5055,7 @@ namespace HomeScreenCompanion
                         {
                             var beforeIds = new HashSet<string>(
                                 allCurrentSections.Where(s => !string.IsNullOrEmpty(s.Id)).Select(s => s.Id));
-                            GentleMode.Wrote(cancellationToken);
+                            GentleMode.Unpaced();
                             _userManager.AddHomeSection(userInternalId, BuildContentSection(_jsonSerializer, settingsDict, userLibraryId), cancellationToken);
                             var afterSections = _userManager.GetHomeSections(userInternalId, cancellationToken);
                             var newId = (afterSections?.Sections ?? Array.Empty<ContentSection>())
@@ -5115,7 +5118,10 @@ namespace HomeScreenCompanion
                 {
                     HsWarn(statsList, _hsTagName, _hsDisplayName, "home section enabled but no users are selected");
                 }
+                // Gentle mode: this source's rows for every user are written; the pause comes now.
+                GentleMode.UnitDone(cancellationToken);
             }
+            GentleMode.UnitDone(cancellationToken);
 
             // A full run knows every tag row: tags the anchor holds for rows that are gone come off it.
             if (filterTagName == null)
@@ -5253,7 +5259,7 @@ namespace HomeScreenCompanion
                         typeof(ContentSection).GetProperty("Id")?.SetValue(written, owned.Id);
                         if (SectionKey(_jsonSerializer, written) != before)
                         {
-                            GentleMode.Wrote(cancellationToken);
+                            GentleMode.Unpaced();
                             _userManager.UpdateHomeSection(uid, written, cancellationToken);
                         }
                         sectionId = owned.Id;
@@ -5262,7 +5268,7 @@ namespace HomeScreenCompanion
                     else
                     {
                         written = RotatingRow.Build(tc, pick, config, _libraryManager, _jsonSerializer, null);
-                        GentleMode.Wrote(cancellationToken);
+                        GentleMode.Unpaced();
                         _userManager.AddHomeSection(uid, written, cancellationToken);
                         sectionId = (_userManager.GetHomeSections(uid, cancellationToken)?.Sections ?? Array.Empty<ContentSection>())
                             .Where(s => !string.IsNullOrEmpty(s.Id) && !sections.Any(b => b.Id == s.Id)).Select(s => s.Id).FirstOrDefault() ?? "";
@@ -5647,7 +5653,7 @@ namespace HomeScreenCompanion
                     n++;
                     if (dryRun) { _log.Debug($"  [Dry run] {UserName(userId)}: '{row.CustomName}' would be titled '{title}'{(copy ? " (Copy & Sync copy)" : "")}"); continue; }
                     row.CustomName = title;
-                    GentleMode.Wrote(cancellationToken);
+                    GentleMode.Unpaced();
                     _userManager.UpdateHomeSection(uid, row, cancellationToken);
                     _log.Debug($"  {UserName(userId)}: row titled '{title}'{(copy ? " (Copy & Sync copy)" : "")}");
                 }
@@ -5675,6 +5681,7 @@ namespace HomeScreenCompanion
                 var tagItem = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Tag" }, Name = (tc.Tag ?? "").Trim(), Recursive = true }).FirstOrDefault();
                 if (tagItem == null) continue;
                 n += SetInactiveTitles(config, tc, tagItem.InternalId.ToString(), false, false, dryRun, cancellationToken);
+                GentleMode.UnitDone(cancellationToken);
             }
             if (n > 0) _log.Info(dryRun ? $"  Dry run — [INACTIVE] would be taken off {RunLog.Plural(n, "home section")} (back in schedule)"
                                         : $"  [INACTIVE] taken off {RunLog.Plural(n, "home section")} (back in schedule)");
