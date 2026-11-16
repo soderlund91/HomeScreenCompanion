@@ -2243,8 +2243,11 @@
                             <button type="button" class="run-dial-item" id="btnDialOriginalPosters" data-tip="Gives titles made in one of your chosen languages their poster in that language (Original-language posters, Home Screen Tweaks). When that is off, it puts the original posters back. Also runs by itself once a day and after new titles are added.">
                                 <i class="md-icon">translate</i><span>Original-language posters</span>
                             </button>
+                            <button type="button" class="run-dial-item" id="btnDialRandomPick" data-tip="Makes a new random pick for sources with Random pick whose hour, day or week has changed since their last pick: their tags, collection and playlist. Also checks by itself every 15 minutes.">
+                                <i class="md-icon">shuffle</i><span>Random pick</span>
+                            </button>
                         </div>
-                        <button type="button" class="run-dial-item" id="btnDialOther" aria-expanded="false" aria-controls="runDialOther" data-tip="More runs: Merge top-list versions, Sync top-list rows, Bump Continue Watching and Original-language posters. These also run by themselves when needed.">
+                        <button type="button" class="run-dial-item" id="btnDialOther" aria-expanded="false" aria-controls="runDialOther" data-tip="More runs: Merge top-list versions, Sync top-list rows, Bump Continue Watching, Original-language posters and Random pick. These also run by themselves when needed.">
                             <i class="md-icon">more_horiz</i><span>Other</span><i class="md-icon run-dial-other-chevron">expand_less</i>
                         </button>
                         <button type="button" class="run-dial-item" id="btnDialHomeScreen" data-tip="Copies the home screen layout from the source user to the selected users (Home Screen tab).">
@@ -2532,6 +2535,25 @@
                             <li>The order is kept: a top-list made from the tag and a playlist follow it. An Emby collection still shows Emby's own sort order (see <em>Keep the list order</em> under Tags &amp; Collections).</li>
                             <li>Titles later deleted from the library are skipped. Copy/paste matches the titles on another server by IMDb/TMDb/TVDb id.</li>
                             <li><em>Preview</em> lists the titles that would get the tag, in your order.</li>
+                            <li><em>Max items</em> caps how many of the titles are used (0 = all of them).</li>
+                        </ul></div>
+                </div>
+                <div id="help-more-randompick" class="help-feature-row">
+                    <i class="md-icon help-feat-icon">shuffle</i>
+                    <div><strong>Pinned titles and Random pick</strong> — on the Source tab of every source type that tags titles (not <em>Rotating from existing</em> or <em>Your Next Watch</em>).
+                        <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
+                            <li><em>Pinned titles</em> (Advanced): search and add any movie or show in your library. They always get the source's tag, collection and playlist, even when the source itself does not have them. The source's filters and blacklist do not take them out.</li>
+                            <li>Pinned titles come first where the source's order is used: the playlist, a top-list made from the source and a collection with <em>Keep the list order</em>. A home row and other collections keep the sort order set in Emby; the pinned titles are always in them, but not moved to the front. Their sort titles are never changed.</li>
+                            <li><em>Max items</em> is the total, pinned titles included. With 1 pinned title and Max 8, the source adds 7 of its own titles.</li>
+                            <li><em>Random pick</em> off: the source's first titles fill the rest of Max. On: the rest is picked at random from everything the source finds. With Max 0 nothing is picked: all titles are used.</li>
+                            <li><em>New pick every</em> <strong>Hour</strong>, <strong>Day</strong> or <strong>Week</strong> (from Monday), in server time. Every sync in the same period picks the same titles while the source's titles stay the same, so tags do not change back and forth. A list that changes between syncs (an AI source, a live list) can change the pick.</li>
+                            <li>The <em>Random pick</em> task (Scheduled Tasks and <em>Run → Other</em>; it checks every 15 minutes) makes the new pick when a period ends: that source's tags, collection and playlist. Home rows that show the tag or the collection follow by themselves. It leaves out AI sources (that would ask the AI again) and sources whose tag another kind of source also writes; the Tag &amp; Collection Sync renews those. Dry Run changes nothing.</li>
+                            <li>An AI source asks the AI for as many titles as usual and picks among the answer.</li>
+                            <li>Random pick is not used on a source that makes a top-list. With <em>Keep the list order</em> the pick changes at most once a day (each pick makes the ranked copies again).</li>
+                            <li>When one of the source's lists returns nothing and <em>Preserve tags and collections on empty result</em> is on, the current pick stays as it is until all the lists return titles again.</li>
+                            <li>A source with several URLs, collections or playlists has a Max per row: the total is their sum. Pinned titles take their places from the first rows with a Max.</li>
+                            <li>Max counts titles: a film with two versions takes one place, and both versions get the tag. Top-list copies are never picked.</li>
+                            <li>For a home row in Emby's <em>Spotlight</em> view: the Emby web app asks for up to <strong>8</strong> items for a spotlight row. With Max 8 the row always has the pinned titles among its 8; the others change with each pick.</li>
                         </ul></div>
                 </div>
                 <div id="help-more-mediainfo" class="help-feature-row">
@@ -2683,7 +2705,7 @@
                 <div class="src-cards" style="grid-template-columns: repeat(3, 1fr);">
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">input</i> Source tab</div>
-                        Choose the source type and add URLs, local sources, or hand-picked titles. Set the <strong>Max items</strong> limit to cap how many items are fetched (0 = no limit). When the last run found fewer titles than <strong>Max items</strong>, the card header shows an amber chip such as <strong>9 of 10</strong>.
+                        Choose the source type and add URLs, local sources, or hand-picked titles. Set the <strong>Max items</strong> limit to cap how many items are fetched (0 = no limit), add <em>Pinned titles</em> that are always included, and tick <em>Random pick</em> to fill the rest with a new random pick every hour, day or week (<a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-more-randompick').scrollIntoView({behavior:'smooth'});return false;">more below</a>). When the last run found fewer titles than <strong>Max items</strong>, the card header shows an amber chip such as <strong>9 of 10</strong>.
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">label</i> Tag tab</div>
@@ -3215,6 +3237,7 @@
                             <li><strong>Tag &amp; Collection Sync</strong> — the full sync; every day at 04:00 by default.</li>
                             <li><strong>Home Screen Sync</strong> and <strong>Top-list section sync</strong> — no schedule of their own; run from <strong>Run</strong> or by hand.</li>
                             <li><strong>Continue Watching Bump</strong> — every 6 hours, and when new episodes are added.</li>
+                            <li><strong>Random pick</strong> — checks every 15 minutes and makes a new pick for sources with <em>Random pick</em> when their hour, day or week has changed. Also under <strong>Run → Other</strong>.</li>
                             <li><em>Schedule Switch</em> is not listed: every 15 minutes it starts the sync when a source's schedule starts or ends.</li>
                         </ul></div>
                 </div>
