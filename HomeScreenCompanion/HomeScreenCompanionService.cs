@@ -4949,7 +4949,7 @@ public class HomeScreenCompanionService : IService
                     if (settings.TryGetValue(key, out var csv))
                         foreach (var id in SplitIds(csv)) AddLibrary(id);
 
-                foreach (var id in t.ManualItemIds ?? new List<string>())
+                foreach (var id in (t.ManualItemIds ?? new List<string>()).Concat(t.PinnedItemIds ?? new List<string>()))
                 {
                     if (string.IsNullOrWhiteSpace(id) || file.Items.ContainsKey(id)) continue;
                     BaseItem? item = null;
@@ -5033,7 +5033,7 @@ public class HomeScreenCompanionService : IService
 
                 // Manual List items: by IMDb / TMDb / TVDb id, then name + year.
                 Func<SourceItemRef, BaseItem?>? findItem = null;
-                if (tags.Any(t => t.ManualItemIds.Count > 0)) findItem = BuildSourceItemFinder();
+                if (tags.Any(t => t.ManualItemIds.Count > 0 || (t.PinnedItemIds?.Count ?? 0) > 0)) findItem = BuildSourceItemFinder();
                 var missingItems = new List<string>();
 
                 // Images: uploaded once per distinct file, like the card's own upload button.
@@ -5128,10 +5128,11 @@ public class HomeScreenCompanionService : IService
                     }
                     if (settingsChanged) t.HomeSectionSettings = _jsonSerializer.SerializeToString(settings);
 
-                    if (t.ManualItemIds.Count > 0)
+                    // Hand-picked and pinned titles: found here by their ids (IMDb / TMDb / TVDb, name).
+                    List<string> MapItems(List<string> ids)
                     {
                         var mappedItems = new List<string>();
-                        foreach (var id in t.ManualItemIds.Where(x => !string.IsNullOrWhiteSpace(x)))
+                        foreach (var id in ids.Where(x => !string.IsNullOrWhiteSpace(x)))
                         {
                             file.Items.TryGetValue(id, out var itemRef);
                             var item = itemRef != null && findItem != null ? findItem(itemRef) : null;
@@ -5144,8 +5145,10 @@ public class HomeScreenCompanionService : IService
                             var localId = item.InternalId.ToString();
                             if (!mappedItems.Contains(localId)) mappedItems.Add(localId);
                         }
-                        t.ManualItemIds = mappedItems;
+                        return mappedItems;
                     }
+                    if (t.ManualItemIds.Count > 0) t.ManualItemIds = MapItems(t.ManualItemIds);
+                    if ((t.PinnedItemIds?.Count ?? 0) > 0) t.PinnedItemIds = MapItems(t.PinnedItemIds!);
 
                     t.CollectionPosterPath     = MapImage(t.CollectionPosterPath, "Collection poster");
                     t.CollectionBackgroundPath = MapImage(t.CollectionBackgroundPath, "Collection background");

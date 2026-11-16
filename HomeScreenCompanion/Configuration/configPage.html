@@ -2532,6 +2532,21 @@
                             <li>The order is kept: a top-list made from the tag and a playlist follow it. An Emby collection still shows Emby's own sort order (see <em>Keep the list order</em> under Tags &amp; Collections).</li>
                             <li>Titles later deleted from the library are skipped. Copy/paste matches the titles on another server by IMDb/TMDb/TVDb id.</li>
                             <li><em>Preview</em> lists the titles that would get the tag, in your order.</li>
+                            <li><em>Max items</em> caps how many of the titles are used (0 = all of them).</li>
+                        </ul></div>
+                </div>
+                <div id="help-more-randompick" class="help-feature-row">
+                    <i class="md-icon help-feat-icon">shuffle</i>
+                    <div><strong>Pinned titles and Random pick</strong> — on the Source tab of every source type that tags titles (not <em>Rotating from existing</em> or <em>Your Next Watch</em>).
+                        <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
+                            <li><em>Pinned titles</em>: search and add any movie or show in your library. They always get the source's tag, collection and playlist, and come first, even when the source itself does not have them. The source's filters and blacklist do not take them out.</li>
+                            <li><em>Max items</em> is the total, pinned titles included. With 1 pinned title and Max 8, the source adds 7 of its own titles.</li>
+                            <li><em>Random pick</em> off: the source's first titles fill the rest of Max. On: the rest is picked at random from everything the source finds. With Max 0 nothing is picked: all titles are used, with the pinned ones on top.</li>
+                            <li><em>New pick every</em> <strong>15 minutes</strong>, <strong>Hour</strong>, <strong>Day</strong> or <strong>Week</strong> (from Monday), in server time. Every sync in the same period picks the same titles while the source's titles stay the same, so tags do not change back and forth. A list that changes between syncs (an AI source, a live list) can change the pick.</li>
+                            <li>The <em>Random pick</em> task (Scheduled Tasks, every 15 minutes) makes the new pick when a period ends: it changes only that source's tags and collection, the playlist follows at the next Tag &amp; Collection Sync. It leaves out AI sources (that would ask the AI again) and sources whose tag another kind of source also writes; the Tag &amp; Collection Sync renews those. Dry Run changes nothing.</li>
+                            <li>A source with several URLs, collections or playlists has a Max per row: the total is their sum. Pinned titles take their places from the first rows with a Max.</li>
+                            <li>Max counts titles: a film with two versions takes one place, and both versions get the tag. Top-list copies are never picked.</li>
+                            <li>For a home row in Emby's <em>Spotlight</em> view: the Emby web app asks for up to <strong>8</strong> items for a spotlight row. With Max 8 the row always shows the pinned titles; the others change with each pick.</li>
                         </ul></div>
                 </div>
                 <div id="help-more-mediainfo" class="help-feature-row">
@@ -2682,7 +2697,7 @@
                 <div class="src-cards" style="grid-template-columns: repeat(3, 1fr);">
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">input</i> Source tab</div>
-                        Choose the source type and add URLs, local sources, or hand-picked titles. Set the <strong>Max items</strong> limit to cap how many items are fetched (0 = no limit). When the last run found fewer titles than <strong>Max items</strong>, the card header shows an amber chip such as <strong>9 of 10</strong>.
+                        Choose the source type and add URLs, local sources, or hand-picked titles. Set the <strong>Max items</strong> limit to cap how many items are fetched (0 = no limit), add <em>Pinned titles</em> that always come first, and tick <em>Random pick</em> to fill the rest with a new random pick every 15 minutes, hour, day or week (<a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-more-randompick').scrollIntoView({behavior:'smooth'});return false;">more below</a>). When the last run found fewer titles than <strong>Max items</strong>, the card header shows an amber chip such as <strong>9 of 10</strong>.
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">label</i> Tag tab</div>

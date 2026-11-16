@@ -214,6 +214,15 @@ namespace HomeScreenCompanion
         public List<string> MediaInfoConditions { get; set; } = new List<string>();
         public List<MediaInfoFilter> MediaInfoFilters { get; set; } = new List<MediaInfoFilter>();
 
+        // "Pinned titles": movies and shows (Emby item ids) that always get this source's tag,
+        // collection and playlist, first, and take places in its Max (see RandomPick).
+        public List<string> PinnedItemIds { get; set; } = new List<string>();
+        // "Random pick": the source's Max (less its pinned titles) is filled with titles picked at
+        // random from everything it finds, the same pick for each period (RandomPickEvery
+        // "15Minutes", "Hour", "Day" or "Week").
+        public bool RandomPick { get; set; } = false;
+        public string RandomPickEvery { get; set; } = "Day";
+
         // AI source settings
         public string AiProvider { get; set; } = "OpenAI";
         public string AiPrompt { get; set; } = "";
