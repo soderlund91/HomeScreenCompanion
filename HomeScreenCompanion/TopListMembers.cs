@@ -76,8 +76,14 @@ namespace HomeScreenCompanion
 
         /// <summary>The saved list's items, in order; titles removed from Emby since are left out.</summary>
         internal static List<BaseItem>? Load(string tag, ILibraryManager libraryManager, IJsonSerializer json)
+            => ToItems(LoadIds(tag, json), libraryManager);
+
+        /// <summary>One group's saved titles (null = no part saved yet); titles removed from Emby since are left out.</summary>
+        internal static List<BaseItem>? LoadPart(string tag, string groupKey, ILibraryManager libraryManager, IJsonSerializer json)
+            => ToItems(ReadIds(PartPath(tag, groupKey), json), libraryManager);
+
+        private static List<BaseItem>? ToItems(List<string>? ids, ILibraryManager libraryManager)
         {
-            var ids = LoadIds(tag, json);
             if (ids == null) return null;
             var items = new List<BaseItem>();
             foreach (var id in ids)

@@ -2862,8 +2862,13 @@ namespace HomeScreenCompanion
                 return (true, "");
             }
 
-            // Keep what the group has now (see _keepExisting): its tagged titles and collection members
-            // join the list, after it (top-list and ranked copies are not the group's own titles).
+            // Keep what the group has now (see _keepExisting): its tagged titles, its part of the top-list
+            // and its collection members join the list, after it (top-list and ranked copies are not the
+            // group's own titles). A tag another group in schedule also writes says nothing about which
+            // titles are this group's: only the titles with a tag no one else writes count, and of a tag
+            // shared only with plain Manual Lists the titles they do not have (_keptByTag). When none of
+            // the group's tags tells (_ownUnknown), its playlist is left as it is, like the full sync does.
+            bool _ownUnknown = false;
             if (_keepExisting)
             {
                 var _keptTlFolder = Path.Combine(Plugin.Instance!.DataFolderPath, "toplists") + Path.DirectorySeparatorChar;
@@ -2871,14 +2876,26 @@ namespace HomeScreenCompanion
                     && !i.Path.StartsWith(_keptTlFolder, StringComparison.OrdinalIgnoreCase) && !RankedCollections.IsRankedPath(i.Path);
                 var _kept = new List<BaseItem>();
                 if (tagConfig.EnableTag && !tagConfig.OnlyCollection)
-                    _kept.AddRange(_libraryManager.GetItemList(new InternalItemsQuery { Tags = new[] { tagName }, IncludeItemTypes = new[] { "Movie", "Series" }, Recursive = true, IsVirtualItem = false }));
-                else if (SourceTopLists.IsOn(tagConfig))
-                    _kept.AddRange(TopListMembers.Load(tagName, _libraryManager, _jsonSerializer) ?? new List<BaseItem>());
+                {
+                    foreach (var t in outTags.Where(t => !_sharedTags.Contains(t)))
+                    {
+                        var othersHave = _keptByTag.TryGetValue(t, out var k) ? k : null;
+                        _kept.AddRange(_libraryManager.GetItemList(new InternalItemsQuery { Tags = new[] { t }, IncludeItemTypes = new[] { "Movie", "Series" }, Recursive = true, IsVirtualItem = false })
+                            .Where(i => othersHave == null || !othersHave.Contains(i.Id)));
+                    }
+                    _ownUnknown = outTags.All(t => _sharedTags.Contains(t));
+                }
+                if (SourceTopLists.IsOn(tagConfig))
+                    _kept.AddRange(TopListMembers.LoadPart(tagName, GroupKey(tagConfig), _libraryManager, _jsonSerializer)
+                        ?? (TopListMembers.GroupsOf(config, tagName).Count > 1 ? null : TopListMembers.Load(tagName, _libraryManager, _jsonSerializer))
+                        ?? new List<BaseItem>());
                 if (tagConfig.EnableCollection
                     && _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = cName, Recursive = true }).FirstOrDefault() is BaseItem _keptColl)
                     _kept.AddRange(_libraryManager.GetItemList(new InternalItemsQuery { CollectionIds = new[] { _keptColl.InternalId }, Recursive = true, IsVirtualItem = false }));
+                // By id: the queries return other objects for the titles already in the list.
+                var _inList = new HashSet<Guid>(matchedLocalItems.Select(i => i.Id));
                 foreach (var i in _kept.Where(Own))
-                    if (!matchedLocalItems.Contains(i)) matchedLocalItems.Add(i);
+                    if (_inList.Add(i.Id)) matchedLocalItems.Add(i);
             }
 
             // For non-MediaInfo sources, apply output level selection (expand down from Series/Movie)
@@ -2940,7 +2957,8 @@ namespace HomeScreenCompanion
                     .Select(RankKey)
                     .Where(id => !string.IsNullOrEmpty(id))
                     .ToList());
-                SaveTopListPart(config, tagConfig, tagName, matchedLocalItems);
+                // Some URLs empty with "Preserve…" on: the group's saved titles stay too, as in the full sync.
+                SaveTopListPart(config, tagConfig, tagName, matchedLocalItems, keepOld: _keepExisting);
             }
 
             // Apply tags (scoped to this entry's tag only)
@@ -3337,6 +3355,13 @@ namespace HomeScreenCompanion
                 if (_nextWatchPerUser != null && _nextWatchPerUser.Count > 0)
                     await SyncPlaylistsForEntryAsync(tagConfig, new List<BaseItem>(), dryRun, gs, _nextWatchPerUser, cancellationToken);
                 _nextWatchPerUser = null;
+            }
+            else if (_ownUnknown && tagConfig.EnablePlaylist)
+            {
+                // Which tagged titles are the group's is not known (see _ownUnknown): like the full sync,
+                // the playlist is left as it is rather than lose the empty URL's titles.
+                gs.Warnings.Add("Playlist left unchanged because the source failed or returned nothing");
+                _log.Skip($"Playlist for '{gs.DisplayName}' left unchanged — source failed or returned nothing");
             }
             else
                 await SyncPlaylistsForEntryAsync(tagConfig, collectionOutputItems, dryRun, gs, null, cancellationToken);
@@ -4473,10 +4498,10 @@ namespace HomeScreenCompanion
 
         // Run Group: this group's part of each source top-list built from its tag (the other groups'
         // parts stay as the last run left them). empty: the group is switched off or out of schedule.
-        private void SaveTopListPart(PluginConfiguration config, TagConfig tagConfig, string tagName, IEnumerable<BaseItem> items)
+        private void SaveTopListPart(PluginConfiguration config, TagConfig tagConfig, string tagName, IEnumerable<BaseItem> items, bool keepOld = false)
         {
             if (!TopListMembers.Wanted(config, tagName)) return;
-            if (!TopListMembers.SavePart(tagName, GroupKey(tagConfig), items, _jsonSerializer)
+            if (!TopListMembers.SavePart(tagName, GroupKey(tagConfig), items, _jsonSerializer, keepOld)
                 || !TopListMembers.Combine(tagName, TopListMembers.GroupsOf(config, tagName), _jsonSerializer))
                 _log.Warn($"Top-list '{tagName}': its titles could not be saved — it keeps its last titles (see the plugin log)");
         }
@@ -8237,13 +8262,17 @@ namespace HomeScreenCompanion
 
         // A film's versions (e.g. 2160p and 1080p files) are separate items that Emby shows as one
         // movie. A collection gets one of them, the first (lowest id), like Emby's own grouping;
-        // this returns the ids of the other versions. Anything that is not a movie is kept.
+        // this returns the ids of the other versions. Anything that is not a movie is kept. The same
+        // item listed twice (e.g. two objects for one film) is one item, never its own extra version:
+        // that would leave the film out of the collection altogether.
         internal static HashSet<long> ExtraVersionIds(IEnumerable<BaseItem> items)
         {
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var seenIds = new HashSet<long>();
             var extra = new HashSet<long>();
             foreach (var item in items.Where(i => i is MediaBrowser.Controller.Entities.Movies.Movie).OrderBy(i => i.InternalId))
             {
+                if (!seenIds.Add(item.InternalId)) continue;
                 var key = VersionKey(item);
                 if (key != null && !seen.Add(key)) extra.Add(item.InternalId);
             }
