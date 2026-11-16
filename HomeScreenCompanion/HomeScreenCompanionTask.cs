@@ -1898,7 +1898,7 @@ namespace HomeScreenCompanion
                 _log.Error($"Sync aborted: {ex.Message}");
                 WriteExceptionDebug(ex);
             }
-            finally { IsRunning = false; PersistLog(); RealPosterBadges.QueueRebuild(); }
+            finally { ReleaseRunState(); IsRunning = false; PersistLog(); RealPosterBadges.QueueRebuild(); }
         }
 
         public async Task<(bool Success, string Message)> RunSingleEntryAsync(string entryName, CancellationToken cancellationToken)
@@ -1920,6 +1920,7 @@ namespace HomeScreenCompanion
             }
             finally
             {
+                ReleaseRunState();
                 IsRunning = false;
                 PersistLog();
                 RealPosterBadges.QueueRebuild();   // ranked copies this run made get their film's badge
@@ -2079,6 +2080,7 @@ namespace HomeScreenCompanion
             catch (Exception ex) { preview.Message = "Preview failed: " + ex.Message; }
             finally
             {
+                ReleaseRunState();
                 _preview = null;
                 _log = savedLog;
                 _writtenTags = savedWrittenTags;
@@ -3910,6 +3912,22 @@ namespace HomeScreenCompanion
             _viewersByDays.Clear();
             _weekAgoByTag.Clear();
             _nextWatch = null;
+        }
+
+        // At the end of every run (full sync, Run Group, preview): lets go of what the run read
+        // (the whole library list, everyone's watch data, the Next Watch index), which this
+        // long-lived task would otherwise hold until the next run. Every run starts fresh with
+        // StartPopularity / StartPlaybackHistory, so nothing is reused across runs.
+        private void ReleaseRunState()
+        {
+            lock (_playedSeries) _playedSeries.Clear();
+            _popularity = null;
+            _popularityScope = new List<BaseItem>();
+            _viewersByDays.Clear();
+            _weekAgoByTag.Clear();
+            _nextWatch = null;
+            _nextWatchPerUser = null;
+            _playHistory = null;
         }
 
         // ── "Your Next Watch" (source type NextWatch) ─────────────────────────────────────────
