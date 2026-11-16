@@ -1680,17 +1680,17 @@ namespace HomeScreenCompanion
                         activeCollections.Add(oldName);
                         continue;
                     }
-                    if (importedCollections.Contains(oldName))
-                    {
-                        // Taken over with Import collection: it existed before HSC, so it stays in Emby.
-                        _log.Skip($"Collection \"{oldName}\" kept (imported collection; its group is deleted, disabled or not in schedule, so HSC no longer changes it)");
-                        continue;
-                    }
-
                     try
                     {
                         var coll = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = oldName, Recursive = true }).FirstOrDefault();
                         if (TagAnchor.IsAnchor(coll, _jsonSerializer)) coll = null;
+                        // Taken over with Import collection: it existed before HSC, so it stays in Emby.
+                        // A collection HSC made itself is HSC's, whatever the imported list says.
+                        if (importedCollections.Contains(oldName) && !(coll != null && CollectionOwnership.IsCreated(coll, _libraryManager)))
+                        {
+                            _log.Skip($"Collection \"{oldName}\" kept (imported collection; its group is deleted, disabled or not in schedule, so HSC no longer changes it)");
+                            continue;
+                        }
                         var _release = NotOwnedCollection(coll, oldName, importedCollections);
                         if (_release != null)
                         {
@@ -3487,7 +3487,7 @@ namespace HomeScreenCompanion
                 _log.Info("» Collections");
                 var coll = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = cName, Recursive = true }).FirstOrDefault();
                 if (coll == null || TagAnchor.IsAnchor(coll, _jsonSerializer)) _log.Skip($"Collection \"{cName}\" does not exist");
-                else if (RecordImportedCollections(config).Contains(cName))
+                else if (RecordImportedCollections(config).Contains(cName) && !CollectionOwnership.IsCreated(coll, _libraryManager))
                     _log.Skip($"Collection \"{cName}\" kept (imported collection; HSC no longer changes it while the group is {why})");
                 else if (others.Any(t => t.EnableCollection && string.Equals(
                     string.IsNullOrWhiteSpace(t.CollectionName) ? t.Tag?.Trim() : t.CollectionName.Trim(), cName, StringComparison.OrdinalIgnoreCase)))
@@ -3989,7 +3989,7 @@ namespace HomeScreenCompanion
         {
             var first = ids.Take(GentleMode.BatchSize).ToArray();
             var created = await GentleMode.TimedAsync("collection members", () => _collectionManager.CreateCollection(new CollectionCreationOptions { Name = name, IsLocked = false, ItemIdList = first }));
-            if (created != null) CollectionOwnership.RecordCreated(created.InternalId, _libraryManager);
+            if (created != null) { CollectionOwnership.RecordCreated(created.InternalId, _libraryManager); ForgetImportedCollection(name); }
             await GentleMode.WroteAsync(cancellationToken, first.Length);
             if (created != null && first.Length < ids.Count)
                 await AddToCollectionGently(created.InternalId, ids.Skip(first.Length).ToList(), cancellationToken);
@@ -8101,8 +8101,9 @@ namespace HomeScreenCompanion
 
         // Imported collections (TagConfig.CollectionImported) are never deleted by HSC. Their names
         // are added to this file on every config save and at the start of every run (full sync and
-        // Run Group), and never removed, so the protection stays after the source is changed,
-        // switched off or deleted. Returns everything protected so far.
+        // Run Group), so the protection stays after the source is changed, switched off or deleted.
+        // A name only leaves it when HSC makes a new collection with that name (ForgetImportedCollection).
+        // Returns everything protected so far.
         private const string ImportedCollectionsFile = "homescreencompanion_collections_imported.txt";
         private static readonly object _importedFileLock = new object();
         internal static HashSet<string> RecordImportedCollections(PluginConfiguration? cfg)
@@ -8124,6 +8125,37 @@ namespace HomeScreenCompanion
                     try { Directory.CreateDirectory(dir); File.WriteAllLines(path, set.OrderBy(n => n, StringComparer.OrdinalIgnoreCase)); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             }
             return set;
+        }
+
+        // HSC just made collection <name>, so no collection with that name was in Emby: the imported
+        // one is gone (deleted in Emby, or the source's collection name was changed). The new one is
+        // HSC's own: its name leaves the imported file and its sources are no longer imported (saved
+        // with the config after the run).
+        private static void ForgetImportedCollection(string name)
+        {
+            var cfg = Plugin.Instance?.Configuration;
+            var dir = Plugin.Instance?.DataFolderPath;
+            lock (_importedFileLock)
+            {
+                foreach (var t in (cfg?.Tags ?? new List<TagConfig>()).Where(t => t.CollectionImported))
+                {
+                    var cn = string.IsNullOrWhiteSpace(t.CollectionName) ? (t.Tag ?? "").Trim() : t.CollectionName.Trim();
+                    if (!string.Equals(cn, name, StringComparison.OrdinalIgnoreCase)) continue;
+                    t.CollectionImported = false;
+                    t.CollectionPosterReplaced = false; t.CollectionBackgroundReplaced = false;
+                    t.CollectionThumbReplaced = false; t.CollectionBannerReplaced = false;
+                }
+                if (string.IsNullOrEmpty(dir)) return;
+                var path = Path.Combine(dir, ImportedCollectionsFile);
+                try
+                {
+                    if (!File.Exists(path)) return;
+                    var lines = File.ReadAllLines(path).Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+                    if (lines.RemoveAll(l => string.Equals(l, name.Trim(), StringComparison.OrdinalIgnoreCase)) > 0)
+                        File.WriteAllLines(path, lines);
+                }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+            }
         }
 
         private static List<string> LoadFileHistory(string filename)

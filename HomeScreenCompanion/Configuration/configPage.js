@@ -2089,8 +2089,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
     // Asks before a group is deleted and lists what it made that goes with it: its home rows and
     // playlists (as the sync tracked them), its tag and its collection. A tag or collection name
-    // another group also uses, or an imported collection, is listed as kept; of a collection HSC did
-    // not make (it was already in Emby; asked from the server) only HSC's titles go. The server does the
+    // another group also uses, or an imported collection (unless HSC made it: asked from the server), is
+    // listed as kept; of a collection HSC did not make (it was already in Emby) only HSC's titles go. The server does the
     // clean-up on the next full sync after Save.
     function confirmDeleteGroup(row, onDelete) {
         function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -2113,7 +2113,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             return lc(n) === lc(collName);
         });
 
-        var ownerReq = cfg.EnableCollection && collName && !cfg.CollectionImported && !collShared
+        var ownerReq = cfg.EnableCollection && collName && !collShared
             ? window.ApiClient.getJSON(window.ApiClient.getUrl('HomeScreenCompanion/Collections/Owner', { Name: collName })).catch(function () { return {}; })
             : Promise.resolve({});
         Promise.all([getHseUsers().catch(function () { return []; }), ownerReq]).then(function (res) {
@@ -2144,7 +2144,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 removed.push(['format_list_numbered', 'Top-list "' + esc(tlTitle || title) + '"', 'its home rows, its library and the copies in it']);
             }
             if (cfg.EnableCollection && collName) {
-                if (cfg.CollectionImported) kept.push(['video_library', 'Collection "' + esc(collName) + '"', 'it was imported, so it stays in Emby']);
+                if (cfg.CollectionImported && !owner.MadeByHsc) kept.push(['video_library', 'Collection "' + esc(collName) + '"', 'it was imported, so it stays in Emby']);
                 else if (collShared) kept.push(['video_library', 'Collection "' + esc(collName) + '"', 'another group uses it too']);
                 else if (owner.NotMadeByHsc) removed.push(['video_library', 'Titles HSC added to collection "' + esc(collName) + '"', 'the collection itself stays in Emby (HSC did not make it)']);
                 else removed.push(['video_library', 'Collection "' + esc(collName) + '"', 'deleted from Emby (the titles in it are not touched)']);
