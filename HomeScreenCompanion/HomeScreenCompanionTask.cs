@@ -852,23 +852,27 @@ namespace HomeScreenCompanion
                                             } catch { }
                                         }
 
-                                        // Top-list and ranked copies are never a source's titles: the collection
-                                        // mirror puts a film's copies in its collections (TopListMirrorCollections).
-                                        if (!IsTaggableTopLevelItem(itemToTag) || !TopListCollectionMirror.IsOriginal(itemToTag))
+                                        if (!IsTaggableTopLevelItem(itemToTag))
                                             continue;
 
-                                        var imdb = itemToTag.GetProviderId("Imdb");
-                                        if (!string.IsNullOrEmpty(imdb) && blacklist.Contains(imdb))
+                                        // Top-list and ranked copies are never a source's titles: a copy counts as
+                                        // its original (the collection mirror puts copies in the film's collections,
+                                        // and a playlist can hold a copy picked from a top-list row).
+                                        foreach (var title in OriginalsOf(itemToTag, imdbLookup))
                                         {
-                                            _log.Debug($"    Blacklisted: {itemToTag.Name} ({imdb})");
-                                            continue;
-                                        }
+                                            var imdb = title.GetProviderId("Imdb");
+                                            if (!string.IsNullOrEmpty(imdb) && blacklist.Contains(imdb))
+                                            {
+                                                _log.Debug($"    Blacklisted: {title.Name} ({imdb})");
+                                                continue;
+                                            }
 
-                                        if (passesFilters != null && !passesFilters(itemToTag)) continue;
+                                            if (passesFilters != null && !passesFilters(title)) continue;
 
-                                        if (!matchedLocalItems.Contains(itemToTag))
-                                        {
-                                            matchedLocalItems.Add(itemToTag);
+                                            if (!matchedLocalItems.Contains(title))
+                                            {
+                                                matchedLocalItems.Add(title);
+                                            }
                                         }
                                     }
                                     _log.Debug($"  {matchedLocalItems.Count} usable movies/series in source");
@@ -2580,11 +2584,15 @@ namespace HomeScreenCompanion
                             BaseItem itemToTag = child;
                             if (child.GetType().Name.Contains("PlaylistItem")) { try { var inner = ((dynamic)child).Item; if (inner != null) itemToTag = inner; } catch { } }
                             if (itemToTag.GetType().Name.Contains("Episode")) { try { var series = ((dynamic)itemToTag).Series; if (series != null) itemToTag = series; } catch { } }
-                            if (!IsTaggableTopLevelItem(itemToTag) || !TopListCollectionMirror.IsOriginal(itemToTag)) continue;
-                            var imdb = itemToTag.GetProviderId("Imdb");
-                            if (!string.IsNullOrEmpty(imdb) && blacklist.Contains(imdb)) continue;
-                            if (passesFilters != null && !passesFilters(itemToTag)) continue;
-                            if (!srcMatched.Contains(itemToTag)) srcMatched.Add(itemToTag);
+                            if (!IsTaggableTopLevelItem(itemToTag)) continue;
+                            // A top-list or ranked copy counts as its original (same as the full run).
+                            foreach (var title in OriginalsOf(itemToTag, imdbLookup))
+                            {
+                                var imdb = title.GetProviderId("Imdb");
+                                if (!string.IsNullOrEmpty(imdb) && blacklist.Contains(imdb)) continue;
+                                if (passesFilters != null && !passesFilters(title)) continue;
+                                if (!srcMatched.Contains(title)) srcMatched.Add(title);
+                            }
                         }
                         if (srcLimit < NoLimit)
                             srcMatched = FirstTitles(srcMatched, srcLimit);
@@ -4368,12 +4376,26 @@ namespace HomeScreenCompanion
             items.Select(PopularityCounter.FilmKeys(items)).Distinct(StringComparer.OrdinalIgnoreCase).Count();
 
         /// <summary>
+        /// The titles an item from a collection or playlist stands for: itself, or for a top-list or
+        /// ranked copy the originals with its IMDb id (all versions; imdbLookup holds no copies).
+        /// None when the copy has no IMDb id or its original is gone: a copy is never a title.
+        /// </summary>
+        private static IEnumerable<BaseItem> OriginalsOf(BaseItem item, Dictionary<string, List<BaseItem>> imdbLookup)
+        {
+            if (TopListCollectionMirror.IsOriginal(item)) return new[] { item };
+            var imdb = item.GetProviderId("Imdb");
+            return !string.IsNullOrEmpty(imdb) && imdbLookup.TryGetValue(imdb, out var originals)
+                ? originals.Where(o => o.GetType() == item.GetType() && TopListCollectionMirror.IsOriginal(o))
+                : Enumerable.Empty<BaseItem>();
+        }
+
+        /// <summary>
         /// The first max titles of items, in their order: a film's versions together count as one
         /// (all of them are kept), so a source's Max counts titles, as TitleCount does.
         /// </summary>
-        internal static List<BaseItem> FirstTitles(List<BaseItem> items, int max, Func<BaseItem, string>? filmOf = null)
+        internal static List<BaseItem> FirstTitles(List<BaseItem> items, int max)
         {
-            filmOf = filmOf ?? PopularityCounter.FilmKeys(items);
+            var filmOf = PopularityCounter.FilmKeys(items);
             var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var result = new List<BaseItem>();
             foreach (var i in items)
