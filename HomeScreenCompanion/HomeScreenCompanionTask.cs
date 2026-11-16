@@ -1638,7 +1638,10 @@ namespace HomeScreenCompanion
                             if (!dryRun && collectionDescriptions.ContainsKey(cName))
                                 ApplyCollectionMeta(existingColl, cName, collectionDescriptions, debug);
                             if (!dryRun)
+                            {
                                 ApplyCollectionSortName(existingColl, cName, collectionSortNames.GetValueOrDefault(cName));
+                                HealImportedMark(existingColl, cName, config);
+                            }
                             if (!dryRun && collectionSources.TryGetValue(cName, out var _artSrc2))
                             {
                                 var _artItems2 = _ranked ? RankedArtItems(collectionOrder[cName]) : OrderedItems(allItemsById, desiredIds);
@@ -3257,6 +3260,7 @@ namespace HomeScreenCompanion
                         if (toAdd.Count > 0) await AddToCollectionGently(existingColl.InternalId, toAdd, cancellationToken);
                         if (toRemove.Count > 0 && existingColl is BoxSet boxSet) await RemoveFromCollectionGently(boxSet, toRemove, cancellationToken);
                         ApplyCollectionSortName(existingColl, cName, tagConfig.CollectionSortName);
+                        HealImportedMark(existingColl, cName, config);
                         collResult = toAdd.Count + toRemove.Count;
                         _collArtCheck = collResult > 0;
                         _collItemsAdded = toAdd.Count;
@@ -8130,17 +8134,18 @@ namespace HomeScreenCompanion
         // HSC just made collection <name>, so no collection with that name was in Emby: the imported
         // one is gone (deleted in Emby, or the source's collection name was changed). The new one is
         // HSC's own: its name leaves the imported file and its sources are no longer imported (saved
-        // with the config after the run).
-        private static void ForgetImportedCollection(string name)
+        // with the config after the run). Also cleared on the run's own config object (a Save during
+        // the run replaced Plugin.Instance.Configuration), so a later RecordImportedCollections(config)
+        // in the same run does not put the name back.
+        private static void ForgetImportedCollection(string name, PluginConfiguration? runConfig = null)
         {
-            var cfg = Plugin.Instance?.Configuration;
+            var configs = new[] { Plugin.Instance?.Configuration, runConfig }.Where(c => c != null).Distinct();
             var dir = Plugin.Instance?.DataFolderPath;
             lock (_importedFileLock)
             {
-                foreach (var t in (cfg?.Tags ?? new List<TagConfig>()).Where(t => t.CollectionImported))
+                foreach (var t in configs.SelectMany(c => c!.Tags ?? new List<TagConfig>()).Where(t => t.CollectionImported))
                 {
-                    var cn = string.IsNullOrWhiteSpace(t.CollectionName) ? (t.Tag ?? "").Trim() : t.CollectionName.Trim();
-                    if (!string.Equals(cn, name, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!string.Equals(CollectionNameOf(t), name.Trim(), StringComparison.OrdinalIgnoreCase)) continue;
                     t.CollectionImported = false;
                     t.CollectionPosterReplaced = false; t.CollectionBackgroundReplaced = false;
                     t.CollectionThumbReplaced = false; t.CollectionBannerReplaced = false;
@@ -8156,6 +8161,27 @@ namespace HomeScreenCompanion
                 }
                 catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
             }
+        }
+
+        // Every sync of an existing collection (full sync and Run Group, never in a dry run): a
+        // collection HSC made itself is HSC's, so a source still marked imported for it, or its name
+        // still in the imported file, is healed. Covers installs that met the bug before the fix
+        // (HSC made the collection, the mark stayed) and a Save from a page loaded before the run
+        // that sent the old mark back. A collection HSC did not make is never touched here, and the
+        // created list never holds an imported collection (CollectionOwnership.FromHistory leaves
+        // imported names out).
+        private void HealImportedMark(BaseItem coll, string cName, PluginConfiguration? runConfig)
+        {
+            try
+            {
+                if (TagAnchor.IsAnchor(coll, _jsonSerializer) || !CollectionOwnership.IsCreated(coll, _libraryManager)) return;
+                bool marked = new[] { Plugin.Instance?.Configuration, runConfig }.Any(c => (c?.Tags ?? new List<TagConfig>())
+                    .Any(t => t.CollectionImported && string.Equals(CollectionNameOf(t), cName.Trim(), StringComparison.OrdinalIgnoreCase)));
+                if (!marked && !RecordImportedCollections(null).Contains(cName.Trim())) return;
+                ForgetImportedCollection(cName, runConfig);
+                _log.Info($"Collection \"{cName}\" was made by HSC, so it is no longer marked imported (it is deleted with its source like any HSC collection)");
+            }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
         }
 
         private static List<string> LoadFileHistory(string filename)

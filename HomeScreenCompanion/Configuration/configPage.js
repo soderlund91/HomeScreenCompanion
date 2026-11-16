@@ -57,6 +57,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             delete x.HomeSectionTracked; delete x.PlaylistMappings;
             delete x.CollectionPosterReplaced; delete x.CollectionBackgroundReplaced;
             delete x.CollectionThumbReplaced; delete x.CollectionBannerReplaced;
+            // A run clears it when HSC made the collection (Save keeps that, see the merge below).
+            delete x.CollectionImported;
             delete x.AiLastRunDate; delete x.NextWatchUsersMigrated;
             delete x.LastRunCount; delete x.LastRunLimit;
             delete x.HomeSectionUserIds; delete x.PlaylistUserIds;
@@ -77,7 +79,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var out = {};
         (config.Tags || []).forEach(function (t) {
             var key = t.Name ? t.Name + '\x1F' + t.Tag : t.Tag;
-            if (!out[key]) out[key] = { Home: (t.HomeSectionUserIds || []).slice(), Playlist: (t.PlaylistUserIds || []).slice() };
+            // Imported: the source's import mark as loaded (a run clears it when HSC made the collection).
+            if (!out[key]) out[key] = { Home: (t.HomeSectionUserIds || []).slice(), Playlist: (t.PlaylistUserIds || []).slice(), Imported: !!t.CollectionImported };
         });
         return out;
     }
@@ -14734,6 +14737,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         && (!t.HomeSectionTracked || t.HomeSectionTracked.length === 0)) {
                         t.HomeSectionTracked = existing.HomeSectionTracked;
                     }
+                    // Imported when the page loaded, cleared on the server since: a run found that HSC
+                    // made the collection, so it is HSC's own. The page never sets the mark back.
+                    if (existing && loadedUsers && loadedUsers.Imported && !existing.CollectionImported && t.CollectionImported) {
+                        t.CollectionImported = false;
+                        t.CollectionPosterReplaced = false; t.CollectionBackgroundReplaced = false;
+                        t.CollectionThumbReplaced = false; t.CollectionBannerReplaced = false;
+                    }
                     // Set by a run since the page loaded: keep it (only the sync sets these).
                     if (existing && existing.CollectionImported && t.CollectionImported) {
                         t.CollectionPosterReplaced = !!(t.CollectionPosterReplaced || existing.CollectionPosterReplaced);
@@ -14822,6 +14832,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         row.dataset.tlSaved = tc.EnableTopList ? '1' : '0';
                         row.dataset.tlSavedTag = (tc.Tag || '').trim().toLowerCase();
                         updateTopListTab(row);
+                        // The import mark a run cleared (kept cleared above): the card follows.
+                        if (!tc.CollectionImported && row.dataset.collImported === '1') {
+                            row.dataset.collImported = '0';
+                            row.dataset.importedSt = '';
+                            row.querySelectorAll('.tag-indicator.imported').forEach(function (chip) { chip.remove(); });
+                        }
                     }
                 });
 
