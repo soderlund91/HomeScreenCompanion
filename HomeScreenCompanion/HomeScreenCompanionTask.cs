@@ -852,7 +852,9 @@ namespace HomeScreenCompanion
                                             } catch { }
                                         }
 
-                                        if (!IsTaggableTopLevelItem(itemToTag))
+                                        // Top-list and ranked copies are never a source's titles: the collection
+                                        // mirror puts a film's copies in its collections (TopListMirrorCollections).
+                                        if (!IsTaggableTopLevelItem(itemToTag) || !TopListCollectionMirror.IsOriginal(itemToTag))
                                             continue;
 
                                         var imdb = itemToTag.GetProviderId("Imdb");
@@ -876,8 +878,8 @@ namespace HomeScreenCompanion
                                     gs.Warnings.Add($"{DescribeSource(tagConfig)} '{tagConfig.LocalSourceId}' was not found in the library");
                                 }
 
-                                if (effectiveLimit < NoLimit && matchedLocalItems.Count > effectiveLimit)
-                                    matchedLocalItems = matchedLocalItems.Take(effectiveLimit).ToList();
+                                if (effectiveLimit < NoLimit)
+                                    matchedLocalItems = FirstTitles(matchedLocalItems, effectiveLimit);
                             }
                         }
                         else if (tagConfig.SourceType == "Manual")
@@ -2578,14 +2580,14 @@ namespace HomeScreenCompanion
                             BaseItem itemToTag = child;
                             if (child.GetType().Name.Contains("PlaylistItem")) { try { var inner = ((dynamic)child).Item; if (inner != null) itemToTag = inner; } catch { } }
                             if (itemToTag.GetType().Name.Contains("Episode")) { try { var series = ((dynamic)itemToTag).Series; if (series != null) itemToTag = series; } catch { } }
-                            if (!IsTaggableTopLevelItem(itemToTag)) continue;
+                            if (!IsTaggableTopLevelItem(itemToTag) || !TopListCollectionMirror.IsOriginal(itemToTag)) continue;
                             var imdb = itemToTag.GetProviderId("Imdb");
                             if (!string.IsNullOrEmpty(imdb) && blacklist.Contains(imdb)) continue;
                             if (passesFilters != null && !passesFilters(itemToTag)) continue;
                             if (!srcMatched.Contains(itemToTag)) srcMatched.Add(itemToTag);
                         }
-                        if (srcLimit < NoLimit && srcMatched.Count > srcLimit)
-                            srcMatched = srcMatched.Take(srcLimit).ToList();
+                        if (srcLimit < NoLimit)
+                            srcMatched = FirstTitles(srcMatched, srcLimit);
                         foreach (var m in srcMatched)
                             if (!matchedLocalItems.Contains(m)) matchedLocalItems.Add(m);
                         _srcTitles[src] = TitleCount(srcMatched);
@@ -4364,6 +4366,24 @@ namespace HomeScreenCompanion
         // Titles in a source's result: a film's versions count once.
         private int TitleCount(List<BaseItem> items) =>
             items.Select(PopularityCounter.FilmKeys(items)).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+
+        /// <summary>
+        /// The first max titles of items, in their order: a film's versions together count as one
+        /// (all of them are kept), so a source's Max counts titles, as TitleCount does.
+        /// </summary>
+        internal static List<BaseItem> FirstTitles(List<BaseItem> items, int max, Func<BaseItem, string>? filmOf = null)
+        {
+            filmOf = filmOf ?? PopularityCounter.FilmKeys(items);
+            var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var result = new List<BaseItem>();
+            foreach (var i in items)
+            {
+                var k = filmOf(i);
+                if (!taken.Contains(k)) { if (taken.Count >= max) continue; taken.Add(k); }
+                result.Add(i);
+            }
+            return result;
+        }
 
         // Stores each source's titles against its Limit (the "9 of 10" chip on the group's card;
         // saved with the run's config save). A source without a Limit, or not counted (-1), is
@@ -6529,6 +6549,7 @@ namespace HomeScreenCompanion
                 if (long.TryParse(id, out var internalId)) item = _libraryManager.GetItemById(internalId);
                 else if (Guid.TryParse(id, out var guid)) item = _libraryManager.GetItemById(guid);
                 if (item == null || !IsTaggableTopLevelItem(item)) { gone++; continue; }
+                if (!TopListCollectionMirror.IsOriginal(item)) continue;
                 var imdb = item.GetProviderId("Imdb");
                 if (!string.IsNullOrEmpty(imdb) && blacklist.Contains(imdb)) continue;
                 if (passesFilters != null && !passesFilters(item)) continue;
