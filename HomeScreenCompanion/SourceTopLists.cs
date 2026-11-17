@@ -199,6 +199,8 @@ namespace HomeScreenCompanion
             bool shows = type == Shows;
             var name = Get(s, "CustomName").Trim();
             if (name.Length == 0) name = HomeScreenCompanionTask.DefaultRowTitle(src);
+            // "Hide row title" on the source hides the list's title too.
+            if (HomeScreenCompanionTask.IsTitleHidden(s)) name = HomeScreenCompanionTask.HiddenTitle;
             int max = Math.Max(0, src.TopListMaxItems);
             var cardSize = Get(s, "CardSizeOffset");
 

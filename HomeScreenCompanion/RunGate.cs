@@ -24,6 +24,31 @@ namespace HomeScreenCompanion
 
         public static bool Busy => Gate.CurrentCount == 0;
 
+        // When the run that holds the gate started (ticks, 0 = no run).
+        private static long _startTicks;
+
+        /// <summary>
+        /// The time every schedule is judged by: while a run holds the gate, the moment it took it,
+        /// so the whole run (tags, collections, home rows, top-lists) agrees on which sources are in
+        /// schedule even when a schedule starts or ends during it (a long run in Gentle mode). Else now.
+        /// The Schedule Switch notices the change after the run and starts the next one.
+        /// </summary>
+        public static DateTime ScheduleNow
+        {
+            get
+            {
+                long t = Interlocked.Read(ref _startTicks);
+                return t != 0 && Busy ? new DateTime(t, DateTimeKind.Local) : DateTime.Now;
+            }
+        }
+
+        private static void Started(string name)
+        {
+            _holder = name;
+            Interlocked.Exchange(ref _startTicks, DateTime.Now.Ticks);
+            GentleMode.Begin();
+        }
+
         /// <summary>"Run Group 'X' waiting for Tag &amp; Collection Sync to finish" for each waiting run; "" when none.</summary>
         public static string WaitingText
         {
@@ -57,8 +82,7 @@ namespace HomeScreenCompanion
                 finally { lock (Waiters) Waiters.Remove(name); }
                 logger?.Info($"{name}: the previous sync has finished — starting now");
             }
-            _holder = name;
-            GentleMode.Begin();
+            Started(name);
             return new Releaser();
         }
 
@@ -66,8 +90,7 @@ namespace HomeScreenCompanion
         public static IDisposable? TryEnter(string name)
         {
             if (!Gate.Wait(0)) return null;
-            _holder = name;
-            GentleMode.Begin();
+            Started(name);
             return new Releaser();
         }
 
@@ -82,6 +105,7 @@ namespace HomeScreenCompanion
             {
                 if (Interlocked.Exchange(ref _done, 1) != 0) return;
                 _holder = "";
+                Interlocked.Exchange(ref _startTicks, 0);
                 Gate.Release();
                 RealPosterBadges.RunFinished();
             }

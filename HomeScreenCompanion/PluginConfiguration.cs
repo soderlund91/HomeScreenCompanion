@@ -214,6 +214,15 @@ namespace HomeScreenCompanion
         public List<string> MediaInfoConditions { get; set; } = new List<string>();
         public List<MediaInfoFilter> MediaInfoFilters { get; set; } = new List<MediaInfoFilter>();
 
+        // "Pinned titles": movies and shows (Emby item ids) that always get this source's tag,
+        // collection and playlist, first, and take places in its Max (see RandomPick).
+        public List<string> PinnedItemIds { get; set; } = new List<string>();
+        // "Random pick": the source's Max (less its pinned titles) is filled with titles picked at
+        // random from everything it finds, the same pick for each period (RandomPickEvery
+        // "Hour", "Day" or "Week"; see RandomPick.Every).
+        public bool RandomPick { get; set; } = false;
+        public string RandomPickEvery { get; set; } = "Day";
+
         // AI source settings
         public string AiProvider { get; set; } = "OpenAI";
         public string AiPrompt { get; set; } = "";
@@ -463,6 +472,13 @@ namespace HomeScreenCompanion
         public string HomeSectionSettings { get; set; } = "{}";
         // The title the row got when its Custom Title was empty (the group's name, else its tag).
         public string DefaultTitle { get; set; } = "";
+        // What the row showed, so it is found by that when its id is gone (see
+        // HomeScreenCompanionTask.SourceRowShows). Empty in files written before 4.8.0.x.
+        public string SectionType { get; set; } = "";
+        public string Tag { get; set; } = "";
+        public string CollectionName { get; set; } = "";
+        public string HomeSectionLibraryId { get; set; } = "";
+        public string PlaylistId { get; set; } = "";
     }
 
     public class MediaInfoFilter

@@ -47,6 +47,18 @@ namespace HomeScreenCompanion
             }
         }
 
+        // The rank each copy was last given (by path), for the real-time handler: another plugin
+        // that probes new .strm items (StrmCompanion) can save a copy it read before the sync set
+        // the rank, which puts the title back as its SortName. Lost on restart; the next sync sets
+        // every rank again.
+        private static readonly Dictionary<string, string> Ranks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        internal static string? RankOf(string? path)
+        {
+            if (string.IsNullOrEmpty(path)) return null;
+            lock (Sync) return Ranks.TryGetValue(path!, out var r) ? r : null;
+        }
+
         /// <summary>The path is in a folder a sync is working on.</summary>
         internal static bool IsBusy(string? path)
         {
@@ -57,7 +69,8 @@ namespace HomeScreenCompanion
         private static readonly ImageType[] FilmImageTypes = { ImageType.Backdrop, ImageType.Logo };
 
         /// <summary>
-        /// Brings one copy in line with its film. rank: its SortName (null: left as it is); imagesRedrawn:
+        /// Brings one copy in line with its film. rank: its SortName (null: the rank a sync last gave
+        /// it this session, else left as it is); imagesRedrawn:
         /// its badged images were written again (their date must change, or Emby serves the old ones);
         /// mergeWith: the film version it is merged with (default the film). Returns how many writes it
         /// made (for GentleMode); 0 when the copy was already right (reads only).
@@ -69,6 +82,8 @@ namespace HomeScreenCompanion
             int writes = 0;
             bool changed = false;
             var folder = Path.GetDirectoryName(copy.Path) ?? "";
+            if (rank != null) lock (Sync) Ranks[copy.Path ?? ""] = rank;
+            else rank = RankOf(copy.Path);
             if (rank != null && !string.Equals(copy.SortName, rank, StringComparison.Ordinal))
             {
                 copy.SortName = rank;

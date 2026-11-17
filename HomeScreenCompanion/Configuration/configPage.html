@@ -73,6 +73,53 @@
             --hsc-op-or-text: #9a5714;
         }
 
+        /* Source type picker: tiles instead of a dropdown. Chosen tile is lifted neutrally
+           (lighter surface, thin border, small shadow, bold text), like the segmented control. */
+        .hsc-st-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));  /* always 4 + 4 */
+            gap: 6px;
+            margin-top: 6px;
+            max-width: 640px;
+        }
+        .hsc-st-tile {
+            display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+            gap: 2px; padding: 8px 6px 7px;
+            background: var(--hsc-tint-1); color: inherit; font: inherit; text-align: center;
+            border: 1px solid var(--hsc-hairline); border-radius: 8px; cursor: pointer;
+            opacity: 0.8;
+            transition: background 0.15s, border-color 0.15s, opacity 0.15s, box-shadow 0.15s;
+        }
+        .hsc-st-tile:hover { background: var(--hsc-tint-2); opacity: 1; }
+        .hsc-st-tile.active {
+            background: var(--hsc-seg-on-bg); border-color: var(--hsc-hairline-strong);
+            box-shadow: var(--hsc-seg-on-shadow); opacity: 1;
+        }
+        .hsc-st-icon {
+            display: flex; align-items: center; justify-content: center;
+            width: 30px; height: 30px; border-radius: 50%; margin-bottom: 2px;
+            background: var(--hsc-tint-2); color: var(--st-color);
+        }
+        .hsc-st-icon .md-icon { font-size: 18px; }
+        .hsc-st-tile.active .hsc-st-icon { background: var(--hsc-tint-3); }
+        .hsc-st-title { font-size: 0.85em; line-height: 1.2; }
+        .hsc-st-tile.active .hsc-st-title { font-weight: 600; }
+        .hsc-st-sub { font-size: 0.7em; line-height: 1.2; opacity: 0.65; }
+        /* Folded: only the chosen tile, laid out as one line, with Change next to it. */
+        .hsc-st-picker .btnStChange { display: none; }
+        .hsc-st-picker.collapsed { display: flex; align-items: center; gap: 10px; max-width: 640px; margin-top: 6px; }
+        .hsc-st-picker.collapsed .btnStChange { display: inline-flex; align-items: center; flex-shrink: 0; margin: 0; }
+        .hsc-st-picker.collapsed .hsc-st-grid { display: block; flex: 1; min-width: 0; margin: 0; }
+        .hsc-st-picker.collapsed .hsc-st-tile:not(.active) { display: none; }
+        .hsc-st-picker.collapsed .hsc-st-tile.active {
+            display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto;
+            column-gap: 10px; row-gap: 0; align-items: center; text-align: left;
+            width: 100%; padding: 6px 12px 6px 8px;
+        }
+        .hsc-st-picker.collapsed .hsc-st-tile.active .hsc-st-icon { grid-row: 1 / span 2; margin: 0; }
+        .hsc-st-picker.collapsed .hsc-st-title { align-self: end; }
+        .hsc-st-picker.collapsed .hsc-st-sub { align-self: start; }
+
         /* Keyboard focus on our own (non-Emby) controls */
         #HomeScreenCompanionConfigPage button:not([is]):focus-visible,
         .modal-backdrop button:not([is]):focus-visible,
@@ -436,7 +483,7 @@
         #lastRunIndicator { flex: 1 1 0; min-width: 0; }
         #lastRunIndicator > span:not(#lastRunStatusLabel) { flex-shrink: 0; }
         #lastRunStatusLabel {
-            min-width: 0; overflow: hidden; overflow-wrap: anywhere; line-height: 1.3;
+            min-width: 0; overflow: hidden; overflow-wrap: anywhere; line-height: 1.3; white-space: pre-line;
             display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
         }
 
@@ -612,6 +659,11 @@
         .stm-status.in { background: rgba(82,181,75,0.15); color: var(--hsc-primary-text); }
         .stm-status.out { background: rgba(229,115,115,0.15); color: var(--hsc-danger-text); }
         .stm-empty { text-align: center; padding: 30px; color: var(--plugin-popup-muted, #aaa); }
+        /* Waiting for a preview: the hourglass turns over, rests, turns again (still with reduced motion). */
+        .stm-wait-icon { display: inline-block; font-size: 2em; margin-bottom: 8px; animation: hsc-hourglass 2.4s cubic-bezier(.65,0,.35,1) infinite; }
+        .stm-wait-text { animation: hsc-wait-text 2.4s ease-in-out infinite; }
+        @keyframes hsc-hourglass { 0%, 30% { transform: rotate(0deg); } 50%, 80% { transform: rotate(180deg); } 100% { transform: rotate(360deg); } }
+        @keyframes hsc-wait-text { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
         .stm-footer { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--plugin-popup-border, rgba(255,255,255,0.12)); font-size: 0.82em; color: var(--plugin-popup-muted, #aaa); }
         .stm-footer button { margin-left: auto; cursor: pointer; border: 1px solid var(--plugin-popup-border, var(--hsc-hairline-strong)); background: var(--hsc-tint-1); color: inherit; border-radius: 8px; padding: 8px 16px; font-family: inherit; font-size: 1.05em; font-weight: 500; }
         .stm-footer button:hover { background: var(--plugin-popup-hover, var(--hsc-tint-2)); }
@@ -1984,7 +2036,7 @@
                                 <input is="emby-checkbox" type="checkbox" id="chkGentleModeEnabled" />
                                 <span>Gentle mode</span>
                             </label>
-                            <div class="fieldDescription">While someone is watching (paused counts too), syncs make their changes a few at a time with short pauses in between, so playback is not held up. The sync takes longer then, most of all when a new top-list or ranked collection is made. With nobody watching it runs at full speed.</div>
+                            <div class="fieldDescription">While someone is watching (paused counts too), syncs pause briefly after their heavier changes, so playback is not held up. Light changes such as tags go almost at full speed, and a home row or playlist is never left half done. The status line says <em>gentle mode in use</em> while it happens. With nobody watching it runs at full speed.</div>
                         </div>
 
                         <div class="hsc-eyebrow" style="margin-top: 24px; margin-bottom: 8px;">Features</div>
@@ -2238,8 +2290,11 @@
                             <button type="button" class="run-dial-item" id="btnDialOriginalPosters" data-tip="Gives titles made in one of your chosen languages their poster in that language (Original-language posters, Home Screen Tweaks). When that is off, it puts the original posters back. Also runs by itself once a day and after new titles are added.">
                                 <i class="md-icon">translate</i><span>Original-language posters</span>
                             </button>
+                            <button type="button" class="run-dial-item" id="btnDialRandomPick" data-tip="Makes a new random pick for sources with Random pick whose hour, day or week has changed since their last pick: their tags, collection and playlist. Also checks by itself every 15 minutes.">
+                                <i class="md-icon">shuffle</i><span>Random pick</span>
+                            </button>
                         </div>
-                        <button type="button" class="run-dial-item" id="btnDialOther" aria-expanded="false" aria-controls="runDialOther" data-tip="More runs: Merge top-list versions, Sync top-list rows, Bump Continue Watching and Original-language posters. These also run by themselves when needed.">
+                        <button type="button" class="run-dial-item" id="btnDialOther" aria-expanded="false" aria-controls="runDialOther" data-tip="More runs: Merge top-list versions, Sync top-list rows, Bump Continue Watching, Original-language posters and Random pick. These also run by themselves when needed.">
                             <i class="md-icon">more_horiz</i><span>Other</span><i class="md-icon run-dial-other-chevron">expand_less</i>
                         </button>
                         <button type="button" class="run-dial-item" id="btnDialHomeScreen" data-tip="Copies the home screen layout from the source user to the selected users (Home Screen tab).">
@@ -2350,7 +2405,7 @@
                 <button type="button" class="modal-header-close" data-close="btnCloseLogs" aria-label="Close" title="Close" style="margin-left:14px;"><i class="md-icon">close</i></button>
             </div>
             <div class="log-tabs" id="logTabs">
-                <button type="button" class="log-tab" data-log="sync"><span class="status-dot"></span>Sync<span class="log-tab-time"></span></button>
+                <button type="button" class="log-tab" data-log="sync"><span class="status-dot"></span>Tag &amp; Collections<span class="log-tab-time"></span></button>
                 <button type="button" class="log-tab" data-log="hsc"><span class="status-dot"></span>Home Screen<span class="log-tab-time"></span></button>
                 <button type="button" class="log-tab" data-log="tl"><span class="status-dot"></span>Top-list<span class="log-tab-time"></span></button>
                 <button type="button" class="log-tab" data-log="op"><span class="status-dot"></span>Posters<span class="log-tab-time"></span></button>
@@ -2512,6 +2567,7 @@
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li>Choose <em>Local Collection</em> or <em>Local Playlist</em>, then pick it from the drop-down. <em>Add another</em> combines several; each has its own <strong>Max (0=All)</strong>.</li>
                             <li>Movies and shows in it are used as they are. An <strong>episode</strong> in a playlist counts as its show.</li>
+                            <li><strong>Max</strong> counts titles: a film with several versions takes one place, and all its versions get the tag. A top-list copy in the collection or playlist counts as the movie or show it copies.</li>
                             <li>Handy to give a hand-made collection a home row, art or a schedule, or to turn a playlist into a tag.</li>
                             <li>To show <strong>collections themselves</strong> as a row (instead of the movies inside), see <a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-collections-mode').scrollIntoView({behavior:'smooth'});return false;">Home Section — Collections mode</a>.</li>
                             <li>The collection or playlist is found by its <strong>name</strong>: rename it in Emby and pick it again here. If it is not found, the run log warns about it.</li>
@@ -2526,6 +2582,25 @@
                             <li>The order is kept: a top-list made from the tag and a playlist follow it. An Emby collection still shows Emby's own sort order (see <em>Keep the list order</em> under Tags &amp; Collections).</li>
                             <li>Titles later deleted from the library are skipped. Copy/paste matches the titles on another server by IMDb/TMDb/TVDb id.</li>
                             <li><em>Preview</em> lists the titles that would get the tag, in your order.</li>
+                            <li><em>Max items</em> caps how many of the titles are used (0 = all of them).</li>
+                        </ul></div>
+                </div>
+                <div id="help-more-randompick" class="help-feature-row">
+                    <i class="md-icon help-feat-icon">shuffle</i>
+                    <div><strong>Pinned titles and Random pick</strong> — on the Source tab of every source type that tags titles (not <em>Rotating from existing</em> or <em>Your Next Watch</em>).
+                        <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
+                            <li><em>Pinned titles</em> (Advanced): search and add any movie or show in your library. They always get the source's tag, collection and playlist, even when the source itself does not have them. The source's filters and blacklist do not take them out.</li>
+                            <li>Pinned titles come first where the source's order is used: the playlist, a top-list made from the source and a collection with <em>Keep the list order</em>. A home row and other collections keep the sort order set in Emby; the pinned titles are always in them, but not moved to the front. Their sort titles are never changed.</li>
+                            <li><em>Max items</em> is the total, pinned titles included. With 1 pinned title and Max 8, the source adds 7 of its own titles.</li>
+                            <li><em>Random pick</em> off: the source's first titles fill the rest of Max. On: the rest is picked at random from everything the source finds. With Max 0 nothing is picked: all titles are used.</li>
+                            <li><em>New pick every</em> <strong>Hour</strong>, <strong>Day</strong> or <strong>Week</strong> (from Monday), in server time. Every sync in the same period picks the same titles while the source's titles stay the same, so tags do not change back and forth. A list that changes between syncs (an AI source, a live list) can change the pick.</li>
+                            <li>The <em>Random pick</em> task (Scheduled Tasks and <em>Run → Other</em>; it checks every 15 minutes) makes the new pick when a period ends: that source's tags, collection and playlist. Home rows that show the tag or the collection follow by themselves. It leaves out AI sources (that would ask the AI again) and sources whose tag another kind of source also writes; the Tag &amp; Collection Sync renews those. Dry Run changes nothing.</li>
+                            <li>An AI source asks the AI for as many titles as usual and picks among the answer.</li>
+                            <li>Random pick is not used on a source that makes a top-list. With <em>Keep the list order</em> the pick changes at most once a day (each pick makes the ranked copies again).</li>
+                            <li>When one of the source's lists returns nothing and <em>Preserve tags and collections on empty result</em> is on, the current pick stays as it is until all the lists return titles again.</li>
+                            <li>A source with several URLs, collections or playlists has a Max per row: the total is their sum. Pinned titles take their places from the first rows with a Max.</li>
+                            <li>Max counts titles: a film with two versions takes one place, and both versions get the tag. Top-list copies are never picked.</li>
+                            <li>For a home row in Emby's <em>Spotlight</em> view: the Emby web app asks for up to <strong>8</strong> items for a spotlight row. With Max 8 the row always has the pinned titles among its 8; the others change with each pick.</li>
                         </ul></div>
                 </div>
                 <div id="help-more-mediainfo" class="help-feature-row">
@@ -2650,6 +2725,7 @@
                             <li>As on every HSC collection a film appears once: extra versions of a film leave the collection on the next sync, and so do items a Manual List cannot hold (episodes, seasons); the popup lists them after the import.</li>
                             <li>If another plugin or tool also updates the collection, switch that off there first, otherwise the two keep changing it.</li>
                             <li>An imported collection is never deleted by HSC: if you delete the source or switch it off, the collection stays in Emby and HSC simply stops changing it.</li>
+                            <li>If the imported collection is no longer in Emby (deleted there, or the source's <em>Collection Name</em> changed), HSC makes a new one. That one is HSC's own: the <strong>Imported</strong> chip goes and it is deleted with the source like any other collection.</li>
                             <li>An imported source shows an <strong>Imported</strong> chip in its card header; a copy of it does not (the copy makes its own collection). Changing its <em>Source Type</em> makes it an ordinary source: the chip goes (saved with Save); editing its titles does not.</li>
                         </ul></details></div>
                 </div>
@@ -2668,7 +2744,7 @@
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li>Its <strong>tag</strong> (taken off every title), its <strong>home rows</strong> and its users' <strong>playlists</strong> go on the next full sync, or the next <em>Run Group</em> of any source.</li>
                             <li>Its <strong>collection</strong> is only deleted by a <strong>full sync</strong>, so run <strong>Run</strong> → <em>Full sync</em> once to clear everything away (or wait for the nightly run). The log lists what was removed.</li>
-                            <li>Not removed: an <em>imported</em> collection (it stays in Emby, HSC just stops changing it), and a top-list made from the tag — delete that in the <strong>Top-Lists</strong> tab.</li>
+                            <li>Not removed: an <em>imported</em> collection (it stays in Emby, HSC just stops changing it), a collection HSC did not make (only the titles HSC added are taken out), and a top-list made from the tag — delete that in the <strong>Top-Lists</strong> tab.</li>
                             <li>If a tag or collection is still left after a full sync, remove it in the <strong>Cleanup</strong> tab.</li>
                         </ul>
                     </div>
@@ -2676,7 +2752,7 @@
                 <div class="src-cards" style="grid-template-columns: repeat(3, 1fr);">
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">input</i> Source tab</div>
-                        Choose the source type and add URLs, local sources, or hand-picked titles. Set the <strong>Max items</strong> limit to cap how many items are fetched (0 = no limit). When the last run found fewer titles than <strong>Max items</strong>, the card header shows an amber chip such as <strong>9 of 10</strong>.
+                        Choose the source type and add URLs, local sources, or hand-picked titles. Set the <strong>Max items</strong> limit to cap how many items are fetched (0 = no limit), add <em>Pinned titles</em> that are always included, and tick <em>Random pick</em> to fill the rest with a new random pick every hour, day or week (<a href="javascript:void(0)" class="help-link" onclick="this.closest('.modal-body-scroll').querySelector('#help-more-randompick').scrollIntoView({behavior:'smooth'});return false;">more below</a>). When the last run found fewer titles than <strong>Max items</strong>, the card header shows an amber chip such as <strong>9 of 10</strong>.
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">label</i> Tag tab</div>
@@ -2684,7 +2760,7 @@
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">collections_bookmark</i> Collection tab</div>
-                        Optionally group the matched items into an Emby collection with a custom name, description, poster and background. Upload your own art or let the plugin draw it in a style you pick. Enable <em>Only Collection</em> to skip tagging and only maintain the collection.
+                        Optionally group the matched items into an Emby collection with a custom name, description, poster and background. Upload your own art or let the plugin draw it in a style you pick. Enable <em>Only Collection</em> to skip tagging and only maintain the collection. If Emby already has a collection with that name that HSC did not make (and you did not import it), HSC only adds the matched items to it and takes out only items it added: the collection's other items, art, description and sort title stay as they are, and the collection stays in Emby when the source is deleted or switched off.
                     </div>
                     <div class="src-card">
                         <div class="src-card-title"><i class="md-icon" style="font-size:1.1em;color:var(--plugin-popup-muted);">queue_music</i> Playlist tab</div>
@@ -2740,12 +2816,13 @@
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li><strong>Show this section</strong> — <em>Always</em>, or only when Emby's <em>TV Display Mode</em> is on (TV apps) or off (phones and browsers), e.g. a bigger row for the living room.</li>
                             <li><strong>Media Type</strong> — what a tag row shows: movies, shows, both, episodes, collections and more. Playlist rows always show the whole playlist.</li>
-                            <li><strong>Custom Title</strong> — the row's name on the home screen; empty uses the source's name.</li>
+                            <li><strong>Custom Title</strong> — the row's name on the home screen; empty uses the source's name. <strong>Hide row title</strong> shows the row without a title (tested in Emby's web app).</li>
                             <li><strong>Position</strong> — where a new row goes: <em>Bottom</em> (default), <em>Top</em> or after a chosen row. A row you later move in Emby's home screen settings keeps its new place.</li>
                             <li><strong>View Type</strong> — <em>Cards</em> or Emby's large <em>Spotlight</em> banner. <strong>Image Type</strong> — <em>Auto</em>, <em>Primary</em> (poster) or <em>Thumb</em> (landscape). <strong>Card Size</strong> — see <em>Card size</em> under Home Screen.</li>
                             <li><strong>Sort By</strong> and <strong>Sort Order</strong> — <em>(Default)</em> uses Emby's own order for that kind of row (a playlist row keeps the playlist's order); or sort by rating, date added, name, runtime, release date, year or <em>Random</em> (a new mix on every load).</li>
                             <li><strong>Scroll Direction</strong> — <em>Horizontal</em> (one swipeable line) or <em>Vertical</em> (a grid). <strong>Playstate</strong> — show only <em>Played</em> or <em>Unplayed</em> titles, per user.</li>
                             <li>Every sync puts these settings back on the row, so change them here, not in Emby's own row editor.</li>
+                            <li>The plugin knows each row by its id. If the id is lost (for example when Copy &amp; Sync makes a user's rows again), it finds the row by the tag, collection or playlist it shows, not by its title. A row you made yourself that shows exactly the same tag or collection is taken over as the source's row.</li>
                         </ul></details></div>
                 </div>
 
@@ -2771,7 +2848,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">image</i>
-                    <div><strong>Collection Poster</strong> — Pick a style. <em>Custom</em> lets you upload a local image or paste an image URL; it is stored on the server and re-applied on every sync so it is never overwritten by Emby. The other styles — <em>Collage</em>, <em>Grid</em>, <em>Fan</em>, <em>Wall</em>, <em>Hero strip</em>, <em>Spotlight split</em> and <em>Ranked (Top 10)</em> — draw the poster from the posters of the first titles in the collection, each film used once. It is redrawn when the titles change. <em>Keep current image</em> is offered on an imported collection only (see <strong>Import collection</strong>), where it is the default: it leaves the poster the collection has now exactly as it is — nothing is drawn, uploaded or removed. Its tile shows that poster. Once you pick another style, Save and the source has run (so the original image is replaced), <em>Keep current image</em> is no longer offered for that image.</div>
+                    <div><strong>Collection Poster</strong> — Pick a style. <em>Custom</em> lets you upload a local image or paste an image URL; it is stored on the server and put back on every sync, and again right after a sync that changes the collection's titles (Emby refreshes the collection then and may switch to an image of its own). When Emby itself replaces the image (<em>Edit images</em>, or <em>Refresh metadata</em> with <em>Replace existing images</em>), Emby deletes the uploaded file: upload it again. The other styles — <em>Collage</em>, <em>Grid</em>, <em>Fan</em>, <em>Wall</em>, <em>Hero strip</em>, <em>Spotlight split</em> and <em>Ranked (Top 10)</em> — draw the poster from the posters of the first titles in the collection, each film used once. It is redrawn when the titles change. <em>Keep current image</em> is offered on an imported collection only (see <strong>Import collection</strong>), where it is the default: it leaves the poster the collection has now exactly as it is — nothing is drawn, uploaded or removed. Its tile shows that poster. Once you pick another style, Save and the source has run (so the original image is replaced), <em>Keep current image</em> is no longer offered for that image.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">wallpaper</i>
@@ -2913,7 +2990,7 @@
                 <div class="mi-help-grid" style="grid-template-columns: repeat(3, 1fr);">
                     <div class="mi-help-col">
                         <div class="mi-help-category">Video</div>
-                        Resolution (4K, 1080p, 720p, SD, 8K), Video codec (HEVC/H.265, AV1, H.264), HDR type (HDR10, Dolby Vision, HLG)
+                        Resolution (4K, 1440p / 2K, 1080p, 720p, SD, 8K), Video codec (HEVC/H.265, AV1, H.264), HDR type (HDR10, Dolby Vision, HLG)
                     </div>
                     <div class="mi-help-col">
                         <div class="mi-help-category">Audio</div>
@@ -3048,7 +3125,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">play_arrow</i>
-                    <div><strong>Run Group</strong> — Open a top-list and click <strong>Run Group</strong> (next to <em>Delete top-list</em>) to rebuild just that list: its tiles and badges, its home rows and its collection mirror, from the titles the tag (or your manual list) holds now — the source itself is not fetched again and other lists are not touched. With unsaved changes it first asks <em>You have unsaved changes. Save and run?</em>; the result shows in the Sync log.</div>
+                    <div><strong>Run Group</strong> — Open a top-list and click <strong>Run Group</strong> (next to <em>Delete top-list</em>) to rebuild just that list: its tiles and badges, its home rows and its collection mirror, from the titles the tag (or your manual list) holds now — the source itself is not fetched again and other lists are not touched. With unsaved changes it first asks <em>You have unsaved changes. Save and run?</em>; the result shows in the Tag &amp; Collections log.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">share</i>
@@ -3168,7 +3245,7 @@
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">playlist_remove</i>
-                    <div><strong>Log missing movies and shows</strong> <span style="opacity:0.6;">(Tags &amp; Collections)</span> — Lists in the Sync log, per source, the titles on your External and AI lists that are not in your library, with their IMDb id — handy for finding what to add next.</div>
+                    <div><strong>Log missing movies and shows</strong> <span style="opacity:0.6;">(Tags &amp; Collections)</span> — Lists in the Tag &amp; Collections log, per source, the titles on your External and AI lists that are not in your library, with their IMDb id — handy for finding what to add next.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">collections_bookmark</i>
@@ -3198,7 +3275,7 @@
                 </div>
                 <div id="help-gentle-mode" class="help-feature-row">
                     <i class="md-icon help-feat-icon">slow_motion_video</i>
-                    <div><strong>Gentle mode</strong> — <em>Settings → Syncs → Gentle mode</em>, on by default. With it off every run goes at full speed, as if nobody were watching. With it on: when a run starts or goes on while someone is watching something on the server (playing or paused), HSC makes its many small changes (copies, collection members, tags, playlists, home rows) a few at a time with a pause after each few, so playback is not held up. A slow change gets a slice of its own, and the pause after a slice is twice as long as its changes took (3 to 15 seconds). The cast of a ranked or top-list copy goes in short steps, each its own change: two people first, then as many as fit in about 50 ms going by the step before (a slow step halves the next one, down to one person; after a step of more than 0.3 seconds the pause is three times that step). A top-list that changes (one film out, one in) adds its new copies a few at a time, with one refresh of its library each. (Home rows that are already right are never written again, with Gentle mode on or off.) The run then takes longer; the log says so at the start (<em>3 people are watching: the sync runs in gentle mode and takes longer.</em>) and its summary shows how many slices and how much pausing there was, how long the item saves, media info, cast and merges of ranked and top-list copies took, and the longest single change. A ranked collection of 100 or more copies that takes a while logs its progress every 50 copies. With nobody watching a run goes at full speed, in batches of 25, so someone who starts watching mid-run is noticed after one batch.</div>
+                    <div><strong>Gentle mode</strong> — <em>Settings → Syncs → Gentle mode</em>, on by default. With it off every run goes at full speed, as if nobody were watching. With it on: when a run starts or goes on while someone is watching something on the server (playing or paused), HSC times its changes (copies, collection members, tags, playlists) and pauses after every slice of about one second of work, or after 100 quick changes: the pause is twice as long as the slice's changes took (half a second to 15 seconds). Light changes such as tags therefore go almost at full speed, heavy ones (the cast and merge of a ranked or top-list copy) get a slice and a pause of their own. What you see on the home screen is never paused halfway: all users' rows of one source, one top-list's rows, one Copy &amp; Sync user and one playlist are written in one go, and the pause comes after. The cast of a ranked or top-list copy goes in short steps, each its own change: two people first, then as many as fit in about 50 ms going by the step before (a slow step halves the next one, down to one person; after a step of more than 0.3 seconds the pause is three times that step). A top-list that changes (one film out, one in) adds its new copies ten at a time, with one refresh of its library each. (Home rows that are already right are never written again, with Gentle mode on or off.) The run then takes a little longer; the status line at the top of the page shows <em>Running · 1 person watching, gentle mode in use</em>, the log says so at the start (<em>3 people are watching: the sync runs in gentle mode and takes longer.</em>) and its summary shows how many slices and how much pausing there was, how long the item saves, media info, cast and merges of ranked and top-list copies took, and the longest single change. A ranked collection of 100 or more copies that takes a while logs its progress every 50 copies. With nobody watching a run goes at full speed, in batches of 25, so someone who starts watching mid-run is noticed after one batch.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">schedule</i>
@@ -3207,6 +3284,7 @@
                             <li><strong>Tag &amp; Collection Sync</strong> — the full sync; every day at 04:00 by default.</li>
                             <li><strong>Home Screen Sync</strong> and <strong>Top-list section sync</strong> — no schedule of their own; run from <strong>Run</strong> or by hand.</li>
                             <li><strong>Continue Watching Bump</strong> — every 6 hours, and when new episodes are added.</li>
+                            <li><strong>Random pick</strong> — checks every 15 minutes and makes a new pick for sources with <em>Random pick</em> when their hour, day or week has changed. Also under <strong>Run → Other</strong>.</li>
                             <li><em>Schedule Switch</em> is not listed: every 15 minutes it starts the sync when a source's schedule starts or ends.</li>
                         </ul></div>
                 </div>
@@ -3240,7 +3318,7 @@
                     <i class="md-icon help-section-icon">build_circle</i>
                     <span>Troubleshooting</span>
                 </div>
-                <div class="step-text" style="margin-bottom:10px;font-size:0.92em;">Start with <strong>Logs</strong>: the Sync tab says per source how many titles the list had, how many were found in your library and why a source was skipped or came back empty.</div>
+                <div class="step-text" style="margin-bottom:10px;font-size:0.92em;">Start with <strong>Logs</strong>: the Tag &amp; Collections tab says per source how many titles the list had, how many were found in your library and why a source was skipped or came back empty.</div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">tv_off</i>
                     <div><strong>The row doesn't show on the home screen</strong>
@@ -3472,7 +3550,9 @@
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">text_fields</i><div><b>Contains / Exact</b> — text properties show a mode selector. <em>Contains</em> matches anywhere in the value (case-insensitive); <em>Exact</em> requires a full match. Enter one value per line — if any line matches, the rule matches (OR logic).</div></div>
 
                 <div class="help-section"><i class="md-icon help-section-icon">videocam</i>Video</div>
-                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Resolution</span> — 4K, 1080p, 720p, SD, 8K</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Resolution</span> — 8K, 4K, 1440p / 2K, 1080p, 720p, SD, as Emby shows it on the title's media info (SD = 480p, 576p and lower). A file Emby has not scanned yet has no resolution and matches no resolution rule, not even a <em>not</em> rule.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">video_library</i><div><b>Films in several versions</b> (e.g. 4K and 1080p) — the video and audio rules (and File Size) look at each version. A rule matches when one version has it, and rules combined with AND must all hold for that same version: <i>4K AND HDR</i> needs a version that is both. A <em>not</em> rule looks at the whole film and matches only when no version has it, so <i>not 1080p</i> leaves out a film that also has a 1080p version. A collection gets the version that matched. Episodes in several versions work the same way.</div></div>
+                <div class="help-feature-row"><i class="md-icon help-feat-icon">tv</i><div><b>Shows</b> (Media Type = Series) — the video and audio rules look at all the show's episodes, each counted once with its best version. The show's resolution is the one most episodes have (the higher one on a tie), so <i>Series AND 1080p</i> finds shows that are mostly 1080p. HDR, codec, audio and language rules match when more than half of the episodes have them. To pick single episodes by their own file, use Media Type = Episode.</div></div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">Video Codec</span> — HEVC/H.265, AV1, H.264</div></div>
                 <div class="help-feature-row"><i class="md-icon help-feat-icon">check_circle</i><div><span class="mi-help-prop">HDR</span> — Any HDR, HDR10, or Dolby Vision</div></div>
 

@@ -518,7 +518,7 @@ namespace HomeScreenCompanion
                             bool changed = HomeScreenCompanionTask.SectionKey(jsonSerializer, updated) != before;
                             if (changed)
                             {
-                                GentleMode.Wrote(cancellationToken);
+                                GentleMode.Unpaced();
                                 userManager.UpdateHomeSection(uid, updated, cancellationToken);
                             }
                             rowId = owned.Id;
@@ -531,7 +531,7 @@ namespace HomeScreenCompanion
                         else
                         {
                             var beforeIds = new HashSet<string>(sections.Where(s => !string.IsNullOrEmpty(s.Id)).Select(s => s.Id));
-                            GentleMode.Wrote(cancellationToken);
+                            GentleMode.Unpaced();
                             userManager.AddHomeSection(uid, HomeScreenCompanionTask.BuildContentSection(
                                 jsonSerializer, settingsDict, tl.HomeSectionLibraryId), cancellationToken);
                             var after = userManager.GetHomeSections(uid, cancellationToken)?.Sections ?? Array.Empty<ContentSection>();
@@ -577,6 +577,8 @@ namespace HomeScreenCompanion
                         + (tlRemoved > 0 ? $", {tlRemoved} removed" : ""));
                 else
                     _log.Skip($"Top-list '{tlName}': no home sections to update");
+                // Gentle mode: this list's rows for every user are written; the pause comes now.
+                GentleMode.UnitDone(cancellationToken);
             }
 
             if (onlyTag != null)
@@ -723,12 +725,13 @@ namespace HomeScreenCompanion
                         var updatedSec = HomeScreenCompanionTask.BuildContentSection(jsonSerializer, rowSettings, string.Empty, owned);
                         typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSec, owned.Id);
                         if (HomeScreenCompanionTask.SectionKey(jsonSerializer, updatedSec) == before) continue;
-                        GentleMode.Wrote(cancellationToken);
+                        GentleMode.Unpaced();
                         userManager.UpdateHomeSection(uid, updatedSec, cancellationToken);
                         totalUpdated++;
                     }
                     catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                 }
+                GentleMode.UnitDone(cancellationToken);
             }
 
             // The other top-lists' rows: every library but the list's own.
@@ -779,7 +782,7 @@ namespace HomeScreenCompanion
                         var updatedSec = HomeScreenCompanionTask.BuildContentSection(jsonSerializer, otherRowSettings, otherTl.HomeSectionLibraryId, owned);
                         typeof(ContentSection).GetProperty("Id")?.SetValue(updatedSec, owned.Id);
                         if (HomeScreenCompanionTask.SectionKey(jsonSerializer, updatedSec) == before) continue;
-                        GentleMode.Wrote(cancellationToken);
+                        GentleMode.Unpaced();
                         userManager.UpdateHomeSection(uid, updatedSec, cancellationToken);
                         totalUpdated++;
                     }
@@ -787,6 +790,7 @@ namespace HomeScreenCompanion
                 }
             }
 
+            GentleMode.UnitDone(cancellationToken);
             // Aggressive: also keep all untracked, non-library-scoped sections up to date.
             totalUpdated += HomeScreenCompanionTask.UpdateUntrackedSections(
                 jsonSerializer, userManager, config, libIds, cancellationToken, dry);

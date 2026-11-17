@@ -43,6 +43,7 @@ namespace HomeScreenCompanion
         internal const int SeedDays = 90, MinSeedDays = 7, MaxSeedDays = 730;
         private const int SeedMin = 30, SeedFallback = 50, SeedMax = 150, MinSeed = 3, SimilarUsers = 25;
         private const int MaxActors = 5, MaxCrew = 3;
+        private const int EpisodeBatchShows = 250;   // shows whose episodes are read in one go
 
         private readonly ILibraryManager _libraryManager;
         private readonly IUserManager _userManager;
@@ -149,12 +150,15 @@ namespace HomeScreenCompanion
                     if (m is Series) seriesGroup[m.InternalId] = groupByItem[m.InternalId];
                 }
             int episodeKeys = 0;
-            if (seriesGroup.Count > 0)
+            // Read a few hundred shows at a time: every episode in the library at once held them all
+            // as full items (about 400 MB more on a library with 160,000 episodes).
+            var seriesIds = seriesGroup.Keys.ToArray();
+            for (int i = 0; i < seriesIds.Length; i += EpisodeBatchShows)
             {
                 var episodes = _libraryManager.GetItemList(new InternalItemsQuery
                 {
                     IncludeItemTypes = new[] { "Episode" },
-                    SeriesIds = seriesGroup.Keys.ToArray(),
+                    SeriesIds = seriesIds.Skip(i).Take(EpisodeBatchShows).ToArray(),
                     Recursive = true,
                     IsVirtualItem = false
                 });

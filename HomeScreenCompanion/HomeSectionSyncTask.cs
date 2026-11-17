@@ -110,7 +110,8 @@ namespace HomeScreenCompanion
                 var startTime = DateTime.Now;
                 _log.Rule();
                 _log.Info($"Home Screen Sync  ·  {startTime:yyyy-MM-dd HH:mm}");
-                GentleMode.Announce(_log);
+                // (Not when it is switched off: it then writes nothing.)
+                if (config.HomeSyncEnabled) GentleMode.Announce(_log);
                 _log.Rule();
 
                 // Dry run: the whole run works on a copy of the settings (memberships, tracking and
@@ -377,7 +378,7 @@ namespace HomeScreenCompanion
                         }
                         if (row == null)
                         {
-                            GentleMode.Wrote(cancellationToken);
+                            GentleMode.Unpaced();
                             _userManager.AddHomeSection(targetInternalId, managed.NewTopListRow(tl, _jsonSerializer, _libraryManager), cancellationToken);
                             row = (_userManager.GetHomeSections(targetInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>())
                                 .FirstOrDefault(s => !string.IsNullOrEmpty(s.Id) && !before.Any(b => b.Id == s.Id));
@@ -403,6 +404,8 @@ namespace HomeScreenCompanion
 
                     _log.Ok($"{targetName}: {RunLog.Plural(copiedHere, selectedOnly ? "selected row" : "section")} {(_dry ? "would be copied" : "copied")}"
                         + (notCopied.Count > 0 ? $"  ·  not copied: {string.Join(", ", notCopied)}" : ""));
+                    // Gentle mode: this user's home screen is done; the pause comes now.
+                    GentleMode.UnitDone(cancellationToken);
                 }
                 catch (Exception ex)
                 {
@@ -523,7 +526,7 @@ namespace HomeScreenCompanion
                 string rowKey = managed.RowKey(config, section, sourceKey);
                 bool record = IsRecordedKey(config, rowKey, targetKey);
                 var beforeAdd = rotating != null || record ? _userManager.GetHomeSections(targetInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>() : null;
-                GentleMode.Wrote(cancellationToken);
+                GentleMode.Unpaced();
                 _userManager.AddHomeSection(targetInternalId, copy, cancellationToken);
                 if (rotating != null && TrackRotatingRow(rotating, beforeAdd!, copy, targetIdStr, targetInternalId, cancellationToken)) totals.ConfigChanged = true;
                 if (record)
@@ -549,7 +552,7 @@ namespace HomeScreenCompanion
                 if (_dry) { _log.Debug($"  [Dry run] {targetName}: = '{k.Row.CustomName ?? k.Row.Name}' would be kept ({(k.Source != null ? "source row; the master is not one of its users" : "top-list row")})"); continue; }
                 if (row == null)
                 {
-                    GentleMode.Wrote(cancellationToken);
+                    GentleMode.Unpaced();
                     _userManager.AddHomeSection(targetInternalId, CopySection(k.Row), cancellationToken);
                     row = (_userManager.GetHomeSections(targetInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>())
                         .FirstOrDefault(s => !string.IsNullOrEmpty(s.Id) && !before.Any(b => b.Id == s.Id));
@@ -626,7 +629,7 @@ namespace HomeScreenCompanion
                     bool changed = HomeScreenCompanionTask.SectionKey(_jsonSerializer, copy) != HomeScreenCompanionTask.SectionKey(_jsonSerializer, match);
                     if (changed)
                     {
-                        GentleMode.Wrote(cancellationToken);
+                        GentleMode.Unpaced();
                         _userManager.UpdateHomeSection(targetInternalId, copy, cancellationToken);
                     }
                     done.Add(match.Id ?? "");
@@ -635,7 +638,7 @@ namespace HomeScreenCompanion
                 }
                 else
                 {
-                    GentleMode.Wrote(cancellationToken);
+                    GentleMode.Unpaced();
                     _userManager.AddHomeSection(targetInternalId, copy, cancellationToken);
                     var added = (_userManager.GetHomeSections(targetInternalId, cancellationToken)?.Sections ?? Array.Empty<ContentSection>())
                         .FirstOrDefault(s => !string.IsNullOrEmpty(s.Id) && !current.Any(b => b.Id == s.Id));
@@ -867,7 +870,7 @@ namespace HomeScreenCompanion
                 foreach (var tc in entries)
                 {
                     if (!tc.Active) return false;
-                    if (!HomeScreenCompanionTask.IsScheduleActive(tc.ActiveIntervals, DateTime.Now) && !HomeScreenCompanionTask.IsTagRow(tc, _jsonSerializer)) return false;
+                    if (!HomeScreenCompanionTask.IsScheduleActive(tc.ActiveIntervals, RunGate.ScheduleNow) && !HomeScreenCompanionTask.IsTagRow(tc, _jsonSerializer)) return false;
                     if (unknownMasterRows.Any(s => managed.CouldBeSourceRow(s, tc))) return false;
                 }
                 return true;
@@ -1127,7 +1130,8 @@ namespace HomeScreenCompanion
                 string title = !string.IsNullOrWhiteSpace(s.CustomName) ? s.CustomName : !string.IsNullOrWhiteSpace(s.Name) ? s.Name : "";
                 if (string.IsNullOrEmpty(title))
                 {
-                    title = s.SectionType ?? "Row";
+                    // A hidden title (one space) is not shown: say so.
+                    title = (!string.IsNullOrEmpty(s.CustomName) ? "(no title) " : "") + (s.SectionType ?? "Row");
                     if (!string.IsNullOrEmpty(s.ParentId) && Guid.TryParse(s.ParentId, out var g) && libraryManager.GetItemById(g) is { } lib)
                         title += " · " + lib.Name;
                 }
@@ -1205,7 +1209,7 @@ namespace HomeScreenCompanion
 
             public static ManagedRows Build(PluginConfiguration config, ILibraryManager libraryManager, IJsonSerializer json)
             {
-                var m = new ManagedRows();
+                var m = new ManagedRows { _libraryManager = libraryManager };
                 foreach (var tc in config.Tags ?? new List<TagConfig>())
                 {
                     if (tc.PlaylistMappings == null || tc.PlaylistMappings.Count == 0) continue;
@@ -1240,20 +1244,14 @@ namespace HomeScreenCompanion
                     // row its collection. Rows of several sources can share a title (e.g. every
                     // user's own "Recommended for you"), so this tells them apart.
                     var sectionType = settings.TryGetValue("SectionType", out var st) && !string.IsNullOrEmpty(st) ? st : HomeScreenCompanionTask.DefaultSectionType(tc);
-                    try
+                    // As the full sync works it out (HomeScreenCompanionTask.SourceRowShows): also a
+                    // collection row on a chosen collection. Playlist rows: PlaylistRow.
+                    if (sectionType == "items" || sectionType == "boxset")
                     {
-                        if (sectionType == "items" && !string.IsNullOrWhiteSpace(tc.Tag))
-                        {
-                            var tag = libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "Tag" }, Name = tc.Tag.Trim(), Recursive = true }).FirstOrDefault();
-                            if (tag != null) m._sourceShows[tc] = new[] { tag.InternalId.ToString(System.Globalization.CultureInfo.InvariantCulture) };
-                        }
-                        else if (sectionType == "boxset" && tc.EnableCollection && !string.IsNullOrWhiteSpace(tc.CollectionName))
-                        {
-                            var coll = libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = tc.CollectionName, Recursive = true }).FirstOrDefault();
-                            if (coll != null) m._sourceShows[tc] = new[] { coll.InternalId.ToString(System.Globalization.CultureInfo.InvariantCulture), coll.Id.ToString("N") };
-                        }
+                        var shows = HomeScreenCompanionTask.SourceRowShows(libraryManager, sectionType, tc.Tag,
+                            tc.EnableCollection ? tc.CollectionName : null, tc.HomeSectionLibraryId, null);
+                        if (shows.Count > 0) m._sourceShows[tc] = shows.ToArray();
                     }
-                    catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                     m._sourceTypes[tc] = sectionType;
                 }
                 foreach (var tl in config.TopLists ?? new List<TopListHomeSection>())
@@ -1333,6 +1331,8 @@ namespace HomeScreenCompanion
                 var rest = users.Where(tc => !_sourceShows.ContainsKey(tc)).ToList();
                 var tracked = rest.FirstOrDefault(Tracks);
                 if (tracked != null) return tracked;
+                // By title only a row that shows nothing that still exists (as the full sync's last step).
+                if (_libraryManager != null && !HomeScreenCompanionTask.ShowsOnlyGone(s, _libraryManager)) return null;
                 var byTitle = rest.Where(tc => HomeScreenCompanionTask.SameTitle(s.CustomName, _sourceTitles[tc])
                     && !HomeScreenCompanionTask.SectionOwnedElsewhere(config, tc, SourceUserId(tc, user)!, s.Id)).ToList();
                 // One source only (a source with several URLs or local sources is several entries
@@ -1349,13 +1349,7 @@ namespace HomeScreenCompanion
                     (tc.HomeSectionTracked ?? new List<HomeSectionTracking>()).Any(t => NormId(t.UserId) == user && t.SectionId == s.Id));
 
             // The tag ids (Query.TagIds) and the parent (ParentId) a row shows.
-            private static HashSet<string> RowShows(ContentSection s)
-            {
-                var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var t in s.Query?.TagIds ?? Array.Empty<string>()) if (!string.IsNullOrEmpty(t)) ids.Add(t.Trim());
-                if (!string.IsNullOrEmpty(s.ParentId)) ids.Add(s.ParentId.Trim().Replace("-", ""));
-                return ids;
-            }
+            private static HashSet<string> RowShows(ContentSection s) => HomeScreenCompanionTask.RowShows(s);
 
             // The user's id as the source's home-row users list has it (null: not one of them).
             public string? SourceUserId(TagConfig tc, string user)
@@ -1373,6 +1367,7 @@ namespace HomeScreenCompanion
                 return _sourceTitles.TryGetValue(tc, out var title) && HomeScreenCompanionTask.SameTitle(s.CustomName, title);
             }
 
+            private ILibraryManager? _libraryManager;   // ShowsOnlyGone for the title step in SourceRow
             private readonly List<TagConfig> _rotating = new List<TagConfig>();
             private readonly List<TagConfig> _sources = new List<TagConfig>();
             private readonly Dictionary<TagConfig, string> _sourceTitles = new Dictionary<TagConfig, string>();
