@@ -4155,9 +4155,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         updatePlaylistDescPlaceholder(newRow);
         refreshAdvanced(newRow);
         refreshLimitNotes(newRow);
-        // Auto-size any pre-filled growing textareas
+        // Auto-size any pre-filled growing textareas. In a closed card (its body display:none) a
+        // textarea has no box and its scrollHeight is 0: that is used as is, without reading it,
+        // because the read makes the browser lay out the whole page for every card.
+        var closedBody = newRow.querySelector('.tag-body');
+        if (closedBody && closedBody.style.display !== 'none') closedBody = null;
         newRow.querySelectorAll('textarea.txtMiValue, textarea.txtTagBlacklist').forEach(function (ta) {
             ta.style.height = 'auto';
+            if (closedBody && closedBody.contains(ta)) { ta.style.height = '0px'; ta.style.overflowY = 'hidden'; return; }
             ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
             ta.style.overflowY = ta.scrollHeight > 120 ? 'auto' : 'hidden';
         });
