@@ -5567,7 +5567,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // Renders the merged execution log as colour-coded lines. Classification is based on the
     // leading symbol each server task writes (✔ ⚠ ✖ –) and on the [DEBUG] token, which is
     // stripped for display. A source badge is shown only when several tasks have output.
-    function renderLogLines(container, entries, isRunning) {
+    // from: the lines before it are already shown (the same ones), only the rest is added.
+    function renderLogLines(container, entries, isRunning, from) {
         var stickToBottom = isRunning && (container.scrollHeight - container.scrollTop - container.clientHeight) < 40;
         var wasEmpty = container.childElementCount === 0;
         if (!entries.length) { container.textContent = '(no logs yet)'; return; }
@@ -5577,7 +5578,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var showSrc = Object.keys(srcCount).length > 1;
 
         var frag = document.createDocumentFragment();
-        entries.forEach(function (e) {
+        entries.slice(from || 0).forEach(function (e) {
             var raw = e.text || '';
             var ts = '';
             var m = raw.match(/^\[(\d{2}:\d{2}:\d{2})\] ?/);
@@ -5612,7 +5613,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
             frag.appendChild(line);
         });
-        container.textContent = '';
+        if (!from) container.textContent = '';
         container.appendChild(frag);
         if (stickToBottom || wasEmpty) container.scrollTop = container.scrollHeight;
     }
@@ -5832,12 +5833,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             entries = logIssueEntries(entries);
             if (!entries.length) { content.textContent = '(no warnings or errors in this run)'; return; }
         }
-        // The status poll (every 5 s) brings the same log again and again: the lines already
-        // shown are not built again (a long run's log is over a thousand lines).
-        var sig = selected + '\x1E' + (_logIssuesOnly ? 1 : 0) + (running(selected) ? 1 : 0) + '\x1E' + entries.map(function (e) { return e.text; }).join('\n');
-        if (content._hscLogSig === sig && content.childElementCount) return;
-        content._hscLogSig = sig;
-        renderLogLines(content, entries, running(selected));
+        // The status poll (every 5 s, every second during a run) brings the same log again, or the
+        // same log with lines added: the lines already shown are not built again (a long run's
+        // log is over a thousand lines). Each line is drawn from its own text only.
+        var key = selected + '\x1E' + (_logIssuesOnly ? 1 : 0), texts = entries.map(function (e) { return e.text; });
+        var shown = content._hscLogShown, isRunning = running(selected);
+        var same = !!shown && shown.key === key && content.childElementCount > 0 && texts.length >= shown.texts.length
+            && shown.texts.every(function (t, i) { return t === texts[i]; });
+        content._hscLogShown = { key: key, texts: texts, running: isRunning };
+        if (same && texts.length === shown.texts.length && shown.running === isRunning) return;
+        renderLogLines(content, entries, isRunning, same ? shown.texts.length : 0);
     }
 
     // A group, phase or run header line of the log (timestamp already removed).
