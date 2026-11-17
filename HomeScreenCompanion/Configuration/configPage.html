@@ -73,6 +73,39 @@
             --hsc-op-or-text: #9a5714;
         }
 
+        /* Source type picker: tiles instead of a dropdown. Chosen tile is lifted neutrally
+           (lighter surface, thin border, small shadow, bold text), like the segmented control. */
+        .hsc-st-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));  /* always 4 + 4 */
+            gap: 6px;
+            margin-top: 6px;
+            max-width: 640px;
+        }
+        .hsc-st-tile {
+            display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+            gap: 2px; padding: 8px 6px 7px;
+            background: var(--hsc-tint-1); color: inherit; font: inherit; text-align: center;
+            border: 1px solid var(--hsc-hairline); border-radius: 8px; cursor: pointer;
+            opacity: 0.8;
+            transition: background 0.15s, border-color 0.15s, opacity 0.15s, box-shadow 0.15s;
+        }
+        .hsc-st-tile:hover { background: var(--hsc-tint-2); opacity: 1; }
+        .hsc-st-tile.active {
+            background: var(--hsc-seg-on-bg); border-color: var(--hsc-hairline-strong);
+            box-shadow: var(--hsc-seg-on-shadow); opacity: 1;
+        }
+        .hsc-st-icon {
+            display: flex; align-items: center; justify-content: center;
+            width: 30px; height: 30px; border-radius: 50%; margin-bottom: 2px;
+            background: var(--hsc-tint-2); color: var(--st-color);
+        }
+        .hsc-st-icon .md-icon { font-size: 18px; }
+        .hsc-st-tile.active .hsc-st-icon { background: var(--hsc-tint-3); }
+        .hsc-st-title { font-size: 0.85em; line-height: 1.2; }
+        .hsc-st-tile.active .hsc-st-title { font-weight: 600; }
+        .hsc-st-sub { font-size: 0.7em; line-height: 1.2; opacity: 0.65; }
+
         /* Keyboard focus on our own (non-Emby) controls */
         #HomeScreenCompanionConfigPage button:not([is]):focus-visible,
         .modal-backdrop button:not([is]):focus-visible,

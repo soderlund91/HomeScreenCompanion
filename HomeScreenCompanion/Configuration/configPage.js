@@ -3440,6 +3440,30 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         return `<span class="tag-indicator source" title="${e.title}"><i class="md-icon" style="font-size:1.1em;">${e.icon}</i></span>`;
     }
 
+    // Source type picker: a grid of tiles. The hidden .selSourceType select still holds the value
+    // (everything else reads it and listens for its change event); a tile sets it and fires change.
+    var SOURCE_TYPE_TILES = [
+        // Order is the owner's: row 1 External, Smart Playlist, Your Next Watch, AI; row 2 Rotating, Manual, Local Collection, Local Playlist.
+        { v: 'External',         icon: 'language',             color: 'var(--hsc-info-text)', title: 'External List',          sub: 'Trakt, MDBList, TMDb or JSON' },
+        { v: 'MediaInfo',        icon: 'tune',                 color: 'var(--hsc-cat-imported)', title: 'Smart Playlist',         sub: 'Filter your own library' },
+        { v: 'NextWatch',        icon: 'recommend',            color: 'var(--hsc-primary-text)', title: 'Your Next Watch',        sub: 'Personal picks per user' },
+        { v: 'AI',               icon: 'auto_awesome',         color: 'var(--hsc-advanced)', title: 'AI created list',        sub: 'Describe it, AI builds it' },
+        { v: 'RotatingExisting', icon: 'autorenew',            color: 'var(--hsc-cat-toplist)', title: 'Rotating from existing', sub: 'One row that rotates' },
+        { v: 'Manual',           icon: 'format_list_numbered', color: 'var(--hsc-cat-movies)', title: 'Manual List',            sub: 'Pick titles by hand' },
+        { v: 'LocalCollection',  icon: 'folder_special',       color: 'var(--hsc-cat-collection)', title: 'Local Collection',       sub: 'A collection in Emby' },
+        { v: 'LocalPlaylist',    icon: 'playlist_play',        color: 'var(--hsc-cat-playlist)', title: 'Local Playlist',         sub: 'A playlist in Emby' }
+    ];
+
+    function sourceTypeGridHtml(sourceType) {
+        return '<div class="hsc-st-grid" role="radiogroup" aria-label="Source Type">' + SOURCE_TYPE_TILES.map(function (t) {
+            var on = t.v === sourceType;
+            return '<button type="button" class="hsc-st-tile' + (on ? ' active' : '') + '" data-st="' + t.v + '" role="radio" aria-checked="' + on + '" style="--st-color:' + t.color + ';">' +
+                '<span class="hsc-st-icon"><i class="md-icon">' + t.icon + '</i></span>' +
+                '<span class="hsc-st-title">' + t.title + '</span>' +
+                '<span class="hsc-st-sub">' + t.sub + '</span></button>';
+        }).join('') + '</div>';
+    }
+
     function renderTagGroup(tagConfig, container, prepend, index, isNew, afterRef) {
         var isChecked = tagConfig.Active !== false ? 'checked' : '';
         var tagName = tagConfig.Tag || '';
@@ -3589,6 +3613,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     <div class="inputContainer" style="flex-grow:1;"><input is="emby-input" class="txtEntryLabel" type="text" label="Display Name" value="${labelName}" /></div>
                     <div style="margin-bottom: 15px;">
                         <label class="selectLabel">Source Type</label>
+                        ${sourceTypeGridHtml(sourceType)}
+                        <div class="source-type-select-holder" style="display:none;">
                         <select is="emby-select" class="selSourceType" style="width:100%;">
                             <option value="" ${!sourceType ? 'selected' : ''}>-- Select source type --</option>
                             <option value="AI" ${sourceType === 'AI' ? 'selected' : ''}>AI created lists</option>
@@ -3600,6 +3626,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                             <option value="NextWatch" ${sourceType === 'NextWatch' ? 'selected' : ''}>Personal: Your Next Watch</option>
                             <option value="RotatingExisting" ${sourceType === 'RotatingExisting' ? 'selected' : ''}>Rotating from existing</option>
                         </select>
+                        </div>
                         <p class="source-type-hint" style="margin:6px 0 0 0; font-size:1em; opacity:0.8; line-height:1.4;">${(function(st) {
                             if (st === 'External')         return 'Use an external list to tag, or create a collection, from the items that match your library.';
                             if (st === 'LocalCollection') return 'Every item in the selected collection(s) gets the configured tag or is added to a new collection. You can also use this to create a curated list of selected collections as a home screen section.';
@@ -4635,9 +4662,23 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             if (/Limit$/.test(e.target.className.split(' ').filter(function (c) { return c.indexOf('txt') === 0; })[0] || '')) updateBadges(row);
         });
 
+        row.addEventListener('click', function (e) {
+            var tile = e.target.closest('.hsc-st-tile');
+            if (!tile || !row.contains(tile)) return;
+            var sel = row.querySelector('.selSourceType');
+            if (!sel || sel.value === tile.dataset.st) return;
+            sel.value = tile.dataset.st;
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
         row.addEventListener('change', e => {
             if (e.target.classList.contains('selSourceType')) {
                 var type = e.target.value;
+                row.querySelectorAll('.hsc-st-tile').forEach(function (t) {
+                    var on = t.dataset.st === type;
+                    t.classList.toggle('active', on);
+                    t.setAttribute('aria-checked', on);
+                });
                 // Your Next Watch has no top-list (its row is each user's own playlist; the box is hidden).
                 var tlBox = row.querySelector('.chkEnableTopList');
                 if (type === 'NextWatch' && tlBox && tlBox.checked) {
