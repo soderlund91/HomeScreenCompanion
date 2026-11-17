@@ -105,6 +105,20 @@
         .hsc-st-title { font-size: 0.85em; line-height: 1.2; }
         .hsc-st-tile.active .hsc-st-title { font-weight: 600; }
         .hsc-st-sub { font-size: 0.7em; line-height: 1.2; opacity: 0.65; }
+        /* Folded: only the chosen tile, laid out as one line, with Change next to it. */
+        .hsc-st-picker .btnStChange { display: none; }
+        .hsc-st-picker.collapsed { display: flex; align-items: center; gap: 10px; max-width: 640px; margin-top: 6px; }
+        .hsc-st-picker.collapsed .btnStChange { display: inline-flex; align-items: center; flex-shrink: 0; margin: 0; }
+        .hsc-st-picker.collapsed .hsc-st-grid { display: block; flex: 1; min-width: 0; margin: 0; }
+        .hsc-st-picker.collapsed .hsc-st-tile:not(.active) { display: none; }
+        .hsc-st-picker.collapsed .hsc-st-tile.active {
+            display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto;
+            column-gap: 10px; row-gap: 0; align-items: center; text-align: left;
+            width: 100%; padding: 6px 12px 6px 8px;
+        }
+        .hsc-st-picker.collapsed .hsc-st-tile.active .hsc-st-icon { grid-row: 1 / span 2; margin: 0; }
+        .hsc-st-picker.collapsed .hsc-st-title { align-self: end; }
+        .hsc-st-picker.collapsed .hsc-st-sub { align-self: start; }
 
         /* Keyboard focus on our own (non-Emby) controls */
         #HomeScreenCompanionConfigPage button:not([is]):focus-visible,

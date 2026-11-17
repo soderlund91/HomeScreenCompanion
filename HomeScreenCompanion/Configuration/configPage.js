@@ -3454,14 +3454,26 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         { v: 'LocalPlaylist',    icon: 'playlist_play',        color: 'var(--hsc-cat-playlist)', title: 'Local Playlist',         sub: 'A playlist in Emby' }
     ];
 
+    // With a type chosen the picker is folded to that one tile + Change; a click on either opens all
+    // tiles again, and picking a tile (or the chosen one again) folds it.
     function sourceTypeGridHtml(sourceType) {
-        return '<div class="hsc-st-grid" role="radiogroup" aria-label="Source Type">' + SOURCE_TYPE_TILES.map(function (t) {
+        return '<div class="hsc-st-picker' + (sourceType ? ' collapsed' : '') + '">' +
+            '<div class="hsc-st-grid" role="radiogroup" aria-label="Source Type">' + SOURCE_TYPE_TILES.map(function (t) {
             var on = t.v === sourceType;
             return '<button type="button" class="hsc-st-tile' + (on ? ' active' : '') + '" data-st="' + t.v + '" role="radio" aria-checked="' + on + '" style="--st-color:' + t.color + ';">' +
                 '<span class="hsc-st-icon"><i class="md-icon">' + t.icon + '</i></span>' +
                 '<span class="hsc-st-title">' + t.title + '</span>' +
                 '<span class="hsc-st-sub">' + t.sub + '</span></button>';
-        }).join('') + '</div>';
+        }).join('') + '</div>' +
+            '<button type="button" is="emby-button" class="raised hsc-btn-secondary hsc-btn-sm btnStChange"><i class="md-icon" style="font-size:1.1em; margin-right:4px;">swap_horiz</i><span>Change</span></button>' +
+            '</div>';
+    }
+
+    function setSourceTypePickerOpen(row, open) {
+        var picker = row.querySelector('.hsc-st-picker');
+        if (!picker) return;
+        var type = (row.querySelector('.selSourceType') || {}).value;
+        picker.classList.toggle('collapsed', !open && !!type);
     }
 
     function renderTagGroup(tagConfig, container, prepend, index, isNew, afterRef) {
@@ -4663,10 +4675,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         });
 
         row.addEventListener('click', function (e) {
+            if (e.target.closest('.btnStChange')) { setSourceTypePickerOpen(row, true); return; }
             var tile = e.target.closest('.hsc-st-tile');
             if (!tile || !row.contains(tile)) return;
+            var picker = tile.closest('.hsc-st-picker');
+            if (picker && picker.classList.contains('collapsed')) { setSourceTypePickerOpen(row, true); return; }
             var sel = row.querySelector('.selSourceType');
-            if (!sel || sel.value === tile.dataset.st) return;
+            if (!sel) return;
+            if (sel.value === tile.dataset.st) { setSourceTypePickerOpen(row, false); return; }
             sel.value = tile.dataset.st;
             sel.dispatchEvent(new Event('change', { bubbles: true }));
         });
@@ -4679,6 +4695,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     t.classList.toggle('active', on);
                     t.setAttribute('aria-checked', on);
                 });
+                setSourceTypePickerOpen(row, false);
                 // Your Next Watch has no top-list (its row is each user's own playlist; the box is hidden).
                 var tlBox = row.querySelector('.chkEnableTopList');
                 if (type === 'NextWatch' && tlBox && tlBox.checked) {
