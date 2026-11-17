@@ -146,6 +146,7 @@ namespace HomeScreenCompanion
         public string StartedUtc { get; set; } = string.Empty;
         public string Step { get; set; } = string.Empty;   // what a running sync is doing now
         public string Waiting { get; set; } = string.Empty; // runs waiting for this one to finish (see RunGate)
+        public string Gentle { get; set; } = string.Empty;  // "1 person watching, gentle mode in use" while the run is paced (GentleMode.StatusText)
         public List<GroupIssue> GroupIssues { get; set; } = new List<GroupIssue>(); // each group's warnings / error from its last run
     }
 
@@ -478,6 +479,13 @@ namespace HomeScreenCompanion
         public List<string> Ids { get; set; } = new List<string>();
     }
 
+    // Whether a collection with this name is in Emby and was not made by HSC (nor imported): the
+    // delete dialog then lists it as kept.
+    [Route("/HomeScreenCompanion/Collections/Owner", "GET")]
+    [Authenticated(Roles = "Admin")]
+    public class GetCollectionOwnerRequest : IReturn<GetCollectionOwnerResponse> { public string Name { get; set; } = ""; }
+    public class GetCollectionOwnerResponse { public bool Exists { get; set; } public bool NotMadeByHsc { get; set; } public bool MadeByHsc { get; set; } }
+
     [Route("/HomeScreenCompanion/Manage/DeleteTag", "POST")]
     [Authenticated(Roles = "Admin")]
     public class DeleteManagedTagRequest : IReturn<DeleteManagedTagResponse> { public string TagName { get; set; } = ""; }
@@ -508,6 +516,7 @@ namespace HomeScreenCompanion
         public string StartedUtc { get; set; } = "";
         public string Step { get; set; } = "";   // what a running sync is doing now
         public string Waiting { get; set; } = ""; // runs waiting for this one to finish (see RunGate)
+        public string Gentle { get; set; } = "";  // "1 person watching, gentle mode in use" while the run is paced (GentleMode.StatusText)
     }
 
     [Route("/HomeScreenCompanion/TopList/PrepareFolder", "POST")]
@@ -649,6 +658,25 @@ namespace HomeScreenCompanion
     public class GetAllMoviesResponse
     {
         public List<MovieItem> Movies { get; set; } = new List<MovieItem>();
+    }
+
+    // The Manual source's title search: Emby's own search without HSC's copies (ranked and top-list).
+    [Route("/HomeScreenCompanion/SearchTitles", "GET")]
+    [Authenticated(Roles = "Admin")]
+    public class SearchTitlesRequest : IReturn<SearchTitlesResponse>
+    {
+        public string SearchTerm { get; set; } = "";
+    }
+    public class SearchTitleItem
+    {
+        public string Id { get; set; } = "";          // InternalId, as the web API shows ids
+        public string Name { get; set; } = "";
+        public int? ProductionYear { get; set; }
+        public string Type { get; set; } = "";
+    }
+    public class SearchTitlesResponse
+    {
+        public List<SearchTitleItem> Items { get; set; } = new List<SearchTitleItem>();
     }
 
     // Series for the manual show top-list picker (same shape as AllMovies).
@@ -1123,6 +1151,7 @@ public class HomeScreenCompanionService : IService
                 StartedUtc = HomeScreenCompanionTask.LastStartedUtc?.ToString("o") ?? "",
                 Step = HomeScreenCompanionTask.Progress.Step,
                 Waiting = RunGate.WaitingFor(HomeScreenCompanionTask.Progress.Step, HomeScreenCompanionTask.IsRunning),
+                Gentle = HomeScreenCompanionTask.IsRunning ? GentleMode.StatusText() : "",
                 GroupIssues = GroupIssues.All()
             };
         }
@@ -1417,7 +1446,8 @@ public class HomeScreenCompanionService : IService
         // The tasks the Run menu may start.
         private static readonly HashSet<string> RunMenuTasks = new HashSet<string>(StringComparer.Ordinal)
         {
-            "HomeScreenCompanionSyncTask", "HomeSectionSyncTask", "TopListSyncTask", "MergeTopListVersionsTask", "ContinueWatchingBumpTask", "OriginalPostersTask"
+            "HomeScreenCompanionSyncTask", "HomeSectionSyncTask", "TopListSyncTask", "MergeTopListVersionsTask", "ContinueWatchingBumpTask", "OriginalPostersTask",
+            "HomeScreenCompanionRandomPick"
         };
 
         public object Post(RunTaskRequest request)
@@ -1924,7 +1954,8 @@ public class HomeScreenCompanionService : IService
                 Logs = logs,
                 StartedUtc = HomeSectionSyncTask.LastStartedUtc?.ToString("o") ?? "",
                 Step = HomeSectionSyncTask.Progress.Step,
-                Waiting = RunGate.WaitingFor(HomeSectionSyncTask.Progress.Step, HomeSectionSyncTask.IsRunning)
+                Waiting = RunGate.WaitingFor(HomeSectionSyncTask.Progress.Step, HomeSectionSyncTask.IsRunning),
+                Gentle = HomeSectionSyncTask.IsRunning ? GentleMode.StatusText() : ""
             };
         }
 
@@ -1939,7 +1970,8 @@ public class HomeScreenCompanionService : IService
                 Logs = logs,
                 StartedUtc = TopListSyncTask.LastStartedUtc?.ToString("o") ?? "",
                 Step = TopListSyncTask.Progress.Step,
-                Waiting = RunGate.WaitingFor(TopListSyncTask.Progress.Step, TopListSyncTask.IsRunning)
+                Waiting = RunGate.WaitingFor(TopListSyncTask.Progress.Step, TopListSyncTask.IsRunning),
+                Gentle = TopListSyncTask.IsRunning ? GentleMode.StatusText() : ""
             };
         }
 
@@ -2183,13 +2215,18 @@ public class HomeScreenCompanionService : IService
                         var currentSections = _userManager.GetHomeSections(userInternalId, CancellationToken.None);
                         var allSections = currentSections?.Sections ?? Array.Empty<ContentSection>();
 
-                        // By title only a row no other source or top-list owns, and never a row on a
-                        // top-list's library (a top-list can have the same title).
+                        // The id is gone: the row that shows what this one shows, else by its title a
+                        // row that shows only what is gone (ShowsOnlyGone). Only a row no other source
+                        // or top-list owns, and never a row on a top-list's library. As the full sync.
                         ContentSection ownedSection = allSections.FirstOrDefault(s => s.Id == tracking.SectionId);
-                        if (ownedSection == null && settingsDict.TryGetValue("CustomName", out var _applyFallbackName) && !string.IsNullOrEmpty(_applyFallbackName))
-                            ownedSection = allSections.FirstOrDefault(s => HomeScreenCompanionTask.SameTitle(s.CustomName, _applyFallbackName)
-                                && !HomeScreenCompanionTask.SectionOwnedElsewhere(config, tc, userId, s.Id)
-                                && !TopListSyncTask.IsTopListRow(s, topListLibraries));
+                        bool MayTake(ContentSection s) => !HomeScreenCompanionTask.SectionOwnedElsewhere(config, tc, userId, s.Id)
+                            && !TopListSyncTask.IsTopListRow(s, topListLibraries);
+                        var shows = HomeScreenCompanionTask.SourceRowShows(_libraryManager, tc, sectionType ?? "", userId);
+                        if (ownedSection == null && shows.Count > 0)
+                            ownedSection = allSections.FirstOrDefault(s => HomeScreenCompanionTask.ShowsSame(s, sectionType, shows) && MayTake(s));
+                        if (ownedSection == null && settingsDict.TryGetValue("CustomName", out var _applyFallbackName) && !string.IsNullOrWhiteSpace(_applyFallbackName))
+                            ownedSection = allSections.FirstOrDefault(s => HomeScreenCompanionTask.SameTitle(s.CustomName, _applyFallbackName) && MayTake(s)
+                                && HomeScreenCompanionTask.ShowsOnlyGone(s, _libraryManager));
 
                         if (ownedSection == null) continue;
 
@@ -2553,6 +2590,21 @@ public class HomeScreenCompanionService : IService
             return result;
         }
 
+        public object Get(GetCollectionOwnerRequest request)
+        {
+            var name = (request.Name ?? "").Trim();
+            var coll = name.Length == 0 ? null : _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Name = name, Recursive = true })
+                .FirstOrDefault(c => !TagAnchor.IsAnchor(c, _jsonSerializer));
+            bool created = coll != null && CollectionOwnership.IsCreated(coll, _libraryManager);
+            return new GetCollectionOwnerResponse
+            {
+                Exists = coll != null,
+                MadeByHsc = created,
+                NotMadeByHsc = coll != null && !created
+                    && !HomeScreenCompanionTask.RecordImportedCollections(Plugin.Instance?.Configuration).Contains(name)
+            };
+        }
+
         public object Get(GetImportCollectionsRequest request)
         {
             var collections = _libraryManager.GetItemList(new InternalItemsQuery { IncludeItemTypes = new[] { "BoxSet" }, Recursive = true })
@@ -2597,9 +2649,9 @@ public class HomeScreenCompanionService : IService
 
                     // The current titles, in the collection's own order (sort title). A Manual List
                     // holds movies and shows (and music); a film's other versions stay out, as on
-                    // every HSC collection. Top-list copies are added by the top-list mirror, not here.
+                    // every HSC collection. HSC's copies (top-list, ranked) are never a source's titles.
                     var members = _libraryManager.GetItemList(new InternalItemsQuery { CollectionIds = new[] { coll.InternalId }, Recursive = true, IsVirtualItem = false })
-                        .Where(i => !TopListCollectionMirror.IsTopListItem(i))
+                        .Where(TopListCollectionMirror.IsOriginal)
                         .OrderBy(i => i.SortName ?? i.Name ?? "", StringComparer.OrdinalIgnoreCase).ThenBy(i => i.InternalId)
                         .ToList();
                     var usable = members.Where(HomeScreenCompanionTask.IsTaggableTopLevelItem).ToList();
@@ -2974,6 +3026,7 @@ public class HomeScreenCompanionService : IService
                 var movies = items
                     .Where(i => !string.IsNullOrEmpty(i.Path)
                              && !i.Path.StartsWith(toplistsFolder, StringComparison.OrdinalIgnoreCase)
+                             && !RankedCollections.IsRankedCopy(i)
                              && libraries.Contains(i))
                     .OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase)
                     .ThenBy(i => i.ProductionYear)
@@ -2998,6 +3051,40 @@ public class HomeScreenCompanionService : IService
             catch { return new GetAllMoviesResponse { Movies = new List<MovieItem>() }; }
         }
 
+        // Copies are dropped before the limit, page by page in Emby's search order, so 20 real titles still show.
+        public object Get(SearchTitlesRequest request)
+        {
+            const int Wanted = 20, Page = 50;
+            var response = new SearchTitlesResponse();
+            var term = (request.SearchTerm ?? "").Trim();
+            if (term.Length == 0) return response;
+            try
+            {
+                for (int start = 0; response.Items.Count < Wanted; start += Page)
+                {
+                    var page = _libraryManager.GetItemList(new InternalItemsQuery
+                    {
+                        SearchTerm = term,
+                        IncludeItemTypes = new[] { "Movie", "Series" },
+                        Recursive = true,
+                        StartIndex = start,
+                        Limit = Page
+                    });
+                    foreach (var i in page.Where(TopListCollectionMirror.IsOriginal).Take(Wanted - response.Items.Count))
+                        response.Items.Add(new SearchTitleItem
+                        {
+                            Id = i.InternalId.ToString(),
+                            Name = i.Name ?? "",
+                            ProductionYear = i.ProductionYear,
+                            Type = i.GetType().Name
+                        });
+                    if (page.Length < Page) break;
+                }
+            }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+            return response;
+        }
+
         public object Get(GetAllSeriesRequest request)
         {
             try
@@ -3005,7 +3092,7 @@ public class HomeScreenCompanionService : IService
                 var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var libraries = SearchLibraries(request.LibraryIds);
                 var series = ShowTopList.AllSeries(_libraryManager)
-                    .Where(libraries.Contains)
+                    .Where(i => !RankedCollections.IsRankedCopy(i) && libraries.Contains(i))
                     .OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase)
                     .ThenBy(i => i.ProductionYear)
                     .Select(i => new MovieItem
@@ -4865,7 +4952,7 @@ public class HomeScreenCompanionService : IService
                     if (settings.TryGetValue(key, out var csv))
                         foreach (var id in SplitIds(csv)) AddLibrary(id);
 
-                foreach (var id in t.ManualItemIds ?? new List<string>())
+                foreach (var id in (t.ManualItemIds ?? new List<string>()).Concat(t.PinnedItemIds ?? new List<string>()))
                 {
                     if (string.IsNullOrWhiteSpace(id) || file.Items.ContainsKey(id)) continue;
                     BaseItem? item = null;
@@ -4949,7 +5036,7 @@ public class HomeScreenCompanionService : IService
 
                 // Manual List items: by IMDb / TMDb / TVDb id, then name + year.
                 Func<SourceItemRef, BaseItem?>? findItem = null;
-                if (tags.Any(t => t.ManualItemIds.Count > 0)) findItem = BuildSourceItemFinder();
+                if (tags.Any(t => t.ManualItemIds.Count > 0 || (t.PinnedItemIds?.Count ?? 0) > 0)) findItem = BuildSourceItemFinder();
                 var missingItems = new List<string>();
 
                 // Images: uploaded once per distinct file, like the card's own upload button.
@@ -5044,10 +5131,11 @@ public class HomeScreenCompanionService : IService
                     }
                     if (settingsChanged) t.HomeSectionSettings = _jsonSerializer.SerializeToString(settings);
 
-                    if (t.ManualItemIds.Count > 0)
+                    // Hand-picked and pinned titles: found here by their ids (IMDb / TMDb / TVDb, name).
+                    List<string> MapItems(List<string> ids)
                     {
                         var mappedItems = new List<string>();
-                        foreach (var id in t.ManualItemIds.Where(x => !string.IsNullOrWhiteSpace(x)))
+                        foreach (var id in ids.Where(x => !string.IsNullOrWhiteSpace(x)))
                         {
                             file.Items.TryGetValue(id, out var itemRef);
                             var item = itemRef != null && findItem != null ? findItem(itemRef) : null;
@@ -5060,8 +5148,10 @@ public class HomeScreenCompanionService : IService
                             var localId = item.InternalId.ToString();
                             if (!mappedItems.Contains(localId)) mappedItems.Add(localId);
                         }
-                        t.ManualItemIds = mappedItems;
+                        return mappedItems;
                     }
+                    if (t.ManualItemIds.Count > 0) t.ManualItemIds = MapItems(t.ManualItemIds);
+                    if ((t.PinnedItemIds?.Count ?? 0) > 0) t.PinnedItemIds = MapItems(t.PinnedItemIds!);
 
                     t.CollectionPosterPath     = MapImage(t.CollectionPosterPath, "Collection poster");
                     t.CollectionBackgroundPath = MapImage(t.CollectionBackgroundPath, "Collection background");

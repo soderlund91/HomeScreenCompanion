@@ -69,7 +69,7 @@ namespace HomeScreenCompanion
         }
 
         // A real library movie: neither a top-list copy nor a ranked-collection copy.
-        private static bool IsOriginal(BaseItem item) => !IsTopListItem(item) && !RankedCollections.IsRankedCopy(item);
+        internal static bool IsOriginal(BaseItem item) => !IsTopListItem(item) && !RankedCollections.IsRankedCopy(item);
 
         private static long[] CollectionIdsOf(BaseItem item) =>
             (item.Collections ?? Array.Empty<MediaBrowser.Model.Dto.LinkedItemInfo>())

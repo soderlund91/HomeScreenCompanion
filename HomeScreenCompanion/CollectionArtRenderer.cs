@@ -511,17 +511,20 @@ namespace HomeScreenCompanion
             {
                 // Over 40 posters the cards are small: each poster is decoded at about 600 px high
                 // (JPEG decodes straight to a smaller scale), so 100 posters stay light on memory.
+                // Up to 40: no larger than the biggest sharp card a style draws, so a 2000x3000 file
+                // is not held at full size (see DecodeForCards).
                 // Decoded side by side (a few at a time), kept in list order.
+                int w = background ? BackgroundW : PosterW, h = background ? BackgroundH : PosterH;
                 bool small = posterPaths.Count > 40;
                 int maxH = SmallDecodeHeight(posterPaths.Count);
+                int count = posterPaths.Count;
                 var decoded = new SKBitmap?[posterPaths.Count];
                 System.Threading.Tasks.Parallel.For(0, posterPaths.Count,
                     new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = DecodeThreads },
-                    i => { try { decoded[i] = small ? DecodeSmall(posterPaths[i], maxH) : SKBitmap.Decode(posterPaths[i]); } catch { decoded[i] = null; } });
+                    i => { try { decoded[i] = small ? DecodeSmall(posterPaths[i], maxH) : DecodeForCards(posterPaths[i], w, h, count); } catch { decoded[i] = null; } });
                 foreach (var bmp in decoded) if (bmp != null) posters.Add(bmp);
                 if (posters.Count == 0) throw new InvalidOperationException("none of the posters could be read");
 
-                int w = background ? BackgroundW : PosterW, h = background ? BackgroundH : PosterH;
                 using var surface = SKSurface.Create(new SKImageInfo(w, h, SKColorType.Rgba8888, SKAlphaType.Premul))
                     ?? throw new InvalidOperationException($"SkiaSharp could not create a {w}x{h} surface");
                 var canvas = surface.Canvas;
@@ -558,6 +561,26 @@ namespace HomeScreenCompanion
         // How high a poster is decoded when there are over 40 (the cards are small then): 600 px
         // up to 100 posters, less beyond that (250 cards on a poster are under 150 px high).
         private static int SmallDecodeHeight(int count) => count <= 100 ? 600 : count <= 160 ? 450 : 340;
+
+        // A poster (up to 40 of them) decoded no larger than the biggest sharp card it can get on a
+        // w x h picture. One or two posters: enough to cover the whole picture (a collage cell or a
+        // wall card can be that big). Three or more: also at most 1.6 x the picture's height (the
+        // Spotlight hero needs 1.35 x on a background, a tilted collage cell about 1.2 x). Blurred
+        // backdrops need far less (DrawBackdrop draws at a quarter size). A full decode when the
+        // file is already that small or cannot be read ahead.
+        private static SKBitmap? DecodeForCards(string path, int w, int h, int count)
+        {
+            int maxH;
+            using (var codec = SKCodec.Create(path))
+            {
+                if (codec == null || codec.Info.Width <= 0 || codec.Info.Height <= 0) return SKBitmap.Decode(path);
+                var info = codec.Info;
+                double cover = Math.Max(h, w * (double)info.Height / info.Width);
+                maxH = (int)Math.Ceiling(count <= 2 ? cover : Math.Min(cover, h * 1.6));
+                if (info.Height <= maxH) return SKBitmap.Decode(codec);
+            }
+            return DecodeSmall(path, maxH);
+        }
 
         // A poster decoded at about maxH pixels high (never larger than the file).
         private static SKBitmap? DecodeSmall(string path, int maxH)
