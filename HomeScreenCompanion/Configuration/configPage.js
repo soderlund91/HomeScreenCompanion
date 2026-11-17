@@ -882,7 +882,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     function hseSettingsUseAdvanced(json) {
         var s = {};
         try { s = JSON.parse(json || '{}') || {}; } catch (e) { }
-        return !!(s.DisplayMode || s.ScrollDirection || normCardSize(s.CardSizeOffset) !== '0');
+        return !!(s.DisplayMode || s.ScrollDirection || normCardSize(s.CardSizeOffset) !== '0' || s._hideTitle === 'true');
     }
 
     // The level for a configuration saved before there was one: Advanced when it already uses a
@@ -6823,7 +6823,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var hideTitle = s._hideTitle === 'true';
         html += '<div style="margin-bottom:12px;"><input is="emby-input" type="text" class="hse-field-str" data-field="CustomName" label="Custom Title" value="' + customName + '" placeholder="' + customNamePlaceholder + '"' + (hideTitle ? ' disabled' : '') + '/><div class="fieldDescription hsc-rot-only"><code>{name}</code> becomes the name of what the row shows, e.g. <code>Now Showing: {name}</code>. Leave it empty for just the name.</div></div>';
         // Written to Emby as a title of one space, which Emby's apps show as no title.
-        html += '<div class="checkboxContainer" style="margin:-4px 0 12px;"><label><input is="emby-checkbox" type="checkbox" class="chkHseHideTitle" data-field="_hideTitle"' + (hideTitle ? ' checked' : '') + '/><span>Hide row title</span></label>' +
+        html += '<div class="checkboxContainer hsc-adv" data-adv="check" style="margin:-4px 0 12px;"><label><input is="emby-checkbox" type="checkbox" class="chkHseHideTitle" data-field="_hideTitle"' + (hideTitle ? ' checked' : '') + '/><span>Hide row title' + ADV_BADGE + '</span></label>' +
             '<div class="fieldDescription">The row is shown without a title on the home screen. Tested in Emby\'s web app; other Emby apps may still show a title.</div></div>';
 
         // Where the row goes. The Row list is the first selected user's rows (filled in by
