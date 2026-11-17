@@ -5827,6 +5827,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             entries = logIssueEntries(entries);
             if (!entries.length) { content.textContent = '(no warnings or errors in this run)'; return; }
         }
+        // The status poll (every 5 s) brings the same log again and again: the lines already
+        // shown are not built again (a long run's log is over a thousand lines).
+        var sig = selected + '\x1E' + (_logIssuesOnly ? 1 : 0) + (running(selected) ? 1 : 0) + '\x1E' + entries.map(function (e) { return e.text; }).join('\n');
+        if (content._hscLogSig === sig && content.childElementCount) return;
+        content._hscLogSig = sig;
         renderLogLines(content, entries, running(selected));
     }
 
