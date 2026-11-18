@@ -1920,7 +1920,7 @@ namespace HomeScreenCompanion
                     _log.Info($"  Playlists:     {statsList.Sum(g => g.PlaylistUsersCreated)} created, {statsList.Sum(g => g.PlaylistUsersUpdated)} updated{(statsList.Sum(g => g.PlaylistUsersFailed) > 0 ? $", {statsList.Sum(g => g.PlaylistUsersFailed)} failed" : "")}");
                 _log.Info($"  Home sections: {totalHsSynced} synced, {totalHsRemoved + _deletedGroupRowsRemoved} removed");
                 if (_userStatus?.SummaryLine() is string _disabledLine) _log.Info("  " + _disabledLine);
-                foreach (var _gentleLine in GentleMode.SummaryLines()) _log.Info("  " + _gentleLine);
+                GentleMode.WriteSummary(_log, "  ");
                 _log.Info($"  Done in {elapsedStr}  ·  {StatusSymbol(groupsFailed, groupsWarned)} {finalStatus}");
                 _log.Rule();
                 SaveAppliedPicks();
@@ -8278,7 +8278,7 @@ namespace HomeScreenCompanion
             if (gs.EnableHomeSection)
                 _log.Info($"  Home sections: {(gs.HomeSectionSynced ? 1 : 0)} synced");
             if (_userStatus?.SummaryLine() is string disabledLine) _log.Info("  " + disabledLine);
-            foreach (var gentleLine in GentleMode.SummaryLines()) _log.Info("  " + gentleLine);
+            GentleMode.WriteSummary(_log, "  ");
             _log.Info($"  Done in {RunLog.Elapsed(DateTime.Now - startTime)}  ·  {StatusSymbol(failed, warned)} {finalStatus}");
             _log.Rule();
         }

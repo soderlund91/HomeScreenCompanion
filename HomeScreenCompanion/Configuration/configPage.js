@@ -5784,8 +5784,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         return { show: show, fail: fail, body: body };
     }
 
-    // Picks which task's log to show (running task, else the most recently started one, unless the
-    // user chose a tab), updates the tab bar and renders that single log.
+    // Picks which task's log to show (running task, else Tag & Collections, unless the user chose a
+    // tab), updates the tab bar and renders that single log.
     function renderLogModal(view) {
         var content = view.querySelector('#logContent');
         var tabs = view.querySelectorAll('#logTabs .log-tab[data-log]');
@@ -5799,16 +5799,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var showPosters = lastSavedOrigPostersEnabled() || running('op');
         var keys = showPosters ? ['sync', 'hsc', 'tl', 'op'] : ['sync', 'hsc', 'tl'];
 
+        // Opens on the running task, else on Tag & Collections (owner 2026-11-18: not the one that
+        // ran last, which after a full sync was Home Screen).
         var selected = _logTab;
         if (selected && keys.indexOf(selected) < 0) selected = null;
-        if (!selected) {
-            selected = keys.filter(running)[0];
-            if (!selected) {
-                var best = 0;
-                keys.forEach(function (k) { if (startedMs(k) > best) { best = startedMs(k); selected = k; } });
-            }
-            if (!selected) selected = 'sync';
-        }
+        if (!selected) selected = keys.filter(running)[0] || 'sync';
 
         tabs.forEach(function (tab) {
             var k = tab.getAttribute('data-log');
@@ -5984,8 +5979,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     }
 
     // "Running · <step> · <elapsed>" for the Last run chip; the step comes from the Status endpoints.
-    // While gentle mode paces the run, on two lines: "Running · 1 person watching, gentle mode in use",
-    // then "<step> · …" (the label keeps line breaks, see #lastRunStatusLabel).
+    // Only what runs now, never the runs waiting for it (owner 2026-11-18). While gentle mode paces
+    // the run, on two lines: "Running · 1 person watching, gentle mode in use", then "<step> · …".
+    // The label keeps line breaks, always has room for two lines and is cut after them (see
+    // #lastRunStatusLabel); the tooltip has it all.
     function runningStepText(st, isHomeScreen, isPosters) {
         var step = st.Step || '';
         if (isHomeScreen && step.indexOf('Home Screen Sync') !== 0) step = 'Home Screen Sync · ' + step;
@@ -5997,9 +5994,6 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             text += ' · ' + (s >= 3600 ? Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm'
                 : s >= 60 ? Math.floor(s / 60) + 'm ' + (s % 60) + 's' : s + 's');
         }
-        // Runs waiting for this one go last: the label wraps onto two lines and is cut past
-        // that (the full text is in its tooltip).
-        if (st.Waiting) text += ' · ' + st.Waiting;
         return text;
     }
 
@@ -7858,6 +7852,19 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }
     }
 
+    // What the search box looks in: the source's name and tag, its extra tags, its list URLs, and
+    // the collection and playlist names when the source makes them. Lower case, one string.
+    function searchTextOfRow(row) {
+        var parts = [];
+        function val(el) { if (el && el.value) parts.push(el.value); }
+        val(row.querySelector('.txtEntryLabel'));
+        val(row.querySelector('.txtTagName'));
+        row.querySelectorAll('.txtExtraTag, .txtTagUrl').forEach(val);
+        if ((row.querySelector('.chkEnableCollection') || {}).checked) val(row.querySelector('.txtCollectionName'));
+        if ((row.querySelector('.chkEnablePlaylist') || {}).checked) val(row.querySelector('.txtPlaylistName'));
+        return parts.join('\n').toLowerCase();
+    }
+
     function applyFilters(view) {
         var container = view.querySelector('#tagListContainer');
         var rows = container.querySelectorAll('.tag-row');
@@ -7873,27 +7880,28 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var fSrcColl    = view.querySelector('#chkFilterSrcCollection')?.checked;
         var fSrcPlay    = view.querySelector('#chkFilterSrcPlaylist')?.checked;
         var fSrcAI      = view.querySelector('#chkFilterSrcAI')?.checked;
-        var fActive     = view.querySelector('#chkFilterActive')?.checked;
+        var fSrcManual  = view.querySelector('#chkFilterSrcManual')?.checked;
+        var fSrcRot     = view.querySelector('#chkFilterSrcRotating')?.checked;
+        var fSrcNw      = view.querySelector('#chkFilterSrcNextWatch')?.checked;
+        var fActive    = view.querySelector('#chkFilterActive')?.checked;
         var fInactive   = view.querySelector('#chkFilterInactive')?.checked;
         var fIssues     = view.querySelector('#chkFilterIssues')?.checked;
 
         var anyFeature  = fTag || fColl || fSched || fHome;
-        var anySrc      = fSrcExt || fSrcMI || fSrcColl || fSrcPlay || fSrcAI;
+        var anySrc      = fSrcExt || fSrcMI || fSrcColl || fSrcPlay || fSrcAI || fSrcManual || fSrcRot || fSrcNw;
         var anyStatus   = fActive || fInactive;
 
         // Update button appearance
         var btn = view.querySelector('#btnFilterDropdown');
         var lbl = view.querySelector('#filterDropdownLabel');
         if (btn && lbl) {
-            var activeCount = [fTag, fColl, fSched, fHome, fSrcExt, fSrcMI, fSrcColl, fSrcPlay, fSrcAI, fActive, fInactive, fIssues].filter(Boolean).length;
+            var activeCount = [fTag, fColl, fSched, fHome, fSrcExt, fSrcMI, fSrcColl, fSrcPlay, fSrcAI, fSrcManual, fSrcRot, fSrcNw, fActive, fInactive, fIssues].filter(Boolean).length;
             lbl.textContent = activeCount > 0 ? 'Filter (' + activeCount + ')' : 'Filter';
             btn.classList.toggle('active', activeCount > 0);
         }
 
         rows.forEach(row => {
-            var tagName  = (row.querySelector('.txtTagName').value || "").toLowerCase();
-            var entryLbl = (row.querySelector('.txtEntryLabel').value || "").toLowerCase();
-            var matchesSearch = !searchTerm || tagName.includes(searchTerm) || entryLbl.includes(searchTerm);
+            var matchesSearch = !searchTerm || searchTextOfRow(row).includes(searchTerm);
 
             var matchesFeature = true;
             if (anyFeature) {
@@ -7909,7 +7917,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var src = row.querySelector('.selSourceType')?.value || '';
                 matchesSrc = (fSrcExt && src === 'External') || (fSrcMI && src === 'MediaInfo') ||
                              (fSrcColl && src === 'LocalCollection') || (fSrcPlay && src === 'LocalPlaylist') ||
-                             (fSrcAI && src === 'AI');
+                             (fSrcAI && src === 'AI') || (fSrcManual && src === 'Manual') ||
+                             (fSrcRot && src === 'RotatingExisting') || (fSrcNw && src === 'NextWatch');
             }
 
             var matchesStatus = true;
@@ -14408,7 +14417,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                         <div class="search-input-wrapper" style="width: 200px !important; margin-right: 10px; flex-shrink: 0;">
                             <i class="md-icon search-icon">search</i>
-                            <input type="text" id="txtSearchTags" placeholder="Search..." autocomplete="off" style="padding-left: 28px !important; background: rgba(128,128,128,0.06) !important; border: 1px solid var(--line-color) !important; width: 100% !important;" />
+                            <input type="text" id="txtSearchTags" placeholder="Search..." title="Searches the name, tag, extra tags, list URLs and the collection and playlist names" autocomplete="off"style="padding-left: 28px !important; background: rgba(128,128,128,0.06) !important; border: 1px solid var(--line-color) !important; width: 100% !important;" />
                             <i class="md-icon" id="btnClearSearch">close</i>
                         </div>
 
@@ -14431,6 +14440,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                                 <label class="filter-chk-row"><input type="checkbox" id="chkFilterSrcCollection" /><span>Local Collection</span></label>
                                 <label class="filter-chk-row"><input type="checkbox" id="chkFilterSrcMediaInfo" /><span>Local Media Information</span></label>
                                 <label class="filter-chk-row"><input type="checkbox" id="chkFilterSrcPlaylist" /><span>Local Playlist</span></label>
+                                <label class="filter-chk-row"><input type="checkbox" id="chkFilterSrcManual" /><span>Manual List</span></label>
+                                <label class="filter-chk-row"><input type="checkbox" id="chkFilterSrcRotating" /><span>Rotating from existing</span></label>
+                                <label class="filter-chk-row"><input type="checkbox" id="chkFilterSrcNextWatch" /><span>Your Next Watch</span></label>
                                 <div class="filter-dropdown-divider"></div>
                                 <div class="filter-dropdown-label">Status</div>
                                 <label class="filter-chk-row"><input type="checkbox" id="chkFilterActive" /><span style="display:flex;align-items:center;gap:6px;"><span style="width:8px;height:8px;border-radius:50%;background:var(--hsc-primary);flex-shrink:0;"></span>Active</span></label>
@@ -14469,7 +14481,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                     ['#chkFilterTag','#chkFilterCollection','#chkFilterSchedule','#chkFilterHomeScreen',
                      '#chkFilterSrcExternal','#chkFilterSrcMediaInfo','#chkFilterSrcCollection','#chkFilterSrcPlaylist',
-                     '#chkFilterSrcAI','#chkFilterActive','#chkFilterInactive','#chkFilterIssues'
+                     '#chkFilterSrcAI','#chkFilterSrcManual','#chkFilterSrcRotating','#chkFilterSrcNextWatch',
+                     '#chkFilterActive','#chkFilterInactive','#chkFilterIssues'
                     ].forEach(id => view.querySelector(id).addEventListener('change', () => applyFilters(view)));
 
                     // "⚠ 7 groups need attention": toggles the Last run filter.
@@ -15275,7 +15288,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 }
                 ['#chkFilterTag','#chkFilterCollection','#chkFilterSchedule','#chkFilterHomeScreen',
                  '#chkFilterSrcExternal','#chkFilterSrcMediaInfo','#chkFilterSrcCollection','#chkFilterSrcPlaylist',
-                 '#chkFilterSrcAI','#chkFilterActive','#chkFilterInactive','#chkFilterIssues'
+                 '#chkFilterSrcAI','#chkFilterSrcManual','#chkFilterSrcRotating','#chkFilterSrcNextWatch',
+                 '#chkFilterActive','#chkFilterInactive','#chkFilterIssues'
                 ].forEach(id => { var el = view.querySelector(id); if (el) el.checked = false; });
                 var lbl = view.querySelector('#filterDropdownLabel'); if (lbl) lbl.textContent = 'Filter';
                 var btn = view.querySelector('#btnFilterDropdown'); if (btn) btn.classList.remove('active');

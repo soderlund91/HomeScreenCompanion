@@ -81,7 +81,6 @@ namespace HomeScreenCompanion
         public List<string> Logs { get; set; } = new List<string>();
         public string StartedUtc { get; set; } = "";
         public string Step { get; set; } = "";   // what a running sync is doing now
-        public string Waiting { get; set; } = ""; // runs waiting for this one to finish (see RunGate)
         public string Gentle { get; set; } = "";  // "1 person watching, gentle mode in use" while the run is paced (GentleMode.StatusText)
     }
 

@@ -145,7 +145,6 @@ namespace HomeScreenCompanion
         public bool IsRunning { get; set; }
         public string StartedUtc { get; set; } = string.Empty;
         public string Step { get; set; } = string.Empty;   // what a running sync is doing now
-        public string Waiting { get; set; } = string.Empty; // runs waiting for this one to finish (see RunGate)
         public string Gentle { get; set; } = string.Empty;  // "1 person watching, gentle mode in use" while the run is paced (GentleMode.StatusText)
         public List<GroupIssue> GroupIssues { get; set; } = new List<GroupIssue>(); // each group's warnings / error from its last run
     }
@@ -515,7 +514,6 @@ namespace HomeScreenCompanion
         public List<string> Logs { get; set; } = new List<string>();
         public string StartedUtc { get; set; } = "";
         public string Step { get; set; } = "";   // what a running sync is doing now
-        public string Waiting { get; set; } = ""; // runs waiting for this one to finish (see RunGate)
         public string Gentle { get; set; } = "";  // "1 person watching, gentle mode in use" while the run is paced (GentleMode.StatusText)
     }
 
@@ -1150,7 +1148,6 @@ public class HomeScreenCompanionService : IService
                 IsRunning = HomeScreenCompanionTask.IsRunning,
                 StartedUtc = HomeScreenCompanionTask.LastStartedUtc?.ToString("o") ?? "",
                 Step = HomeScreenCompanionTask.Progress.Step,
-                Waiting = RunGate.WaitingFor(HomeScreenCompanionTask.Progress.Step, HomeScreenCompanionTask.IsRunning),
                 Gentle = HomeScreenCompanionTask.IsRunning ? GentleMode.StatusText() : "",
                 GroupIssues = GroupIssues.All()
             };
@@ -1954,7 +1951,6 @@ public class HomeScreenCompanionService : IService
                 Logs = logs,
                 StartedUtc = HomeSectionSyncTask.LastStartedUtc?.ToString("o") ?? "",
                 Step = HomeSectionSyncTask.Progress.Step,
-                Waiting = RunGate.WaitingFor(HomeSectionSyncTask.Progress.Step, HomeSectionSyncTask.IsRunning),
                 Gentle = HomeSectionSyncTask.IsRunning ? GentleMode.StatusText() : ""
             };
         }
@@ -1970,7 +1966,6 @@ public class HomeScreenCompanionService : IService
                 Logs = logs,
                 StartedUtc = TopListSyncTask.LastStartedUtc?.ToString("o") ?? "",
                 Step = TopListSyncTask.Progress.Step,
-                Waiting = RunGate.WaitingFor(TopListSyncTask.Progress.Step, TopListSyncTask.IsRunning),
                 Gentle = TopListSyncTask.IsRunning ? GentleMode.StatusText() : ""
             };
         }
