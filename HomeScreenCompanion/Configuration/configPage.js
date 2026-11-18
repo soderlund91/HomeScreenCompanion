@@ -4155,9 +4155,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         updatePlaylistDescPlaceholder(newRow);
         refreshAdvanced(newRow);
         refreshLimitNotes(newRow);
-        // Auto-size any pre-filled growing textareas
+        // Auto-size any pre-filled growing textareas. In a closed card (its body display:none) a
+        // textarea has no box and its scrollHeight is 0: that is used as is, without reading it,
+        // because the read makes the browser lay out the whole page for every card.
+        var closedBody = newRow.querySelector('.tag-body');
+        if (closedBody && closedBody.style.display !== 'none') closedBody = null;
         newRow.querySelectorAll('textarea.txtMiValue, textarea.txtTagBlacklist').forEach(function (ta) {
             ta.style.height = 'auto';
+            if (closedBody && closedBody.contains(ta)) { ta.style.height = '0px'; ta.style.overflowY = 'hidden'; return; }
             ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
             ta.style.overflowY = ta.scrollHeight > 120 ? 'auto' : 'hidden';
         });
@@ -5562,7 +5567,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // Renders the merged execution log as colour-coded lines. Classification is based on the
     // leading symbol each server task writes (✔ ⚠ ✖ –) and on the [DEBUG] token, which is
     // stripped for display. A source badge is shown only when several tasks have output.
-    function renderLogLines(container, entries, isRunning) {
+    // from: the lines before it are already shown (the same ones), only the rest is added.
+    function renderLogLines(container, entries, isRunning, from) {
         var stickToBottom = isRunning && (container.scrollHeight - container.scrollTop - container.clientHeight) < 40;
         var wasEmpty = container.childElementCount === 0;
         if (!entries.length) { container.textContent = '(no logs yet)'; return; }
@@ -5572,7 +5578,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var showSrc = Object.keys(srcCount).length > 1;
 
         var frag = document.createDocumentFragment();
-        entries.forEach(function (e) {
+        entries.slice(from || 0).forEach(function (e) {
             var raw = e.text || '';
             var ts = '';
             var m = raw.match(/^\[(\d{2}:\d{2}:\d{2})\] ?/);
@@ -5607,7 +5613,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
             frag.appendChild(line);
         });
-        container.textContent = '';
+        if (!from) container.textContent = '';
         container.appendChild(frag);
         if (stickToBottom || wasEmpty) container.scrollTop = container.scrollHeight;
     }
@@ -5827,7 +5833,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             entries = logIssueEntries(entries);
             if (!entries.length) { content.textContent = '(no warnings or errors in this run)'; return; }
         }
-        renderLogLines(content, entries, running(selected));
+        // The status poll (every 5 s, every second during a run) brings the same log again, or the
+        // same log with lines added: the lines already shown are not built again (a long run's
+        // log is over a thousand lines). Each line is drawn from its own text only.
+        var key = selected + '\x1E' + (_logIssuesOnly ? 1 : 0), texts = entries.map(function (e) { return e.text; });
+        var shown = content._hscLogShown, isRunning = running(selected);
+        var same = !!shown && shown.key === key && content.childElementCount > 0 && texts.length >= shown.texts.length
+            && shown.texts.every(function (t, i) { return t === texts[i]; });
+        content._hscLogShown = { key: key, texts: texts, running: isRunning };
+        if (same && texts.length === shown.texts.length && shown.running === isRunning) return;
+        renderLogLines(content, entries, isRunning, same ? shown.texts.length : 0);
     }
 
     // A group, phase or run header line of the log (timestamp already removed).
@@ -7345,24 +7360,26 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var hseTracked = (function() { try { return JSON.parse(decodeURIComponent((hseTab && hseTab.dataset.hseTracked) || '%5B%5D')); } catch { return []; } })();
             var collTag = readOutputTag(row, 'coll'), plTag = readOutputTag(row, 'pl');
 
+            // Each reader queries the whole card: read each once.
+            var collArt = readCollectionArt(row), tagArt = readTagArt(row), plLook = readPlaylistLook(row);
             var baseTag = {
                 Name: entryLabel, Tag: name, ExtraTags: readExtraTags(row), Active: active, Blacklist: bl, ActiveIntervals: intervals,
                 EnableTag: enableTagChk, EnableCollection: enableColl, CollectionName: collName, CollectionSortName: collSortName, CollectionDescription: collDescription, CollectionPosterPath: collPoster, OnlyCollection: false, OverrideWhenActive: overrideWhenActive, LastModified: currentLastMod,
-                CollectionPosterStyle: readCollectionArt(row).CollectionPosterStyle,
-                CollectionBackgroundStyle: readCollectionArt(row).CollectionBackgroundStyle,
-                CollectionBackgroundPath: readCollectionArt(row).CollectionBackgroundPath,
-                CollectionKeepOrder: readCollectionArt(row).CollectionKeepOrder, CollectionImported: row.dataset.collImported === '1',
+                CollectionPosterStyle: collArt.CollectionPosterStyle,
+                CollectionBackgroundStyle: collArt.CollectionBackgroundStyle,
+                CollectionBackgroundPath: collArt.CollectionBackgroundPath,
+                CollectionKeepOrder: collArt.CollectionKeepOrder, CollectionImported: row.dataset.collImported === '1',
             CollectionPosterReplaced: row.dataset.posterReplaced === '1', CollectionBackgroundReplaced: row.dataset.bgReplaced === '1',
-                CollectionArtTitle: readCollectionArt(row).CollectionArtTitle,
-                CollectionPosterOptions: readCollectionArt(row).CollectionPosterOptions,
-                CollectionBackgroundOptions: readCollectionArt(row).CollectionBackgroundOptions,
-                CollectionThumbStyle: readCollectionArt(row).CollectionThumbStyle, CollectionThumbOptions: readCollectionArt(row).CollectionThumbOptions,
-                CollectionThumbPath: readCollectionArt(row).CollectionThumbPath,
-                CollectionBannerStyle: readCollectionArt(row).CollectionBannerStyle, CollectionBannerPath: readCollectionArt(row).CollectionBannerPath,
+                CollectionArtTitle: collArt.CollectionArtTitle,
+                CollectionPosterOptions: collArt.CollectionPosterOptions,
+                CollectionBackgroundOptions: collArt.CollectionBackgroundOptions,
+                CollectionThumbStyle: collArt.CollectionThumbStyle, CollectionThumbOptions: collArt.CollectionThumbOptions,
+                CollectionThumbPath: collArt.CollectionThumbPath,
+                CollectionBannerStyle: collArt.CollectionBannerStyle, CollectionBannerPath: collArt.CollectionBannerPath,
                 CollectionThumbReplaced: row.dataset.thumbReplaced === '1', CollectionBannerReplaced: row.dataset.bannerReplaced === '1',
-                TagPosterStyle: readTagArt(row).TagPosterStyle, TagBackgroundStyle: readTagArt(row).TagBackgroundStyle,
-                TagBackgroundPath: readTagArt(row).TagBackgroundPath, TagArtTitle: readTagArt(row).TagArtTitle,
-                TagPosterOptions: readTagArt(row).TagPosterOptions, TagBackgroundOptions: readTagArt(row).TagBackgroundOptions,
+                TagPosterStyle: tagArt.TagPosterStyle, TagBackgroundStyle: tagArt.TagBackgroundStyle,
+                TagBackgroundPath: tagArt.TagBackgroundPath, TagArtTitle: tagArt.TagArtTitle,
+                TagPosterOptions: tagArt.TagPosterOptions, TagBackgroundOptions: tagArt.TagBackgroundOptions,
                 SourceType: st, MediaInfoFilters: miFilters, MediaInfoConditions: [],
                 TagTargetEpisode:        !!(row.querySelector('.chkTagTargetEpisode')  || {}).checked,
                 TagTargetSeason:         !!(row.querySelector('.chkTagTargetSeason')   || {}).checked,
@@ -7380,10 +7397,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 EnableCollectionTag: collTag.enabled, CollectionTag: collTag.tag, CollectionExtraTags: collTag.extras,
                 EnablePlaylistTag: plTag.enabled, PlaylistTag: plTag.tag, PlaylistExtraTags: plTag.extras,
                 PlaylistName:     (row.querySelector('.txtPlaylistName') || { value: '' }).value,
-                PlaylistDescription: readPlaylistLook(row).PlaylistDescription, PlaylistPosterPath: readPlaylistLook(row).PlaylistPosterPath,
-                PlaylistPosterStyle: readPlaylistLook(row).PlaylistPosterStyle, PlaylistBackgroundStyle: readPlaylistLook(row).PlaylistBackgroundStyle,
-                PlaylistBackgroundPath: readPlaylistLook(row).PlaylistBackgroundPath, PlaylistArtTitle: readPlaylistLook(row).PlaylistArtTitle,
-                PlaylistPosterOptions: readPlaylistLook(row).PlaylistPosterOptions, PlaylistBackgroundOptions: readPlaylistLook(row).PlaylistBackgroundOptions,
+                PlaylistDescription: plLook.PlaylistDescription, PlaylistPosterPath: plLook.PlaylistPosterPath,
+                PlaylistPosterStyle: plLook.PlaylistPosterStyle, PlaylistBackgroundStyle: plLook.PlaylistBackgroundStyle,
+                PlaylistBackgroundPath: plLook.PlaylistBackgroundPath, PlaylistArtTitle: plLook.PlaylistArtTitle,
+                PlaylistPosterOptions: plLook.PlaylistPosterOptions, PlaylistBackgroundOptions: plLook.PlaylistBackgroundOptions,
                 PlaylistUserIds:  plUserIds2,
                 PlaylistMappings: (function() { try { return JSON.parse(decodeURIComponent((plTab2 && plTab2.dataset.plMappings) || '%5B%5D')); } catch { return []; } })(),
                 NextWatchUsersMigrated: row.dataset.nwMigrated === '1',
