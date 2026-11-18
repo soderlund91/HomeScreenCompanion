@@ -16,7 +16,6 @@ namespace HomeScreenCompanion
     internal static class RunGate
     {
         private static readonly SemaphoreSlim Gate = new SemaphoreSlim(1, 1);
-        private static readonly List<string> Waiters = new List<string>();
         private static volatile string _holder = "";
 
         /// <summary>The run that holds the gate now ("" when none).</summary>
@@ -49,37 +48,13 @@ namespace HomeScreenCompanion
             GentleMode.Begin();
         }
 
-        /// <summary>"Run Group 'X' waiting for Tag &amp; Collection Sync to finish" for each waiting run; "" when none.</summary>
-        public static string WaitingText
-        {
-            get
-            {
-                string holder = _holder;
-                lock (Waiters)
-                {
-                    if (Waiters.Count == 0) return "";
-                    return string.Join(" · ", Waiters.ConvertAll(w => $"{w} waiting for {(holder.Length > 0 ? holder : "the running sync")} to finish"));
-                }
-            }
-        }
-
-        /// <summary>For a Status endpoint: the runs waiting for the gate, shown after a running task's
-        /// own step; "" when it is not running or is itself waiting (its step then says so).</summary>
-        public static string WaitingFor(string step, bool running)
-        {
-            if (!running || (step ?? "").StartsWith("Waiting for", StringComparison.Ordinal)) return "";
-            return WaitingText;
-        }
-
         /// <summary>Waits (asynchronously) until no other run holds the gate. Dispose the result to release it.</summary>
         public static async Task<IDisposable> EnterAsync(string name, PluginLogger? logger, CancellationToken cancellationToken)
         {
             if (!Gate.Wait(0))
             {
-                lock (Waiters) Waiters.Add(name);
                 logger?.Info($"{name}: waiting for the running sync ({_holder}) to finish");
-                try { await Gate.WaitAsync(cancellationToken).ConfigureAwait(false); }
-                finally { lock (Waiters) Waiters.Remove(name); }
+                await Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 logger?.Info($"{name}: the previous sync has finished — starting now");
             }
             Started(name);

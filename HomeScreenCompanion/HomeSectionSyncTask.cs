@@ -193,7 +193,7 @@ namespace HomeScreenCompanion
                 _log.Info(_dry ? "Summary (dry run: nothing was changed)" : "Summary");
                 _log.Info($"  Sections:      {totals.Copied} {(_dry ? "would be copied" : "copied")} to {RunLog.Plural(usersDone, "user")}{(totals.Unchanged > 0 ? $", {totals.Unchanged} unchanged" : "")}{(sourceCount > 1 ? $" from {RunLog.Plural(sourceCount, "source user")}" : "")}{(totals.Failed > 0 ? $", {RunLog.Plural(totals.Failed, "user")} failed" : "")}");
                 if (userStatus.SummaryLine() is string disabledLine) _log.Info("  " + disabledLine);
-                foreach (var gentleLine in GentleMode.SummaryLines()) _log.Info("  " + gentleLine);
+                GentleMode.WriteSummary(_log, "  ");
                 _log.Info($"  Done in {RunLog.Elapsed(DateTime.Now - startTime)}  ·  {(totals.Failed > 0 ? "✖ Completed with " + RunLog.Plural(totals.Failed, "error") : "✔ Completed")}");
                 _log.Rule();
                 progress.Report(100);

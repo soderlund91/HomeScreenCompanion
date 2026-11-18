@@ -619,7 +619,7 @@ namespace HomeScreenCompanion
             }
             Plugin.Instance?.SaveConfiguration();
             if (userStatus.SummaryLine() is string disabledLine) _log.Skip(disabledLine);
-            if (standalone) foreach (var gentleLine in GentleMode.SummaryLines()) _log.Info("    " + gentleLine);
+            if (standalone) GentleMode.WriteSummary(_log, "    ");
             var summary = $"Updated {totalUpdated} section(s){(totalAdded > 0 ? $", added {totalAdded}" : "")} across {topLists.Count} top-list(s).";
             _log.Info($"    {RunLog.Plural(totalUpdated, "section")} updated{(totalAdded > 0 ? $", {totalAdded} added" : "")} across {RunLog.Plural(topLists.Count, "top-list")}{(totalErrors > 0 ? $", {RunLog.Plural(totalErrors, "error")}" : "")}  ·  {RunLog.Elapsed(DateTime.Now - startTime)}");
             return (totalUpdated, summary);

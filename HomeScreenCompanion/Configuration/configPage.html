@@ -477,14 +477,18 @@
 
         /* The top row is as wide as the tab content (the form is max 900px). */
         .hsc-top-row { max-width: 900px; }
-        /* "Last run" stays on the buttons' line and takes the room left; a long status
-           (step, elapsed, waiting runs) wraps onto a second line, and only past that is it
-           cut with an ellipsis (full text in its tooltip). */
-        #lastRunIndicator { flex: 1 1 0; min-width: 0; }
-        #lastRunIndicator > span:not(#lastRunStatusLabel) { flex-shrink: 0; }
+        /* "Last run" stays on the buttons' line and takes the room left; a long status (step,
+           elapsed) wraps onto a second line, and only past that is it cut with an ellipsis (full
+           text in its tooltip). The second line is always reserved, used or not, so the row never
+           changes height while the text changes (owner 2026-11-18); the text starts on line one,
+           with "Last run:" and the dot beside it. */
+        #lastRunIndicator { flex: 1 1 0; min-width: 0; align-items: flex-start !important; }
+        #lastRunIndicator > span:not(#lastRunStatusLabel) { flex-shrink: 0; line-height: 1.3; }
+        #lastRunIndicator > .status-dot { margin-top: calc(0.5525em - 4px); }
         #lastRunStatusLabel {
             min-width: 0; overflow: hidden; overflow-wrap: anywhere; line-height: 1.3; white-space: pre-line;
             display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+            min-height: 2.6em;
         }
 
         .qs-checklist { margin: 6px 0 0; padding-left: 18px; line-height: 1.7; }

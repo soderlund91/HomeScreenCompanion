@@ -119,22 +119,24 @@ namespace HomeScreenCompanion
         }
 
         /// <summary>
-        /// For the run's summary: how much gentle mode slowed it down (when it paused) and how
-        /// long the timed writes took (when there were any).
+        /// For the run's summary: how much gentle mode slowed it down (when it paused), and how
+        /// long the timed writes took (when there were any). Write times are a debug line: shown in
+        /// the log window only with Extended log on, always in the plugin's own log file (owner 2026-11-18).
         /// </summary>
-        internal static IEnumerable<string> SummaryLines()
+        internal static void WriteSummary(RunLog log, string indent)
         {
-            var lines = new List<string>();
+            string? gentle = null, writes = null;
             lock (Sync)
             {
                 if (_pauses > 0)
-                    lines.Add($"Gentle mode:   {_pauses + 1} slices, {RunLog.Elapsed(_paused)} of pauses ({RunLog.Plural(_pauses, "pause")}, the longest {Ms(_longestPause)}) while up to {(_maxStreams == 1 ? "1 person was" : $"{_maxStreams} people were")} watching");
+                    gentle = $"Gentle mode:   {_pauses + 1} slices, {RunLog.Elapsed(_paused)} of pauses ({RunLog.Plural(_pauses, "pause")}, the longest {Ms(_longestPause)}) while up to {(_maxStreams == 1 ? "1 person was" : $"{_maxStreams} people were")} watching";
                 if (Times.Count > 0)
-                    lines.Add("Write times:   " + string.Join("  ·  ", Times.Select(t =>
+                    writes = "Write times:   " + string.Join("  ·  ", Times.Select(t =>
                         $"{t.Key} {t.Value.Count}× avg {Ms(TimeSpan.FromTicks(t.Value.Total.Ticks / t.Value.Count))}, max {Ms(t.Value.Max)}"))
-                        + $"  ·  longest single write: {_longestKind} {Ms(_longestWrite)}");
+                        + $"  ·  longest single write: {_longestKind} {Ms(_longestWrite)}";
             }
-            return lines;
+            if (gentle != null) log.Info(indent + gentle);
+            if (writes != null) log.Debug(indent + writes);
         }
 
         private static string Ms(TimeSpan t) => t.TotalMilliseconds >= 1000 ? $"{t.TotalSeconds:0.0} s" : $"{t.TotalMilliseconds:0} ms";
