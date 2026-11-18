@@ -3147,11 +3147,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         function render() {
             if (items.length === 0) { listEl.innerHTML = '<div style="padding:8px 4px;opacity:0.5;font-size:0.9em;">Nothing added yet.</div>'; return; }
             listEl.innerHTML = items.map(function (m, idx) {
-                var label = m.Name ? esc(m.Name) + (m.Year ? ' (' + m.Year + ')' : '') : '<span style="opacity:0.5;">Not in the library any more</span>';
+                var title = m.Name ? esc(m.Name) + (m.Year ? ' (' + m.Year + ')' : '') : '';
+                var label = m.Missing ? '<span style="opacity:0.5;">' + (title || 'Not found') + '</span>' : title;
                 return '<div style="display:flex;align-items:center;gap:5px;padding:5px 2px;border-bottom:1px solid rgba(128,128,128,0.15);">' +
                     '<span style="min-width:22px;font-size:0.8em;opacity:0.55;font-weight:600;text-align:right;">' + (idx + 1) + '.</span>' +
                     '<span style="flex:1;font-size:0.9em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + label + '</span>' +
-                    (kind(m.Type) ? '<span style="font-size:0.75em;opacity:0.6;">' + kind(m.Type) + '</span>' : '') +
+                    (m.Missing && m.Name ? '<span style="font-size:0.75em;color:var(--hsc-danger-text);">Not found</span>'
+                        : kind(m.Type) ? '<span style="font-size:0.75em;opacity:0.6;">' + kind(m.Type) + '</span>' : '') +
                     '<button type="button" class="btnManualUp" data-idx="' + idx + '"' + (idx === 0 ? ' disabled' : '') + ' style="cursor:pointer;border:none;background:transparent;color:inherit;padding:2px 4px;opacity:0.7;" title="Move up">▲</button>' +
                     '<button type="button" class="btnManualDown" data-idx="' + idx + '"' + (idx === items.length - 1 ? ' disabled' : '') + ' style="cursor:pointer;border:none;background:transparent;color:inherit;padding:2px 4px;opacity:0.7;" title="Move down">▼</button>' +
                     '<button type="button" class="btnManualRemove" data-idx="' + idx + '" style="cursor:pointer;border:none;background:transparent;color:var(--hsc-danger-text);padding:2px 4px;" title="Remove">✕</button>' +
@@ -3160,13 +3162,20 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         }
 
         render();
+        // A title Emby made a new item is shown by what it is (the next run stores its new id);
+        // one that is nowhere in the library stays in the list as not found.
         if (items.length > 0) {
-            window.ApiClient.getJSON(window.ApiClient.getUrl('Items', {
-                Ids: items.map(function (i) { return i.Id; }).join(','), Fields: 'ProductionYear'
+            window.ApiClient.getJSON(window.ApiClient.getUrl('HomeScreenCompanion/ResolveTitles', {
+                Ids: items.map(function (i) { return i.Id; }).join(',')
             })).then(function (res) {
                 var byId = {};
                 (res.Items || []).forEach(function (i) { byId[i.Id] = i; });
-                items.forEach(function (m) { var i = byId[m.Id]; if (i) { m.Name = i.Name || ''; m.Year = i.ProductionYear || null; m.Type = i.Type || ''; } });
+                items.forEach(function (m) {
+                    var i = byId[m.Id];
+                    if (!i) { m.Missing = true; return; }
+                    m.Name = i.Name || ''; m.Year = i.ProductionYear || null; m.Type = i.Type || '';
+                    m.CurrentId = i.CurrentId || ''; m.Missing = !i.Found;
+                });
                 render();
             }).catch(function () {});
         }
@@ -3179,7 +3188,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var hits = res.Items || [];
                 if (hits.length === 0) { results.innerHTML = '<div style="padding:7px 12px;opacity:0.6;font-size:0.9em;">No matches</div>'; results.style.display = 'block'; return; }
                 var have = {};
-                items.forEach(function (m) { have[m.Id] = true; });
+                items.forEach(function (m) { have[m.Id] = true; if (m.CurrentId) have[m.CurrentId] = true; });
                 results.innerHTML = hits.map(function (i) {
                     var added = have[i.Id];
                     return '<div class="manualSearchHit" data-id="' + esc(i.Id) + '" data-name="' + esc(i.Name) + '" data-year="' + esc(i.ProductionYear || '') + '" data-type="' + esc(i.Type) + '"' +
@@ -3203,7 +3212,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var hit = e.target.closest('.manualSearchHit');
             if (!hit) return;
             e.preventDefault();
-            if (items.some(function (m) { return m.Id === hit.dataset.id; })) return;
+            if (items.some(function (m) { return m.Id === hit.dataset.id || m.CurrentId === hit.dataset.id; })) return;
             items.push({ Id: hit.dataset.id, Name: hit.dataset.name, Year: hit.dataset.year ? parseInt(hit.dataset.year, 10) : null, Type: hit.dataset.type });
             input.value = '';
             results.style.display = 'none';

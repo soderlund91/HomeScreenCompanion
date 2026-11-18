@@ -240,6 +240,7 @@ namespace HomeScreenCompanion
                 int activeGroupTotal = config.Tags.Count(t => t.Active && !string.IsNullOrWhiteSpace(t.Tag));
                 _log.Info($"  Library: {movieCount:N0} movies, {seriesCount:N0} series");
                 _log.Info($"  Groups: {activeGroupTotal} active");
+                RefreshTitleRefs(config.Tags, dryRun);
                 _log.Rule();
                 _log.Debug($"Library scan: {allItems.Count:N0} items, {imdbLookup.Count:N0} with IMDb id  ·  {RunLog.Elapsed(runTimer.Elapsed)}");
 
@@ -2241,6 +2242,7 @@ namespace HomeScreenCompanion
             if (dryRun) _log.Warn("DRY RUN — nothing will be changed, the log shows what would happen");
             _log.Info($"  Library: {_movieCount:N0} movies, {_seriesCount:N0} series");
             if (_preview == null) GentleMode.Announce(_log);
+            if (_preview == null) RefreshTitleRefs(groupEntries, dryRun);
             _log.Rule();
 
             var gs = new GroupRunStats
@@ -6681,11 +6683,9 @@ namespace HomeScreenCompanion
             int gone = 0;
             foreach (var id in tagConfig.ManualItemIds ?? new List<string>())
             {
-                BaseItem? item = null;
-                if (long.TryParse(id, out var internalId)) item = _libraryManager.GetItemById(internalId);
-                else if (Guid.TryParse(id, out var guid)) item = _libraryManager.GetItemById(guid);
-                if (item == null || !IsTaggableTopLevelItem(item)) { gone++; continue; }
-                if (!TopListCollectionMirror.IsOriginal(item)) continue;
+                // By its id, else by what it is (TitleRefs): Emby may have made it a new item.
+                var item = TitleRefs.Resolve(id, tagConfig.ManualItemRefs);
+                if (item == null) { gone++; continue; }
                 var imdb = item.GetProviderId("Imdb");
                 if (!string.IsNullOrEmpty(imdb) && blacklist.Contains(imdb)) continue;
                 if (passesFilters != null && !passesFilters(item)) continue;
@@ -6704,6 +6704,19 @@ namespace HomeScreenCompanion
         // which then picks among all the answers (owner 2026-11-17: not the whole AI cap, a paid call).
         private static int AiLimit(TagConfig t) => t.Limit <= 0 ? NoLimit : t.Limit;
 
+        // Pinned and hand-picked titles that Emby made a new item get its id, and ids from before
+        // TitleRefs get their ref (saved here: not every run saves the config). A dry run only logs.
+        private void RefreshTitleRefs(IEnumerable<TagConfig> tags, bool dryRun)
+        {
+            try
+            {
+                // Also to the plugin's log file: a Random pick task run has no page log.
+                if (TitleRefs.Refresh(tags, !dryRun, s => { _log.Info("  " + s); if (_pickOnly) PluginLog.Write("INF", "Pinned titles", s); }) && !dryRun)
+                    Plugin.Instance?.SaveConfiguration();
+            }
+            catch (Exception ex) { _log.Warn($"Pinned and hand-picked titles could not be checked: {ex.Message}"); }
+        }
+
         // A source's pinned titles (see RandomPick): its PinnedItemIds, any movie or show in the
         // library (the source's filters and blacklist do not apply to them).
         private List<BaseItem> PinnedFor(TagConfig tc)
@@ -6712,10 +6725,9 @@ namespace HomeScreenCompanion
             if (!RandomPick.Applies(tc)) return pinned;
             foreach (var id in tc.PinnedItemIds ?? new List<string>())
             {
-                BaseItem? item = null;
-                if (long.TryParse(id, out var internalId)) item = _libraryManager.GetItemById(internalId);
-                else if (Guid.TryParse(id, out var guid)) item = _libraryManager.GetItemById(guid);
-                if (item != null && IsTaggableTopLevelItem(item) && TopListCollectionMirror.IsOriginal(item) && !pinned.Contains(item)) pinned.Add(item);
+                // By its id, else by what it is (TitleRefs): Emby may have made it a new item.
+                var item = TitleRefs.Resolve(id, tc.PinnedItemRefs);
+                if (item != null && !pinned.Contains(item)) pinned.Add(item);
             }
             return pinned;
         }

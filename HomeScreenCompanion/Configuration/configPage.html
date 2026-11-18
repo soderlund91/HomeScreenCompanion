@@ -2640,7 +2640,7 @@
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li>Type in <em>Add a movie or show</em> to search your library and click a title to add it. <strong>▲ ▼</strong> move it, <strong>✕</strong> removes it.</li>
                             <li>The order is kept: a top-list made from the tag and a playlist follow it. An Emby collection still shows Emby's own sort order (see <em>Keep the list order</em> under Tags &amp; Collections).</li>
-                            <li>Titles later deleted from the library are skipped. Copy/paste matches the titles on another server by IMDb/TMDb/TVDb id.</li>
+                            <li>When Emby makes a title a new item (a replaced file or a moved folder), the next sync finds it again by its IMDb, TMDb or TVDb id, else its name and year. Titles that are nowhere in the library any more are skipped and stay in the list as <em>Not found</em>. Copy/paste matches the titles on another server by IMDb/TMDb/TVDb id.</li>
                             <li><em>Preview</em> lists the titles that would get the tag, in your order.</li>
                             <li><em>Max items</em> caps how many of the titles are used (0 = all of them).</li>
                         </ul></div>
@@ -2650,6 +2650,7 @@
                     <div><strong>Pinned titles and Random pick</strong> — on the Source tab of every source type that tags titles (not <em>Rotating from existing</em> or <em>Your Next Watch</em>).
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li><em>Pinned titles</em> (Advanced): search and add any movie or show in your library. They always get the source's tag, collection and playlist, even when the source itself does not have them. The source's filters and blacklist do not take them out.</li>
+                            <li>A pinned title stays pinned when Emby makes it a new item (a replaced file or a moved folder): the next sync finds it again by its IMDb, TMDb or TVDb id, else its name and year, always the library's own item, never one of HSC's copies. A title that is nowhere in the library stays in the list as <em>Not found</em>.</li>
                             <li>Pinned titles come first where the source's order is used: the playlist, a top-list made from the source and a collection with <em>Keep the list order</em>. A home row and other collections keep the sort order set in Emby; the pinned titles are always in them, but not moved to the front. Their sort titles are never changed.</li>
                             <li><em>Max items</em> is the total, pinned titles included. With 1 pinned title and Max 8, the source adds 7 of its own titles.</li>
                             <li><em>Random pick</em> off: the source's first titles fill the rest of Max. On: the rest is picked at random from everything the source finds. With Max 0 nothing is picked: all titles are used.</li>
