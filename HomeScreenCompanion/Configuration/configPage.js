@@ -7175,6 +7175,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 tab.querySelector('.hse-fields-inner').innerHTML = buildHomeSectionFormHtml(savedSettings, defaultSectionType, defaultTagName, tagEnabled, collEnabled, libraryOptions, savedLibraryId, allLibraries, plEnabled);
                 wireHomeSectionTypeChange(tab);
                 wirePositionField(tab);
+                rsCardNote(_hseView || activeView(), row);
                 // A hidden title is never shown, so the Custom Title cannot be edited (it is kept).
                 var hideChk = tab.querySelector('.chkHseHideTitle');
                 if (hideChk) hideChk.addEventListener('change', function () {
@@ -7536,7 +7537,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             OrigPostersMovies: opEnabled ? view.querySelector('#chkOpMovies').checked : lastHscConfig.OrigPostersMovies !== false,
             OrigPostersSeries: opEnabled ? view.querySelector('#chkOpSeries').checked : lastHscConfig.OrigPostersSeries !== false,
             OrigPostersSeasons: opEnabled ? view.querySelector('#chkOpSeasons').checked : lastHscConfig.OrigPostersSeasons !== false,
-            OrigPostersEpisodes: opEnabled ? view.querySelector('#chkOpEpisodes').checked : (lastHscConfig.OrigPostersEpisodes || false)
+            OrigPostersEpisodes: opEnabled ? view.querySelector('#chkOpEpisodes').checked : (lastHscConfig.OrigPostersEpisodes || false),
+            // Row Shuffle is drawn when first opened: until then the loaded sets are kept.
+            RowShuffleSets: readRowShuffleSets(view)
         };
     }
 
@@ -7717,7 +7720,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         ContinueWatchingBumpAllUsers: 'Continue Watching bump: all users', ContinueWatchingBumpUserIds: 'Continue Watching bump: users',
         OrigPostersEnabled: 'Original-language posters: on/off', OrigPostersLanguages: 'Original-language posters: languages',
         OrigPostersMovies: 'Original-language posters: movies', OrigPostersSeries: 'Original-language posters: series',
-        OrigPostersSeasons: 'Original-language posters: seasons', OrigPostersEpisodes: 'Original-language posters: episodes'
+        OrigPostersSeasons: 'Original-language posters: seasons', OrigPostersEpisodes: 'Original-language posters: episodes',
+        RowShuffleSets: 'Row shuffle'
     };
     // A source card's field → the card tab it lives on.
     function sourceFieldArea(k) {
@@ -8872,6 +8876,440 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             .catch(function () {
                 container.innerHTML = '<p class="textMuted" style="padding:20px;">Failed to load users. Check server connection.</p>';
             });
+    }
+
+    // ── Row Shuffle (Home Screen → Row Shuffle, RowShuffle.cs) ─────────────────
+    // Sets of HSC rows (a source's row, a top-list's row) that take turns on the places they have on
+    // each user's home screen. The page edits the sets; the server stamps when a set starts and puts
+    // the order into effect (Schedule Switch and the end of every run). The preview asks the server
+    // (RowShuffle/Preview), so it shows exactly what the runs do.
+
+    // A row key as the server makes it (HomeSectionSyncTask.SourceKey / TopListKey): Uri.EscapeDataString
+    // escapes ! ' ( ) * too, encodeURIComponent does not.
+    function rsEscape(s) {
+        return encodeURIComponent(s).replace(/[!'()*]/g, function (c) { return '%' + c.charCodeAt(0).toString(16).toUpperCase(); });
+    }
+    function rsSourceKey(name, tag) { return 'src:' + rsEscape((name || '').trim()) + '/' + rsEscape((tag || '').trim()); }
+    function rsTopListKey(tag) { return 'tl:' + (tag || '').trim().replace(/[\x00-\x08\x0A-\x1F]/g, ''); }
+    function rsNewId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 10); }
+
+    // The rows a set can hold: the sources on the page with a home row (a source with Create as
+    // top-list: its top-list's row), and the manual top-lists with home rows. key → { name, kind }.
+    function rsRowChoices(view) {
+        var out = {}, order = [];
+        function add(key, name, kind) {
+            var k = key.toLowerCase();
+            if (out[k]) return;
+            out[k] = { key: key, name: name, kind: kind };
+            order.push(k);
+        }
+        sourceRowsInManualOrder(view).forEach(function (row) {
+            if (row.classList.contains('hsc-tour-demo')) return;
+            var k = rsRowOfCard(row);
+            if (k) add(k.key, k.name, k.kind);
+        });
+        (lastHscConfig.TopLists || []).forEach(function (tl) {
+            if (tl.FromSource || !(tl.TagName || '').trim() || !(tl.HomeSectionUserIds || []).length) return;
+            add(rsTopListKey(tl.TagName), tl.TagName.trim(), 'toplist');
+        });
+        return { byKey: out, order: order };
+    }
+
+    // The row a source card makes, as a set holds it: { key, name, kind }, or null (no home row).
+    function rsRowOfCard(row) {
+        var nameEl = row.querySelector('.txtEntryLabel');
+        if (!nameEl) return null;
+        var name = (nameEl.value || '').trim();
+        var tag = ((row.querySelector('.txtTagName') || {}).value || '').trim() || name;
+        if (!tag) return null;
+        var type = (row.querySelector('.selSourceType') || {}).value || '';
+        var topList = !!(row.querySelector('.chkEnableTopList') || {}).checked && type !== 'NextWatch' && type !== 'RotatingExisting';
+        if (topList) return { key: rsTopListKey(tag), name: name || tag, kind: 'toplist' };
+        if ((row.querySelector('.chkEnableHomeSection') || {}).checked)
+            return { key: rsSourceKey(name, tag), name: name || tag, kind: type === 'RotatingExisting' ? 'rotating' : 'source' };
+        return null;
+    }
+
+    // On a source card's Home Screen tab: a note when its row is in a Row shuffle set (Position
+    // only places the row when it is made; after that the set decides).
+    function rsCardNote(view, row) {
+        var tab = row.querySelector('.homescreen-tab');
+        var pos = tab && tab.querySelector('.hsc-pos-field');
+        if (!pos) return;
+        var note = tab.querySelector('.rs-card-note');
+        if (!note) {
+            note = document.createElement('div');
+            note.className = 'rs-note rs-card-note';
+            pos.parentNode.insertBefore(note, pos.nextSibling);
+        }
+        var k = rsRowOfCard(row);
+        var set = k && readRowShuffleSets(view).filter(function (st) {
+            return st.Rows.some(function (r) { return r.toLowerCase() === k.key.toLowerCase(); });
+        })[0];
+        if (!set) { note.style.display = 'none'; return; }
+        var others = set.Rows.length - 1;
+        note.style.display = '';
+        note.innerHTML = '<i class="md-icon">swap_vert</i><span>In the Row shuffle set <strong>' + escapeHtml(set.Name || 'New set') + '</strong>' +
+            (set.Active ? '' : ' (off)') + ': this row takes turns with ' + others + ' other row' + (others === 1 ? '' : 's') +
+            ' on their places (Home Screen → Row Shuffle). Position only places the row when it is made.</span>';
+    }
+    function rsCardNotes(view) {
+        view.querySelectorAll('#tagListContainer .tag-row').forEach(function (row) { rsCardNote(view, row); });
+    }
+
+    var RS_KIND = {
+        source: { icon: 'view_carousel', label: 'Source', cls: 'homescreen' },
+        rotating: { icon: 'autorenew', label: 'Rotating', cls: 'homescreen' },
+        toplist: { icon: 'format_list_numbered', label: 'Top-list', cls: 'toplist' },
+        missing: { icon: 'help_outline', label: 'Not found', cls: '' }
+    };
+
+    function rsEveryLabel(s) {
+        if (s.Every === 'Hour') return 'every hour';
+        if (s.Every === 'Week') return 'every week';
+        if (s.Every === 'Days') return 'every ' + (s.EveryDays || 2) + ' days';
+        return 'every day';
+    }
+
+    function rsSetMeta(s) {
+        var n = (s.Rows || []).length;
+        return (s.Mode === 'Random' ? 'Random' : 'Rolling') + ' · ' + rsEveryLabel(s) + ' · ' + n + ' row' + (n === 1 ? '' : 's');
+    }
+
+    function rsRowHtml(key, choices) {
+        var c = choices.byKey[key.toLowerCase()];
+        var kind = RS_KIND[c ? c.kind : 'missing'];
+        var name = c ? c.name : rsKeyName(key);
+        return '<div class="rs-row" draggable="true" data-key="' + escapeHtml(key) + '">' +
+            '<i class="md-icon rs-handle" title="Drag to change the start order">drag_indicator</i>' +
+            '<span class="rs-row-pos"></span>' +
+            '<span class="rs-row-name' + (c ? '' : ' rs-missing') + '">' + escapeHtml(name) + '</span>' +
+            '<span class="tag-indicator ' + kind.cls + '"><i class="md-icon">' + kind.icon + '</i>' + kind.label + '</span>' +
+            (c ? '' : '<span class="rs-row-note">renamed, removed or without a home row</span>') +
+            '<button type="button" is="emby-button" class="raised hsc-btn-ghost rs-row-remove" title="Remove from this set" aria-label="Remove"><i class="md-icon">close</i></button>' +
+            '</div>';
+    }
+
+    // The name in a key the page cannot find (shown greyed out until it is removed).
+    function rsKeyName(key) {
+        if (key.indexOf('tl:') === 0) return key.slice(3);
+        if (key.indexOf('src:') === 0) {
+            var parts = key.slice(4).split('/');
+            try { var n = decodeURIComponent(parts[0]); return n || decodeURIComponent(parts[1] || ''); } catch (e) { return key; }
+        }
+        return key;
+    }
+
+    function rsSetHtml(s, choices, open) {
+        var active = s.Active !== false;
+        var random = s.Mode === 'Random';
+        var every = s.Every || 'Day';
+        var segBase = 'flex:1;cursor:pointer;border:none;border-radius:6px;padding:7px 12px;font-family:inherit;font-size:0.9em;font-weight:500;display:flex;align-items:center;justify-content:center;gap:6px;color:inherit;';
+        function seg(mode, icon, label) {
+            var on = (mode === 'Random') === random;
+            return '<button type="button" class="rs-mode" data-mode="' + mode + '" aria-pressed="' + on + '" style="' + segBase +
+                (on ? 'background:var(--hsc-seg-on-bg);color:var(--theme-text-primary, inherit);font-weight:600;box-shadow:inset 0 0 0 1px var(--hsc-hairline-strong), var(--hsc-seg-on-shadow);'
+                    : 'background:transparent;opacity:0.7;') + '">' +
+                '<i class="md-icon" style="font-size:1.1em;' + (on ? 'color:var(--hsc-primary-text);' : '') + '">' + icon + '</i>' + label + '</button>';
+        }
+        return '<div class="advanced-section rs-set" data-id="' + escapeHtml(s.Id) + '">' +
+            '<div class="advanced-header rs-set-head">' +
+            '<i class="md-icon rs-chevron" style="margin-right:8px;transition:transform 0.2s;' + (open ? 'transform:rotate(180deg);' : '') + '">expand_more</i>' +
+            '<span class="hsc-title rs-set-title">' + escapeHtml(s.Name || 'New set') + '</span>' +
+            '<span class="rs-set-meta">' + escapeHtml(rsSetMeta(s)) + '</span>' +
+            '<span class="rs-pill ' + (active ? 'on' : 'off') + '">' + (active ? 'On' : 'Off') + '</span>' +
+            '</div>' +
+            '<div class="advanced-body rs-set-body" style="display:' + (open ? 'block' : 'none') + ';">' +
+            '<div class="inputContainer"><input is="emby-input" type="text" class="rs-name" label="Name" placeholder="Genres" value="' + escapeHtml(s.Name || '') + '" /></div>' +
+            '<div class="checkboxContainer checkboxContainer-withDescription">' +
+            '<label><input is="emby-checkbox" type="checkbox" class="rs-active"' + (active ? ' checked' : '') + ' /><span>Take turns</span></label>' +
+            '<div class="fieldDescription">Off: the rows go back to the start order below and then stay where they are.</div>' +
+            '</div>' +
+            '<div class="rs-field-label">How the rows move</div>' +
+            '<div class="rs-seg">' + seg('Rolling', 'swap_vert', 'Rolling') + seg('Random', 'shuffle', 'Random') + '</div>' +
+            '<div class="fieldDescription rs-mode-desc">' + (random
+                ? 'A new random order each time. The same row is never on top twice in a row.'
+                : 'Each time every row moves up one place, and the top row goes to the bottom. Every row gets its turn on top.') + '</div>' +
+            '<div class="rs-every-wrap">' +
+            '<div class="inputContainer rs-every-sel"><select is="emby-select" class="rs-every" label="Change">' +
+            [['Hour', 'Every hour'], ['Day', 'Every day'], ['Week', 'Every week'], ['Days', 'Every … days']].map(function (o) {
+                return '<option value="' + o[0] + '"' + (every === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
+            }).join('') + '</select></div>' +
+            '<div class="inputContainer rs-days-wrap" style="display:' + (every === 'Days' ? '' : 'none') + ';"><input is="emby-input" type="number" min="1" max="365" class="rs-days" label="Days" value="' + (s.EveryDays || 2) + '" /></div>' +
+            '</div>' +
+            '<div class="fieldDescription">Changes on the full hour, or at midnight (server time). A new period shows on the home screen within 15 minutes, the next time it is opened.</div>' +
+            '<div class="rs-field-label" style="margin-top:20px;">Rows, in start order</div>' +
+            '<div class="rs-rows">' + (s.Rows || []).map(function (k) { return rsRowHtml(k, choices); }).join('') + '</div>' +
+            '<div class="rs-add-wrap"><select is="emby-select" class="rs-add" label="Add a row"></select></div>' +
+            '<div class="fieldDescription">Only rows HSC makes: sources with a home row and top-lists. A row can be in one set only. The other rows on the home screen never move.</div>' +
+            '<div class="rs-preview"></div>' +
+            '<div class="rs-foot"><button type="button" is="emby-button" class="raised hsc-btn-danger rs-delete"><i class="md-icon" style="font-size:1em;margin-right:4px;">delete</i><span>Delete set</span></button></div>' +
+            '</div></div>';
+    }
+
+    // The sets as getUiConfig saves them (StartDate is the server's; never sent).
+    function rsNormalize(s) {
+        return {
+            Id: s.Id || '', Name: (s.Name || '').trim(), Active: s.Active !== false,
+            Mode: s.Mode === 'Random' ? 'Random' : 'Rolling',
+            Every: ['Hour', 'Day', 'Week', 'Days'].indexOf(s.Every) >= 0 ? s.Every : 'Day',
+            EveryDays: Math.max(1, Math.min(365, parseInt(s.EveryDays, 10) || 2)),
+            Rows: (s.Rows || []).slice()
+        };
+    }
+    function readRowShuffleSets(view) {
+        var c = view.querySelector('#rsContainer');
+        if (!c || !c.dataset.loaded) return (lastHscConfig.RowShuffleSets || []).map(rsNormalize);
+        return Array.from(c.querySelectorAll('.rs-set')).map(rsReadSet);
+    }
+    function rsReadSet(card) {
+        var seg = card.querySelector('.rs-mode[aria-pressed="true"]');
+        return rsNormalize({
+            Id: card.dataset.id,
+            Name: (card.querySelector('.rs-name') || {}).value || '',
+            Active: !!(card.querySelector('.rs-active') || {}).checked,
+            Mode: seg ? seg.dataset.mode : 'Rolling',
+            Every: (card.querySelector('.rs-every') || {}).value || 'Day',
+            EveryDays: (card.querySelector('.rs-days') || {}).value,
+            Rows: Array.from(card.querySelectorAll('.rs-row')).map(function (r) { return r.dataset.key; })
+        });
+    }
+
+    // Save is stopped for a set with fewer than two rows (owner's rule); returns the names.
+    function rowShuffleSetsTooSmall(view) {
+        return readRowShuffleSets(view).filter(function (s) { return s.Rows.length < 2; })
+            .map(function (s) { return s.Name || 'New set'; });
+    }
+
+    function loadRowShuffleTab(view) {
+        var container = view.querySelector('#rsContainer');
+        if (!container) return;
+        var sets = (lastHscConfig.RowShuffleSets || []).map(rsNormalize);
+        var choices = rsRowChoices(view);
+        container.innerHTML =
+            '<div class="rs-intro">' +
+            '<p>Rows lower down on the home screen are easy to miss. In a <strong>Row shuffle set</strong>, the rows you choose take turns on the places they have: ' +
+            'every hour, day, week or number of days they move, one step at a time or in a random order. All other rows stay where they are.</p>' +
+            '<p class="textMuted">It works for every user who has the rows, and everyone gets the same order. Copy &amp; Sync targets follow along.</p>' +
+            '</div>' +
+            '<div class="rs-sets">' + sets.map(function (s) { return rsSetHtml(s, choices, false); }).join('') + '</div>' +
+            '<div class="rs-empty"' + (sets.length ? ' style="display:none;"' : '') + '><p class="textMuted">No sets yet.</p></div>' +
+            '<button type="button" is="emby-button" class="raised btn-neutral rs-new"><i class="md-icon" style="margin-right:5px;">add</i><span>New set</span></button>';
+        container.dataset.loaded = '1';
+        container.querySelectorAll('.rs-set').forEach(function (card) { rsRefreshCard(view, card); });
+        if (!container._rsWired) { container._rsWired = true; rsWire(view, container); }
+    }
+
+    // After any change on a card: positions, the Add list, the header and the preview.
+    function rsRefreshCard(view, card, noPreview) {
+        var container = view.querySelector('#rsContainer');
+        var choices = rsRowChoices(view);
+        var s = rsReadSet(card);
+        card.querySelectorAll('.rs-row').forEach(function (r, i) { r.querySelector('.rs-row-pos').textContent = (i + 1) + '.'; });
+        // Rows in any set (this one included) are not offered again.
+        var used = {};
+        container.querySelectorAll('.rs-row').forEach(function (r) { used[r.dataset.key.toLowerCase()] = 1; });
+        var add = card.querySelector('.rs-add');
+        var free = choices.order.filter(function (k) { return !used[k]; });
+        add.innerHTML = '<option value="">' + (free.length ? 'Choose a row…' : (choices.order.length ? 'All rows are in a set' : 'No sources with a home row yet')) + '</option>' +
+            free.map(function (k) {
+                var c = choices.byKey[k];
+                return '<option value="' + escapeHtml(c.key) + '">' + escapeHtml(c.name) + ' (' + RS_KIND[c.kind].label.toLowerCase() + ')</option>';
+            }).join('');
+        add.disabled = !free.length;
+        card.querySelector('.rs-set-title').textContent = s.Name || 'New set';
+        card.querySelector('.rs-set-meta').textContent = rsSetMeta(s);
+        var pill = card.querySelector('.rs-pill');
+        pill.className = 'rs-pill ' + (s.Active ? 'on' : 'off');
+        pill.textContent = s.Active ? 'On' : 'Off';
+        card.querySelector('.rs-days-wrap').style.display = s.Every === 'Days' ? '' : 'none';
+        if (!noPreview) rsQueuePreview(view, card);
+    }
+
+    function rsQueuePreview(view, card) {
+        clearTimeout(card._rsTimer);
+        card._rsTimer = setTimeout(function () { rsLoadPreview(view, card); }, 350);
+    }
+
+    function rsLoadPreview(view, card) {
+        var box = card.querySelector('.rs-preview');
+        if (card.querySelector('.rs-set-body').style.display === 'none') return;   // loaded when opened
+        var s = rsReadSet(card);
+        if (s.Rows.length < 2) {
+            box.innerHTML = '<div class="rs-note"><i class="md-icon">info</i><span>Add at least two rows. A set needs two to take turns.</span></div>';
+            return;
+        }
+        var userId = card._rsUser || '';
+        var seq = (card._rsSeq || 0) + 1; card._rsSeq = seq;
+        var tok = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+        fetch(window.ApiClient.getUrl('HomeScreenCompanion/RowShuffle/Preview'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Emby-Token': tok },
+            body: JSON.stringify({ Set: s, UserId: userId })
+        }).then(function (r) { return r.json(); }).then(function (p) {
+            if (seq !== card._rsSeq) return;
+            box.innerHTML = rsPreviewHtml(s, p || {});
+        }).catch(function () {
+            if (seq === card._rsSeq) box.innerHTML = '<div class="rs-note"><i class="md-icon">error_outline</i><span>The preview could not be loaded.</span></div>';
+        });
+    }
+
+    function rsWhen(starts) {
+        // "yyyy-MM-dd HH:mm" (server time) → "Fri 21 Nov, 00:00"
+        var m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/.exec(starts || '');
+        if (!m) return starts || '';
+        var d = new Date(+m[1], +m[2] - 1, +m[3]);
+        var days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        return days[d.getDay()] + ' ' + (+m[3]) + ' ' + months[+m[2] - 1] + ', ' + m[4] + ':' + m[5];
+    }
+
+    function rsPreviewHtml(s, p) {
+        var periods = p.Periods || [];
+        var users = p.Users || [];
+        var html = '<div class="rs-field-label" style="margin-top:24px;">Preview</div>';
+        if (p.StartsOnSave) html += '<div class="rs-note"><i class="md-icon">schedule</i><span>Not saved yet: the set starts in the start order when you save, and changes ' + escapeHtml(rsEveryLabel(s)) + ' from then on.</span></div>';
+        if (!s.Active) html += '<div class="rs-note"><i class="md-icon">pause_circle_outline</i><span>Off: the rows go back to the start order and stay there. The preview shows what happens when it is on.</span></div>';
+        html += '<div class="rs-preview-grid">';
+        // Left: the order now and in the next periods.
+        html += '<div class="rs-periods">' + periods.map(function (per, i) {
+            return '<div class="rs-period' + (i === 0 ? ' now' : '') + '">' +
+                '<div class="rs-period-when">' + (i === 0 ? 'Now' : escapeHtml(rsWhen(per.Starts))) + '</div>' +
+                '<ol>' + (per.Order || []).map(function (n) { return '<li>' + escapeHtml(n) + '</li>'; }).join('') + '</ol></div>';
+        }).join('') + '</div>';
+        // Right: one user's home screen now.
+        html += '<div class="rs-screen">';
+        if (!users.length) {
+            html += '<div class="rs-note"><i class="md-icon">person_outline</i><span>No user has these rows yet. Users get them from the sources\' and top-lists\' home row settings (after the next sync).</span></div>';
+        } else {
+            html += '<div class="inputContainer" style="margin-bottom:8px;"><select is="emby-select" class="rs-user" label="Home screen of">' + users.map(function (u) {
+                return '<option value="' + escapeHtml(u.Id) + '"' + (u.Id === p.UserId ? ' selected' : '') + '>' + escapeHtml(u.Name) +
+                    (u.Disabled ? ' (disabled)' : u.Rows < 2 ? ' (has ' + u.Rows + ' row, not shuffled)' : '') + '</option>';
+            }).join('') + '</select></div>';
+            var me = users.filter(function (u) { return u.Id === p.UserId; })[0];
+            if (me && me.Disabled) html += '<div class="rs-note"><i class="md-icon">block</i><span>Disabled in Emby: their home screen is left as it is.</span></div>';
+            html += '<div class="rs-screen-rows">' + (p.Screen || []).map(function (r) {
+                return '<div class="rs-screen-row' + (r.Member ? ' member' : '') + '">' +
+                    '<i class="md-icon">' + (r.Member ? 'swap_vert' : 'lock') + '</i><span>' + escapeHtml(r.Title) + '</span></div>';
+            }).join('') + '</div>';
+            html += '<div class="fieldDescription"><i class="md-icon" style="font-size:1em;vertical-align:-2px;">swap_vert</i> takes turns &nbsp; <i class="md-icon" style="font-size:1em;vertical-align:-2px;">lock</i> stays in place</div>';
+        }
+        html += '</div></div>';
+        return html;
+    }
+
+    function rsWire(view, container) {
+        function changed(card, noPreview) {
+            if (card) rsRefreshCard(view, card, noPreview);
+            rsCardNotes(view);
+            setTimeout(checkFormState, 0);
+        }
+        container.addEventListener('click', function (e) {
+            if (e.target.closest('.rs-new')) {
+                var choices = rsRowChoices(view);
+                var s = rsNormalize({ Id: rsNewId(), Name: '', Rows: [] });
+                var sets = container.querySelector('.rs-sets');
+                sets.insertAdjacentHTML('beforeend', rsSetHtml(s, choices, true));
+                container.querySelector('.rs-empty').style.display = 'none';
+                var card = sets.lastElementChild;
+                changed(card);
+                var nm = card.querySelector('.rs-name'); if (nm) nm.focus();
+                return;
+            }
+            var card = e.target.closest('.rs-set');
+            if (!card) return;
+            var head = e.target.closest('.rs-set-head');
+            if (head) {
+                var body = card.querySelector('.rs-set-body');
+                var open = body.style.display === 'none';
+                body.style.display = open ? 'block' : 'none';
+                card.querySelector('.rs-chevron').style.transform = open ? 'rotate(180deg)' : '';
+                if (open) rsLoadPreview(view, card);
+                return;
+            }
+            var mode = e.target.closest('.rs-mode');
+            if (mode) {
+                var s2 = rsReadSet(card);
+                s2.Mode = mode.dataset.mode;
+                var seg = card.querySelector('.rs-seg');
+                var tmp = document.createElement('div');
+                tmp.innerHTML = rsSetHtml(s2, rsRowChoices(view), true);
+                seg.innerHTML = tmp.querySelector('.rs-seg').innerHTML;
+                card.querySelector('.rs-mode-desc').textContent = tmp.querySelector('.rs-mode-desc').textContent;
+                changed(card);
+                return;
+            }
+            var rm = e.target.closest('.rs-row-remove');
+            if (rm) {
+                rm.closest('.rs-row').remove();
+                // The other cards may offer the row again.
+                container.querySelectorAll('.rs-set').forEach(function (c) { if (c !== card) rsRefreshCard(view, c, true); });
+                changed(card);
+                return;
+            }
+            if (e.target.closest('.rs-delete')) {
+                var name = (card.querySelector('.rs-name') || {}).value || 'this set';
+                if (!confirm('Delete "' + name + '"? Its rows go back to their start order after you save, and then stay where they are.')) return;
+                card.remove();
+                if (!container.querySelector('.rs-set')) container.querySelector('.rs-empty').style.display = '';
+                container.querySelectorAll('.rs-set').forEach(function (c) { rsRefreshCard(view, c, true); });
+                changed(null);
+            }
+        });
+        container.addEventListener('change', function (e) {
+            var card = e.target.closest('.rs-set');
+            if (!card) return;
+            if (e.target.closest('.rs-add')) {
+                var key = e.target.value;
+                if (!key) return;
+                card.querySelector('.rs-rows').insertAdjacentHTML('beforeend', rsRowHtml(key, rsRowChoices(view)));
+                container.querySelectorAll('.rs-set').forEach(function (c) { if (c !== card) rsRefreshCard(view, c, true); });
+                changed(card);
+                return;
+            }
+            if (e.target.closest('.rs-user')) {
+                card._rsUser = e.target.value;
+                rsLoadPreview(view, card);
+                return;
+            }
+            changed(card);
+        });
+        container.addEventListener('input', function (e) {
+            var card = e.target.closest('.rs-set');
+            // Text fields only: a select sends input before change, and redrawing the Add list
+            // here would empty the choice before change sees it.
+            if (!card || !e.target.closest('.rs-name, .rs-days')) return;
+            // Typing a name: the header follows, the preview does not need asking again.
+            changed(card, !!e.target.closest('.rs-name'));
+        });
+        // Dragging a row within its set changes the start order.
+        var dragged = null;
+        container.addEventListener('dragstart', function (e) {
+            var row = e.target.closest && e.target.closest('.rs-row');
+            if (!row) return;
+            dragged = row;
+            row.classList.add('rs-dragging');
+            try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', row.dataset.key); } catch (x) { }
+        });
+        container.addEventListener('dragover', function (e) {
+            if (!dragged) return;
+            var list = e.target.closest && e.target.closest('.rs-rows');
+            if (!list || list !== dragged.parentElement) return;
+            e.preventDefault();
+            var after = Array.from(list.querySelectorAll('.rs-row:not(.rs-dragging)')).reduce(function (closest, child) {
+                var box = child.getBoundingClientRect();
+                var offset = e.clientY - box.top - box.height / 2;
+                return offset < 0 && offset > closest.offset ? { offset: offset, element: child } : closest;
+            }, { offset: Number.NEGATIVE_INFINITY }).element;
+            if (after) list.insertBefore(dragged, after); else list.appendChild(dragged);
+        });
+        container.addEventListener('dragend', function () {
+            if (!dragged) return;
+            var card = dragged.closest('.rs-set');
+            dragged.classList.remove('rs-dragging');
+            dragged = null;
+            changed(card);
+        });
     }
 
     function getManDragAfterElement(container, y) {
@@ -14546,7 +14984,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         fileInput.value = '';
                         showRestoreModal(ev.target.result, function () {
                             // Server config changed underneath us — reload every tab from scratch.
-                            ['#hscContainer', '#hscManageContainer', '#hstContainer', '#tlContainer', '#tcManageContainer'].forEach(function (sel) {
+                            ['#hscContainer', '#hscManageContainer', '#hstContainer', '#rsContainer', '#tlContainer', '#tcManageContainer'].forEach(function (sel) {
                                 var el = view.querySelector(sel);
                                 if (el) el.dataset.loaded = '';
                             });
@@ -14827,6 +15265,15 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 return;
             }
 
+            // A Row shuffle set needs two rows (owner's rule).
+            var _rsSmall = rowShuffleSetsTooSmall(view);
+            if (_rsSmall.length > 0) {
+                if (view._hscShowPageTab) view._hscShowPageTab('HomeCompanion');
+                if (view._hscShowSubTab) view._hscShowSubTab('shuffle');
+                window.Dashboard.alert('Not saved: the Row shuffle set ' + _rsSmall.map(function (n) { return '"' + n + '"'; }).join(', ') + ' needs at least two rows. Add a row, or delete the set.');
+                return;
+            }
+
             // First: were the settings changed elsewhere since this page loaded? Then the save
             // below is replayed (synchronously, flagged) once the server says it is unchanged.
             if (!view._hscStampChecked) {
@@ -14947,6 +15394,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     }
                 });
                 configObj.TopLists = currentConfig.TopLists || [];
+                lastHscConfig.TopLists = configObj.TopLists;
 
                 // Ensure all items-type home sections exclude top-list libraries automatically
                 return preFetchLibraryData().then(function(libData) {
@@ -15023,6 +15471,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 updateDryRunWarning();
                 writeLeaveState(null);
                 hideDraftBar();
+                // Row Shuffle: saved sets have started; their previews say so now.
+                lastHscConfig.RowShuffleSets = (configObj.RowShuffleSets || []).map(rsNormalize);
+                var rsSaved = view.querySelector('#rsContainer');
+                if (rsSaved && rsSaved.dataset.loaded) rsSaved.querySelectorAll('.rs-set').forEach(function (c) { rsQueuePreview(view, c); });
                 // The server now holds what was just saved: that is the new "as fetched" state.
                 window.ApiClient.getPluginConfiguration(pluginId).then(function (c) {
                     view._hscServerStamp = serverStamp(c);
@@ -15239,8 +15691,18 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     OrigPostersMovies:    config.OrigPostersMovies   !== false,
                     OrigPostersSeries:    config.OrigPostersSeries   !== false,
                     OrigPostersSeasons:   config.OrigPostersSeasons  !== false,
-                    OrigPostersEpisodes:  config.OrigPostersEpisodes  || false
+                    OrigPostersEpisodes:  config.OrigPostersEpisodes  || false,
+                    RowShuffleSets:       (config.RowShuffleSets || []).map(rsNormalize),
+                    TopLists:             config.TopLists || []
                 };
+                // Row Shuffle is drawn again from these settings (when it is open: now).
+                var rsBox = view.querySelector('#rsContainer');
+                if (rsBox && rsBox.dataset.loaded) {
+                    rsBox.dataset.loaded = '';
+                    rsBox.innerHTML = '';
+                    if (view.querySelector('#hscSubTabShuffle') && view.querySelector('#hscSubTabShuffle').style.display !== 'none')
+                        setTimeout(function () { loadRowShuffleTab(view); }, 0);
+                }
                 savedFilters = config.SavedFilters || [];
                 setSettingsLevel(view, config.SettingsLevel || initialSettingsLevel(config), false);
 
@@ -15467,6 +15929,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 view.querySelector('#hscSubTabTweaks').style.display = '';
                 var hstContainer = view.querySelector('#hstContainer');
                 if (hstContainer && !hstContainer.dataset.loaded) loadHstTab(view);
+            } else if (target === 'shuffle') {
+                view.querySelector('#hscSubTabShuffle').style.display = '';
+                var rsContainer = view.querySelector('#rsContainer');
+                if (rsContainer && !rsContainer.dataset.loaded) loadRowShuffleTab(view);
+                // The source cards may have changed since: the row names and the Add lists follow.
+                else if (rsContainer) rsContainer.querySelectorAll('.rs-set').forEach(function (c) { rsRefreshCard(view, c); });
             } else if (target === 'manage') {
                 view.querySelector('#hscSubTabManage').style.display = '';
                 var manageContainer = view.querySelector('#hscManageContainer');

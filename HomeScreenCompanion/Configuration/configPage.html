@@ -1662,6 +1662,49 @@
         }
         .hsc-level-switch select:hover { background: var(--plugin-popup-hover); }
         .hsc-level-switch select option { background: var(--plugin-popup-bg); color: var(--plugin-popup-color); }
+        /* Row Shuffle (Home Screen → Row Shuffle) */
+        .rs-intro p { font-size: 0.9em; line-height: 1.5; margin: 0 0 8px; }
+        .rs-intro { margin-bottom: 20px; }
+        .rs-sets { margin-bottom: 8px; }
+        .rs-set-head { gap: 10px; }
+        .rs-set-meta { font-size: 0.8em; color: var(--theme-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .rs-pill { margin-left: auto; font-size: 0.8em; font-weight: 500; padding: 2px 8px; border-radius: 999px; }
+        .rs-pill.on { background: rgba(82,181,75,0.15); color: var(--hsc-primary-text); }
+        .rs-pill.off { background: rgba(154,164,176,0.15); color: var(--hsc-neutral); }
+        .rs-field-label { font-size: 0.88em; font-weight: 500; margin: 16px 0 8px; }
+        .rs-seg { display: flex; max-width: 360px; border: 1px solid var(--hsc-hairline); border-radius: 8px; padding: 2px; gap: 2px; background: var(--hsc-tint-1); }
+        .rs-mode-desc { margin-top: 6px; }
+        .rs-every-wrap { display: flex; gap: 16px; align-items: flex-end; margin-top: 16px; flex-wrap: wrap; }
+        .rs-every-sel { min-width: 200px; margin-bottom: 0 !important; }
+        .rs-days-wrap { width: 110px; margin-bottom: 0 !important; }
+        .rs-rows { display: flex; flex-direction: column; gap: 4px; }
+        .rs-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 6px; border: 1px solid var(--hsc-hairline); border-radius: 6px; background: var(--theme-background-level2); }
+        .rs-row:hover { background: var(--hsc-tint-2); }
+        .rs-row.rs-dragging { opacity: 0.5; }
+        .rs-row .tag-indicator { margin-left: 0; }
+        .rs-row .tag-indicator.toplist .md-icon { color: var(--hsc-cat-toplist); }
+        .rs-handle { cursor: grab; color: var(--theme-text-secondary); font-size: 1.2em; }
+        .rs-row-pos { font-variant-numeric: tabular-nums; color: var(--theme-text-secondary); font-size: 0.85em; min-width: 1.6em; text-align: right; }
+        .rs-row-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .rs-row-name.rs-missing { opacity: 0.6; text-decoration: line-through; }
+        .rs-row-note { font-size: 0.8em; color: var(--hsc-warning-text); }
+        .rs-row-remove { margin-left: auto !important; padding: 2px !important; }
+        .rs-add-wrap { margin-top: 8px; max-width: 360px; }
+        .rs-note { display: flex; gap: 8px; align-items: flex-start; font-size: 0.88em; line-height: 1.45; padding: 8px 12px; margin: 8px 0; border: 1px solid var(--hsc-hairline); border-radius: 6px; background: var(--hsc-tint-1); }
+        .rs-note .md-icon { font-size: 1.2em; color: var(--theme-text-secondary); }
+        .rs-preview-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin-top: 8px; }
+        .rs-periods { display: flex; flex-direction: column; gap: 8px; }
+        .rs-period { border: 1px solid var(--hsc-hairline); border-radius: 6px; padding: 8px 12px; }
+        .rs-period.now { background: var(--hsc-tint-1); border-color: var(--hsc-hairline-strong); }
+        .rs-period-when { font-size: 0.8em; font-weight: 600; color: var(--theme-text-secondary); margin-bottom: 4px; }
+        .rs-period.now .rs-period-when { color: var(--theme-text-primary); }
+        .rs-period ol { margin: 0; padding-left: 22px; font-size: 0.88em; line-height: 1.5; }
+        .rs-screen-rows { display: flex; flex-direction: column; gap: 3px; margin-bottom: 6px; }
+        .rs-screen-row { display: flex; align-items: center; gap: 8px; font-size: 0.88em; padding: 5px 10px; border-radius: 6px; color: var(--theme-text-secondary); background: var(--hsc-tint-1); }
+        .rs-screen-row .md-icon { font-size: 1.1em; opacity: 0.7; }
+        .rs-screen-row.member { color: var(--theme-text-primary); font-weight: 500; background: var(--hsc-seg-on-bg); box-shadow: inset 0 0 0 1px var(--hsc-hairline-strong); }
+        .rs-screen-row.member .md-icon { color: var(--hsc-primary-text); opacity: 1; }
+        .rs-foot { margin-top: 24px; display: flex; justify-content: flex-end; }
     </style>
 
     <div class="content-primary">
@@ -2261,6 +2304,7 @@
                 <div class="hsc-sub-tab-nav">
                     <button class="hsc-sub-tab-btn active" data-hsc-tab="manage">Manage</button>
                     <button class="hsc-sub-tab-btn" data-hsc-tab="copy">Copy &amp; Sync</button>
+                    <button class="hsc-sub-tab-btn" data-hsc-tab="shuffle">Row Shuffle</button>
                     <button class="hsc-sub-tab-btn" data-hsc-tab="tweaks">Home Screen Tweaks</button>
                 </div>
                 <div id="hscSubTabManage" class="hsc-sub-tab-content verticalSection">
@@ -2268,6 +2312,9 @@
                 </div>
                 <div id="hscSubTabCopy" class="hsc-sub-tab-content verticalSection" style="display:none;">
                     <div id="hscContainer"></div>
+                </div>
+                <div id="hscSubTabShuffle" class="hsc-sub-tab-content verticalSection" style="display:none;">
+                    <div id="rsContainer"></div>
                 </div>
                 <div id="hscSubTabTweaks" class="hsc-sub-tab-content verticalSection" style="display:none;">
                     <div id="hstContainer"></div>
@@ -3042,7 +3089,7 @@
                     <i class="md-icon help-section-icon">home</i>
                     <span>Home Screen</span>
                 </div>
-                <div class="step-text" style="margin-bottom:10px; font-size:0.92em;">The <strong>Home Screen</strong> tab has three independent sub-sections: <strong>Manage</strong> (source-based rows), <strong>Copy &amp; Sync</strong> (copy one user's layout to others) and <strong>Home Screen Tweaks</strong> (adjustments to Emby's built-in rows and posters).</div>
+                <div class="step-text" style="margin-bottom:10px; font-size:0.92em;">The <strong>Home Screen</strong> tab has four independent sub-sections: <strong>Manage</strong> (source-based rows), <strong>Copy &amp; Sync</strong> (copy one user's layout to others), <strong>Row Shuffle</strong> (rows that take turns on their places) and <strong>Home Screen Tweaks</strong> (adjustments to Emby's built-in rows and posters).</div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">view_list</i>
                     <div><strong>Manage</strong> — Creates and keeps custom home screen rows up to date. Each row is tied to one of your sources and is automatically refreshed for the selected users every time sync runs. To set up a row for a source, open that source card and go to its <em>Home Screen</em> tab.</div>
@@ -3059,6 +3106,19 @@
                             <li>The target users' own rows are <strong>replaced</strong>, so changes they made themselves are lost on the next run.</li>
                             <li><em>Also copy library order</em> copies the order of the libraries in the sidebar too.</li>
                             <li>When <em>Enable Home Screen sync</em> is off, the copy never runs, not even from <strong>Run</strong>.</li>
+                        </ul></div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">swap_vert</i>
+                    <div><strong>Row Shuffle</strong> — Rows far down the home screen are easy to miss. In a <em>Row shuffle set</em>, the rows you pick take turns on the places they already have, so each one gets its time near the top. All other rows stay exactly where they are.
+                        <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
+                            <li><em>Rolling</em>: each time, every row moves up one place and the top row goes to the bottom. <em>Random</em>: a new random order each time; the same row is never on top twice in a row.</li>
+                            <li>Change <em>every hour</em>, <em>every day</em>, <em>every week</em> or <em>every … days</em>. It changes on the full hour or at midnight (server time), and shows on the home screen within 15 minutes, the next time it is opened.</li>
+                            <li>Only rows HSC makes can be picked: a source's home row and top-list rows. A row can be in one set only, and a set needs at least two rows. Emby's own rows and rows users made themselves are never moved.</li>
+                            <li>It works for every user who has the rows, and everyone gets the same order. Copy &amp; Sync targets follow along.</li>
+                            <li>The list in the set is the <strong>start order</strong>. A set that is new or changed starts in that order when you save. Switch a set off or delete it, and its rows go back to the start order once and then stay there.</li>
+                            <li>A row's <em>Position</em> only places it when the row is made. After that the set decides where it is. Moving one of the rows by hand moves its place in the set.</li>
+                            <li>The preview shows the order now and for the next changes, and the home screen of a user you pick, with the rows that take turns marked.</li>
                         </ul></div>
                 </div>
                 <div class="help-feature-row">
@@ -3415,6 +3475,7 @@
                             <li>Tick <strong>Add as home screen section</strong>.</li>
                             <li>Tick the users under <strong>Target Users</strong>.</li>
                             <li>Pick the look under <strong>Section Settings</strong>.</li>
+                            <li>Optional: to let it take turns with other rows so it is not always far down, add it to a set under <strong>Home Screen → Row Shuffle</strong>.</li>
                         </ul>
                     </div>
                 </div>

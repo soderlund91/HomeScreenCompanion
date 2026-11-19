@@ -98,6 +98,47 @@ namespace HomeScreenCompanion
         public System.Collections.Generic.Dictionary<string, string> RotatingKeys { get; set; } = new System.Collections.Generic.Dictionary<string, string>();
     }
 
+    // Row shuffle (RowShuffle.Preview): what a set (saved or not) does now and in the next periods.
+    [MediaBrowser.Model.Services.Route("/HomeScreenCompanion/RowShuffle/Preview", "POST")]
+    [MediaBrowser.Controller.Net.Authenticated(Roles = "Admin")]
+    public class RowShufflePreviewRequest : MediaBrowser.Model.Services.IReturn<RowShufflePreviewResponse>
+    {
+        public RowShuffleSet Set { get; set; } = new RowShuffleSet();
+        public string UserId { get; set; } = "";
+    }
+
+    public class RowShufflePreviewResponse
+    {
+        // Now first (Starts ""), then the next periods with when they begin ("yyyy-MM-dd HH:mm").
+        public List<RowShufflePeriod> Periods { get; set; } = new List<RowShufflePeriod>();
+        public List<RowShuffleUser> Users { get; set; } = new List<RowShuffleUser>();
+        public string UserId { get; set; } = "";
+        // UserId's home screen in the current period: the set's rows marked.
+        public List<RowShuffleScreenRow> Screen { get; set; } = new List<RowShuffleScreenRow>();
+        // The set is new or changed: it starts in its start order when saved.
+        public bool StartsOnSave { get; set; }
+    }
+
+    public class RowShufflePeriod
+    {
+        public string Starts { get; set; } = "";
+        public List<string> Order { get; set; } = new List<string>();
+    }
+
+    public class RowShuffleUser
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+        public int Rows { get; set; }
+        public bool Disabled { get; set; }
+    }
+
+    public class RowShuffleScreenRow
+    {
+        public string Title { get; set; } = "";
+        public bool Member { get; set; }
+    }
+
     [MediaBrowser.Model.Services.Route("/HomeScreenCompanion/Hsc/UserSections", "POST")]
     [MediaBrowser.Controller.Net.Authenticated(Roles = "Admin")]
     public class HscSaveUserSectionsRequest : MediaBrowser.Model.Services.IReturn<HscSaveUserSectionsResponse>

@@ -857,6 +857,8 @@ namespace HomeScreenCompanion
         public bool? OrigPostersSeries { get; set; }
         public bool? OrigPostersSeasons { get; set; }
         public bool? OrigPostersEpisodes { get; set; }
+        // Row shuffle sets (null in older backups: the current sets stay).
+        public List<RowShuffleSet>? RowShuffleSets { get; set; }
     }
 
     public class BackupTopList
@@ -1993,6 +1995,13 @@ public class HomeScreenCompanionService : IService
         }
 
 
+
+        public object Post(RowShufflePreviewRequest request)
+        {
+            var config = Plugin.Instance?.Configuration;
+            if (config == null || request?.Set == null) return new RowShufflePreviewResponse();
+            return RowShuffle.Preview(config, _userManager, request.Set, request.UserId);
+        }
 
         public object Get(HscDebugMethodsRequest request)
         {
@@ -4224,7 +4233,8 @@ public class HomeScreenCompanionService : IService
                     OrigPostersMovies    = config.OrigPostersMovies,
                     OrigPostersSeries    = config.OrigPostersSeries,
                     OrigPostersSeasons   = config.OrigPostersSeasons,
-                    OrigPostersEpisodes  = config.OrigPostersEpisodes
+                    OrigPostersEpisodes  = config.OrigPostersEpisodes,
+                    RowShuffleSets       = (config.RowShuffleSets ?? new List<RowShuffleSet>()).Where(s => s != null).Select(RowShuffle.Copy).ToList()
                 };
                 file.Sections.Add("HomeSync");
             }
@@ -4389,6 +4399,10 @@ public class HomeScreenCompanionService : IService
                     if (h.OrigPostersSeries.HasValue)   config.OrigPostersSeries   = h.OrigPostersSeries.Value;
                     if (h.OrigPostersSeasons.HasValue)  config.OrigPostersSeasons  = h.OrigPostersSeasons.Value;
                     if (h.OrigPostersEpisodes.HasValue) config.OrigPostersEpisodes = h.OrigPostersEpisodes.Value;
+                    // Row keys are names (src:<name>/<tag>, tl:<tag>), so they work on another server.
+                    // A restored set starts again from its start order.
+                    if (h.RowShuffleSets != null)
+                        config.RowShuffleSets = RowShuffle.Restored(h.RowShuffleSets);
                     response.Applied.Add("Home screen sync");
                 }
 
