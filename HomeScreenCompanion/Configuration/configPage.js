@@ -4953,6 +4953,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             }
             updateHseSectionAvailability(row);
             updateBadges(row);
+            // Rows that already show what this source makes: offer to take them over.
+            var _rtoView = row.closest('#HomeScreenCompanionConfigPage') || activeView();
+            rtoWireCard(_rtoView, row);
+            if (this.checked) rtoCheck(_rtoView, row);
+            else { var _rtoBox = row.querySelector('.rto-note'); if (_rtoBox && row.dataset.rtoDone !== '1') _rtoBox.style.display = 'none'; }
         });
 
         var chkRandomPick = row.querySelector('.chkRandomPick');
@@ -7190,6 +7195,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
 
                 // Mark as fully loaded only after form is in DOM so getUiConfig reads form values
                 tab.dataset.hseLoaded = '1';
+                if ((row.querySelector('.chkEnableHomeSection') || {}).checked) { rtoWireCard(_hseView || activeView(), row); rtoCheck(_hseView || activeView(), row); }
 
                 // Sync live values from Emby, then re-anchor baseline and check form state.
                 // Re-anchoring happens AFTER sync so changes made by sync don't trigger a false dirty state.
@@ -9098,6 +9104,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         container.dataset.loaded = '1';
         container.querySelectorAll('.rs-set').forEach(function (card) { rsRefreshCard(view, card); });
         if (!container._rsWired) { container._rsWired = true; rsWire(view, container); }
+        // Existing rows that can be taken over: offered in the Add lists once known.
+        rtoLoadList().then(function () { container.querySelectorAll('.rs-set').forEach(function (card) { rsRefreshCard(view, card, true); }); });
     }
 
     // After any change on a card: positions, the Add list, the header and the preview.
@@ -9111,12 +9119,19 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         container.querySelectorAll('.rs-row').forEach(function (r) { used[r.dataset.key.toLowerCase()] = 1; });
         var add = card.querySelector('.rs-add');
         var free = choices.order.filter(function (k) { return !used[k]; });
-        add.innerHTML = '<option value="">' + (free.length ? 'Choose a row…' : (choices.order.length ? 'All rows are in a set' : 'No sources with a home row yet')) + '</option>' +
+        // Rows users already have that a source can take over (Take over home rows): picking one takes
+        // it over on the source card too.
+        var takeable = (_rtoList || []).filter(function (o, i) { o._i = i; return !used[(o.SourceKey || '').toLowerCase()] && !choices.byKey[(o.SourceKey || '').toLowerCase()]; });
+        add.innerHTML = '<option value="">' + (free.length || takeable.length ? 'Choose a row…' : (choices.order.length ? 'All rows are in a set' : 'No sources with a home row yet')) + '</option>' +
+            (free.length ? '<optgroup label="HSC rows">' : '') +
             free.map(function (k) {
                 var c = choices.byKey[k];
                 return '<option value="' + escapeHtml(c.key) + '">' + escapeHtml(c.name) + ' (' + RS_KIND[c.kind].label.toLowerCase() + ')</option>';
-            }).join('');
-        add.disabled = !free.length;
+            }).join('') + (free.length ? '</optgroup>' : '') +
+            (takeable.length ? '<optgroup label="Existing rows (take over)">' + takeable.map(function (o) {
+                return '<option value="rto:' + o._i + '">' + escapeHtml(o.Title) + ' (source "' + escapeHtml(o.Name) + '", ' + (o.Users || []).length + ' users)</option>';
+            }).join('') + '</optgroup>' : '');
+        add.disabled = !free.length && !takeable.length;
         card.querySelector('.rs-set-title').textContent = s.Name || 'New set';
         card.querySelector('.rs-set-meta').textContent = rsSetMeta(s);
         var pill = card.querySelector('.rs-pill');
@@ -9262,6 +9277,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             if (e.target.closest('.rs-add')) {
                 var key = e.target.value;
                 if (!key) return;
+                if (key.indexOf('rto:') === 0) {
+                    var opt = (_rtoList || [])[+key.slice(4)];
+                    var src = opt && rtoCardOf(view, opt);
+                    if (!src) { window.Dashboard.alert('The source of that row was not found on this page.'); rsRefreshCard(view, card, true); return; }
+                    rtoApply(view, src, opt);
+                    key = opt.SourceKey;
+                    showToast('"' + opt.Title + '" taken over by the source "' + opt.Name + '": save to apply');
+                }
                 card.querySelector('.rs-rows').insertAdjacentHTML('beforeend', rsRowHtml(key, rsRowChoices(view)));
                 container.querySelectorAll('.rs-set').forEach(function (c) { if (c !== card) rsRefreshCard(view, c, true); });
                 changed(card);
@@ -9309,6 +9332,191 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             dragged.classList.remove('rs-dragging');
             dragged = null;
             changed(card);
+        });
+    }
+
+    // ── Take over home rows (RowTakeOver.cs) ────────────────────────────────────
+    // Rows users already have that show what a source makes (its tag or collection) while the source
+    // has no home row. Taking them over fills in the source's Home Screen tab (unsaved, like Import
+    // collection): the users who have the row, the row's settings and Position "after" the row above.
+    // The next sync finds the rows by what they show and keeps their ids and places; from then on they
+    // are the source's rows like any HSC made (owner 2026-11-19). One function (rtoApply) for all the
+    // ways in: the source card's notice, Row Shuffle's Add list and the Manage tab.
+
+    var _rtoList = null;          // HomeRows/TakeOverList, until the next Save
+    var _rtoListPromise = null;
+    function rtoInvalidate() { _rtoList = null; _rtoListPromise = null; }
+    function rtoFetchJson(path, body) {
+        var tok = window.ApiClient.accessToken ? window.ApiClient.accessToken() : '';
+        var opts = { headers: { 'X-Emby-Token': tok } };
+        if (body) { opts.method = 'POST'; opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+        return fetch(window.ApiClient.getUrl(path), opts).then(function (r) { return r.json(); });
+    }
+    function rtoLoadList() {
+        if (_rtoList) return Promise.resolve(_rtoList);
+        if (_rtoListPromise) return _rtoListPromise;
+        _rtoListPromise = rtoFetchJson('HomeScreenCompanion/HomeRows/TakeOverList').then(function (r) {
+            _rtoList = (r && r.Options) || [];
+            _rtoListPromise = null;
+            return _rtoList;
+        }).catch(function () { _rtoListPromise = null; return []; });
+        return _rtoListPromise;
+    }
+
+    // The source card an option belongs to (its row key, as Row Shuffle and Copy & Sync know it).
+    function rtoCardOf(view, opt) {
+        var want = (opt.SourceKey || '').toLowerCase();
+        return Array.from(view.querySelectorAll('#tagListContainer .tag-row')).filter(function (row) {
+            if (row.classList.contains('hsc-tour-demo') || !row.querySelector('.txtEntryLabel')) return false;
+            var name = (row.querySelector('.txtEntryLabel').value || '').trim();
+            var tag = ((row.querySelector('.txtTagName') || {}).value || '').trim() || name;
+            return rsSourceKey(name, tag).toLowerCase() === want;
+        })[0] || null;
+    }
+
+    function rtoUsersOf(tab) {
+        if (tab.dataset.hseLoaded === '1')
+            return Array.from(tab.querySelectorAll('.chkHseUser:checked')).map(function (c) { return c.value; });
+        try { return JSON.parse(decodeURIComponent(tab.dataset.hseUserids || '%5B%5D')) || []; } catch (e) { return []; }
+    }
+
+    // Takes the rows over on the card: Add as home screen section on, the users who have the row added,
+    // the row's settings and Position. Unsaved; nothing on the server changes until Save.
+    function rtoApply(view, row, opt) {
+        var tab = row.querySelector('.homescreen-tab');
+        var chk = row.querySelector('.chkEnableHomeSection');
+        if (!tab || !chk) return false;
+        row.dataset.rtoDone = '1';   // no notice again for this card
+        if (!chk.checked) { chk.checked = true; chk.dispatchEvent(new Event('change', { bubbles: true })); }
+        var norm = function (id) { return (id || '').replace(/-/g, '').toLowerCase(); };
+        var users = rtoUsersOf(tab);
+        (opt.Users || []).forEach(function (u) {
+            if (!users.some(function (x) { return norm(x) === norm(u.UserId); })) users.push(u.UserId);
+        });
+        tab.dataset.hseUserids = encodeURIComponent(JSON.stringify(users));
+        tab.dataset.hseSettings = encodeURIComponent(opt.Settings || '{}');
+        tab.dataset.hseLibraryid = encodeURIComponent('auto');
+        tab.dataset.hseDefaultType = opt.SectionType || 'items';
+        // Drawn again from the new values when it was open.
+        if (tab.dataset.hseLoaded === '1') { tab.dataset.hseLoaded = '0'; initHomeSectionTab(row); }
+        row.dataset.touched = '1';
+        rtoShowDone(row, opt);
+        if (typeof updateBadges === 'function') updateBadges(row);
+        setTimeout(checkFormState, 0);
+        return true;
+    }
+
+    function rtoNoteBox(row) {
+        var details = row.querySelector('.hse-details');
+        if (!details) return null;
+        var box = details.querySelector('.rto-note');
+        if (!box) {
+            box = document.createElement('div');
+            box.className = 'rs-note rto-note';
+            details.insertBefore(box, details.firstChild);
+        }
+        return box;
+    }
+
+    function rtoShowDone(row, opt) {
+        var box = rtoNoteBox(row);
+        if (!box) return;
+        box.style.display = '';
+        box.innerHTML = '<i class="md-icon">check_circle_outline</i><span>Taken over: the row <strong>' + escapeHtml(opt.Title) + '</strong> of ' +
+            (opt.Users || []).length + ' user' + ((opt.Users || []).length === 1 ? '' : 's') + ', with its own settings, ' + escapeHtml(opt.Position) +
+            '. Save Settings, and the next sync makes them this source\'s rows (they stay where they are). From then on they are like any row HSC made: ' +
+            'untick Add as home screen section or delete the source, and they are removed.</span>';
+    }
+
+    // The card's notice: rows that show what this source makes are already there.
+    function rtoNoticeHtml(opts) {
+        return opts.map(function (o, i) {
+            var n = (o.Users || []).length;
+            return '<div class="rto-opt" data-i="' + i + '"><i class="md-icon">info</i><div>' +
+                '<div><strong>' + n + ' user' + (n === 1 ? ' already has' : 's already have') + ' a row that shows this</strong> (' + escapeHtml(o.Shows) + ', titled "' + escapeHtml(o.Title) + '"). ' +
+                'When this source gets a home row, the sync uses these rows instead of making new ones (they show its ' + (o.SectionType === 'boxset' ? 'collection' : 'tag') + ').</div>' +
+                (o.Warnings || []).map(function (w) { return '<div class="rto-warn">' + escapeHtml(w) + '</div>'; }).join('') +
+                '<div class="rto-btns">' +
+                '<button type="button" is="emby-button" class="raised btn-neutral rto-take" data-i="' + i + '"><span>Take it over as it is</span></button>' +
+                '<button type="button" is="emby-button" class="raised hsc-btn-ghost rto-keep"><span>Use my settings</span></button>' +
+                '</div>' +
+                '<div class="fieldDescription"><em>As it is</em>: the users who have it are added, the row keeps its title and look and stays where it is (' + escapeHtml(o.Position) + '). ' +
+                '<em>Use my settings</em>: the rows of the users ticked below are taken over and get the settings below.</div>' +
+                '</div></div>';
+        }).join('');
+    }
+
+    // Asks the server for rows this card would take over and shows the notice (once per card).
+    function rtoCheck(view, row) {
+        if (!view || !row || row.dataset.rtoDone === '1' || row.dataset.rtoDismissed === '1' || isRotatingRow(row)) return;
+        var type = (row.querySelector('.selSourceType') || {}).value || '';
+        if (type === 'NextWatch' || (row.querySelector('.chkEnableTopList') || {}).checked) return;
+        var tab = row.querySelector('.homescreen-tab');
+        // A source whose rows HSC already tracks: nothing to take over.
+        try { if ((JSON.parse(decodeURIComponent((tab && tab.dataset.hseTracked) || '%5B%5D')) || []).some(function (t) { return t.SectionId && t.SectionId.indexOf('hsc__') !== 0; })) return; } catch (e) { }
+        var name = (row.querySelector('.txtEntryLabel').value || '').trim();
+        var tag = ((row.querySelector('.txtTagName') || {}).value || '').trim() || name;
+        var collOn = !!(row.querySelector('.chkEnableCollection') || {}).checked;
+        var body = { Name: name, Tag: tag, CollectionName: collOn ? effectiveCollName(row) : '', TagRow: !!(row.querySelector('.chkEnableTag') || {}).checked, CollectionRow: collOn };
+        if (!tag || (!body.TagRow && !body.CollectionRow)) return;
+        var seq = (row._rtoSeq || 0) + 1; row._rtoSeq = seq;
+        rtoFetchJson('HomeScreenCompanion/HomeRows/Existing', body).then(function (r) {
+            if (seq !== row._rtoSeq || row.dataset.rtoDone === '1' || !(row.querySelector('.chkEnableHomeSection') || {}).checked) return;
+            var opts = ((r && r.Options) || []).filter(function (o) { return (o.Users || []).length > 0; });
+            var box = rtoNoteBox(row);
+            if (!box) return;
+            if (!opts.length) { box.style.display = 'none'; return; }
+            box.style.display = '';
+            box.innerHTML = rtoNoticeHtml(opts);
+            box._rtoOpts = opts;
+        }).catch(function () { });
+    }
+
+    // Clicks in a card's notice.
+    function rtoWireCard(view, row) {
+        if (row._rtoWired) return;
+        row._rtoWired = true;
+        row.addEventListener('click', function (e) {
+            var take = e.target.closest('.rto-take'), keep = e.target.closest('.rto-keep');
+            if (!take && !keep) return;
+            var box = e.target.closest('.rto-note');
+            if (!box) return;
+            if (keep) { row.dataset.rtoDismissed = '1'; box.style.display = 'none'; return; }
+            var opt = (box._rtoOpts || [])[+take.dataset.i];
+            if (opt) { rtoApply(view, row, opt); rtoInvalidate(); }
+        });
+    }
+
+    // Manage tab: rows of this user that can be taken over get a Take over button.
+    function rtoDecorateManage(view, listEl, userId) {
+        rtoLoadList().then(function (opts) {
+            var norm = function (id) { return (id || '').replace(/-/g, '').toLowerCase(); };
+            listEl.querySelectorAll('.man-section-row').forEach(function (r) {
+                var s = currentManageSections[+r.dataset.sectionIndex];
+                if (!s || r.querySelector('.man-btn-takeover')) return;
+                var opt = opts.filter(function (o) {
+                    return (o.Users || []).some(function (u) { return norm(u.UserId) === norm(userId) && u.SectionId === s.Id; });
+                })[0];
+                if (!opt) return;
+                // Already taken over on its card (not saved yet), or the card has its own home row now.
+                var ownCard = rtoCardOf(view, opt);
+                if (ownCard && (ownCard.querySelector('.chkEnableHomeSection') || {}).checked) return;
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'raised btn-neutral man-btn-takeover emby-button';
+                btn.title = 'Make this row the home row of the source "' + opt.Name + '" (for every user who has it)';
+                btn.innerHTML = '<span>Take over</span>';
+                btn.addEventListener('click', function () {
+                    var card = rtoCardOf(view, opt);
+                    if (!card) { window.Dashboard.alert('The source "' + opt.Name + '" was not found on this page.'); return; }
+                    rtoApply(view, card, opt);
+                    rtoInvalidate();
+                    openSourceRowTab(view, card, 'homescreen');
+                    showToast('Taken over on "' + opt.Name + '": save to apply');
+                });
+                var del = r.querySelector('.man-btn-delete');
+                r.insertBefore(btn, del);
+            });
         });
     }
 
@@ -14058,6 +14266,9 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             ].join('') + '</div>';
         }).join('');
 
+        var _manUser = (container.querySelector('#selManageUser') || {}).value || '';
+        if (_manUser) rtoDecorateManage(view, listEl, _manUser);
+
         listEl.querySelectorAll('.man-section-row').forEach(function (row) {
             var handle = row.querySelector('.drag-handle');
 
@@ -15471,6 +15682,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 updateDryRunWarning();
                 writeLeaveState(null);
                 hideDraftBar();
+                rtoInvalidate();
                 // Row Shuffle: saved sets have started; their previews say so now.
                 lastHscConfig.RowShuffleSets = (configObj.RowShuffleSets || []).map(rsNormalize);
                 var rsSaved = view.querySelector('#rsContainer');

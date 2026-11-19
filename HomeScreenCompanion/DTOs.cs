@@ -139,6 +139,50 @@ namespace HomeScreenCompanion
         public bool Member { get; set; }
     }
 
+    // Take over home rows (RowTakeOver): the rows users already have that show what a source makes.
+    [MediaBrowser.Model.Services.Route("/HomeScreenCompanion/HomeRows/Existing", "POST")]
+    [MediaBrowser.Controller.Net.Authenticated(Roles = "Admin")]
+    public class RowTakeOverRequest : MediaBrowser.Model.Services.IReturn<RowTakeOverResponse>
+    {
+        public string Name { get; set; } = "";
+        public string Tag { get; set; } = "";
+        public string CollectionName { get; set; } = "";
+        public bool TagRow { get; set; }
+        public bool CollectionRow { get; set; }
+    }
+
+    // Every saved source without a home row that has such rows (Row Shuffle, Manage).
+    [MediaBrowser.Model.Services.Route("/HomeScreenCompanion/HomeRows/TakeOverList", "GET")]
+    [MediaBrowser.Controller.Net.Authenticated(Roles = "Admin")]
+    public class RowTakeOverListRequest : MediaBrowser.Model.Services.IReturn<RowTakeOverResponse> { }
+
+    public class RowTakeOverResponse
+    {
+        public List<RowTakeOverOption> Options { get; set; } = new List<RowTakeOverOption>();
+    }
+
+    public class RowTakeOverOption
+    {
+        public string Name { get; set; } = "";
+        public string Tag { get; set; } = "";
+        public string SourceKey { get; set; } = "";     // src:<name>/<tag> (Row Shuffle's key)
+        public string SectionType { get; set; } = "";   // items | boxset
+        public string Shows { get; set; } = "";         // "tag 'x'" / "collection 'y'"
+        public string Title { get; set; } = "";
+        public string Settings { get; set; } = "{}";    // the source's HomeSectionSettings
+        public string Position { get; set; } = "";      // for the page: "after 'Dokumentärer'"
+        public List<RowTakeOverUser> Users { get; set; } = new List<RowTakeOverUser>();
+        public List<string> Warnings { get; set; } = new List<string>();
+    }
+
+    public class RowTakeOverUser
+    {
+        public string UserId { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string SectionId { get; set; } = "";
+        public bool Disabled { get; set; }
+    }
+
     [MediaBrowser.Model.Services.Route("/HomeScreenCompanion/Hsc/UserSections", "POST")]
     [MediaBrowser.Controller.Net.Authenticated(Roles = "Admin")]
     public class HscSaveUserSectionsRequest : MediaBrowser.Model.Services.IReturn<HscSaveUserSectionsResponse>

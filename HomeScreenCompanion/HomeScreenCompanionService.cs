@@ -1996,6 +1996,21 @@ public class HomeScreenCompanionService : IService
 
 
 
+        public object Post(RowTakeOverRequest request)
+        {
+            var config = Plugin.Instance?.Configuration;
+            if (config == null || request == null) return new RowTakeOverResponse();
+            return new RowTakeOverResponse { Options = RowTakeOver.Find(config, _libraryManager, _userManager, _jsonSerializer,
+                request.Name, request.Tag, request.CollectionName, request.TagRow, request.CollectionRow) };
+        }
+
+        public object Get(RowTakeOverListRequest request)
+        {
+            var config = Plugin.Instance?.Configuration;
+            if (config == null) return new RowTakeOverResponse();
+            return new RowTakeOverResponse { Options = RowTakeOver.List(config, _libraryManager, _userManager, _jsonSerializer) };
+        }
+
         public object Post(RowShufflePreviewRequest request)
         {
             var config = Plugin.Instance?.Configuration;

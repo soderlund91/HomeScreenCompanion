@@ -1705,6 +1705,15 @@
         .rs-screen-row.member { color: var(--theme-text-primary); font-weight: 500; background: var(--hsc-seg-on-bg); box-shadow: inset 0 0 0 1px var(--hsc-hairline-strong); }
         .rs-screen-row.member .md-icon { color: var(--hsc-primary-text); opacity: 1; }
         .rs-foot { margin-top: 24px; display: flex; justify-content: flex-end; }
+        /* Take over home rows: the notice on a source card's Home Screen tab, the Manage tab's button */
+        .rto-note { flex-direction: column; margin: 0 0 16px; }
+        .rto-note > .md-icon, .rto-note > span { align-self: flex-start; }
+        .rto-note:not(:has(.rto-opt)) { flex-direction: row; }
+        .rto-opt { display: flex; gap: 8px; align-items: flex-start; }
+        .rto-opt + .rto-opt { border-top: 1px solid var(--hsc-hairline); padding-top: 10px; margin-top: 4px; }
+        .rto-warn { color: var(--hsc-warning-text); margin-top: 4px; }
+        .rto-btns { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 6px; }
+        .man-btn-takeover { margin-right: 8px !important; font-size: 0.85em !important; padding: 4px 10px !important; }
     </style>
 
     <div class="content-primary">
@@ -3106,6 +3115,17 @@
                             <li>The target users' own rows are <strong>replaced</strong>, so changes they made themselves are lost on the next run.</li>
                             <li><em>Also copy library order</em> copies the order of the libraries in the sidebar too.</li>
                             <li>When <em>Enable Home Screen sync</em> is off, the copy never runs, not even from <strong>Run</strong>.</li>
+                        </ul></div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">input</i>
+                    <div><strong>Take over existing rows</strong> — Rows made by hand in Emby (or copied out by Copy &amp; Sync) that show a source's tag or collection can become that source's home row, as if HSC had made them. Nothing visible changes: the users who have the row are added to the source, the row keeps its title, sorting and look, and its <em>Position</em> becomes <em>after</em> the row above it, so it stays where it is.
+                        <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
+                            <li>On a source: tick <em>Add as home screen section</em>. When users already have such a row, a notice offers <em>Take it over as it is</em> or <em>Use my settings</em> (the rows are taken over too, with the settings on the card).</li>
+                            <li>In <strong>Row Shuffle</strong>: <em>Add a row</em> lists them under <em>Existing rows (take over)</em>. In <strong>Manage</strong>: such a row has a <em>Take over</em> button.</li>
+                            <li>Then click <strong>Save Settings</strong>; the next sync makes them the source's rows.</li>
+                            <li>From then on they are like any row HSC made: untick a user, untick <em>Add as home screen section</em> or delete the source, and the rows are removed (by the next full sync).</li>
+                            <li>A tag that several sources write (for example a Priority Override) is not offered in the lists: only one source can own the row.</li>
                         </ul></div>
                 </div>
                 <div class="help-feature-row">

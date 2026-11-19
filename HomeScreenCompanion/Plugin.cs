@@ -40,6 +40,8 @@ namespace HomeScreenCompanion
             var wasMirroring = Configuration?.TopListMirrorCollections ?? false;
             var wasDryRun = Configuration?.DryRunMode ?? false;
             HomeScreenCompanionTask.KeepLastRunCounts(Configuration, configuration as PluginConfiguration);
+            // A home row switched on (e.g. rows taken over): its Position is in effect, nothing moves.
+            RowPlacement.NoteHomeRowsSwitchedOn(Configuration, configuration as PluginConfiguration);
             // A changed row Position: the next run moves the rows already there (see RowPlacement).
             RowPlacement.NoteChanges(Configuration, configuration as PluginConfiguration);
             // Groups deleted on the settings page: their tag and home rows are cleaned up by the next full run.
