@@ -7875,7 +7875,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var fColl       = view.querySelector('#chkFilterCollection')?.checked;
         var fSched      = view.querySelector('#chkFilterSchedule')?.checked;
         var fHome       = view.querySelector('#chkFilterHomeScreen')?.checked;
-        var fSrcExt     = view.querySelector('#chkFilterSrcExternal')?.checked;
+        var fTopList    = view.querySelector('#chkFilterTopList')?.checked;
+        var fSrcExt    = view.querySelector('#chkFilterSrcExternal')?.checked;
         var fSrcMI      = view.querySelector('#chkFilterSrcMediaInfo')?.checked;
         var fSrcColl    = view.querySelector('#chkFilterSrcCollection')?.checked;
         var fSrcPlay    = view.querySelector('#chkFilterSrcPlaylist')?.checked;
@@ -7887,7 +7888,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var fInactive   = view.querySelector('#chkFilterInactive')?.checked;
         var fIssues     = view.querySelector('#chkFilterIssues')?.checked;
 
-        var anyFeature  = fTag || fColl || fSched || fHome;
+        var anyFeature  = fTag || fColl || fSched || fHome || fTopList;
         var anySrc      = fSrcExt || fSrcMI || fSrcColl || fSrcPlay || fSrcAI || fSrcManual || fSrcRot || fSrcNw;
         var anyStatus   = fActive || fInactive;
 
@@ -7895,7 +7896,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var btn = view.querySelector('#btnFilterDropdown');
         var lbl = view.querySelector('#filterDropdownLabel');
         if (btn && lbl) {
-            var activeCount = [fTag, fColl, fSched, fHome, fSrcExt, fSrcMI, fSrcColl, fSrcPlay, fSrcAI, fSrcManual, fSrcRot, fSrcNw, fActive, fInactive, fIssues].filter(Boolean).length;
+            var activeCount = [fTag, fColl, fSched, fHome, fTopList, fSrcExt, fSrcMI, fSrcColl, fSrcPlay, fSrcAI, fSrcManual, fSrcRot, fSrcNw, fActive, fInactive, fIssues].filter(Boolean).length;
             lbl.textContent = activeCount > 0 ? 'Filter (' + activeCount + ')' : 'Filter';
             btn.classList.toggle('active', activeCount > 0);
         }
@@ -7909,7 +7910,10 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 var hasColl  = row.querySelector('.chkEnableCollection')?.checked;
                 var hasSched = row.querySelectorAll('.date-row').length > 0;
                 var hasHome  = row.querySelector('.chkEnableHomeSection')?.checked;
-                matchesFeature = (fTag && hasTag) || (fColl && hasColl) || (fSched && hasSched) || (fHome && hasHome);
+                // As SourceTopLists.IsOn: never Your Next Watch or a rotating source.
+                var rowSrc   = row.querySelector('.selSourceType')?.value || '';
+                var hasTopList = !!row.querySelector('.chkEnableTopList')?.checked && rowSrc !== 'NextWatch' && rowSrc !== 'RotatingExisting';
+                matchesFeature = (fTag && hasTag) || (fColl && hasColl) || (fSched && hasSched) || (fHome && hasHome) || (fTopList && hasTopList);
             }
 
             var matchesSrc = true;
@@ -14433,6 +14437,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                                 <label class="filter-chk-row"><input type="checkbox" id="chkFilterCollection" /><span>Collection</span></label>
                                 <label class="filter-chk-row"><input type="checkbox" id="chkFilterSchedule" /><span>Schedule</span></label>
                                 <label class="filter-chk-row"><input type="checkbox" id="chkFilterHomeScreen" /><span>Home Screen Section</span></label>
+                                <label class="filter-chk-row"><input type="checkbox" id="chkFilterTopList" /><span>Top-list</span></label>
                                 <div class="filter-dropdown-divider"></div>
                                 <div class="filter-dropdown-label">Sources</div>
                                 <label class="filter-chk-row"><input type="checkbox" id="chkFilterSrcAI" /><span>AI created lists</span></label>
@@ -14479,7 +14484,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                         sortRows(view.querySelector('#tagListContainer'), this.value);
                     });
 
-                    ['#chkFilterTag','#chkFilterCollection','#chkFilterSchedule','#chkFilterHomeScreen',
+                    ['#chkFilterTag','#chkFilterCollection','#chkFilterSchedule','#chkFilterHomeScreen','#chkFilterTopList',
                      '#chkFilterSrcExternal','#chkFilterSrcMediaInfo','#chkFilterSrcCollection','#chkFilterSrcPlaylist',
                      '#chkFilterSrcAI','#chkFilterSrcManual','#chkFilterSrcRotating','#chkFilterSrcNextWatch',
                      '#chkFilterActive','#chkFilterInactive','#chkFilterIssues'
@@ -15286,7 +15291,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     view.querySelector('#txtSearchTags').value = '';
                     view.querySelector('#btnClearSearch').style.display = 'none';
                 }
-                ['#chkFilterTag','#chkFilterCollection','#chkFilterSchedule','#chkFilterHomeScreen',
+                ['#chkFilterTag','#chkFilterCollection','#chkFilterSchedule','#chkFilterHomeScreen','#chkFilterTopList',
                  '#chkFilterSrcExternal','#chkFilterSrcMediaInfo','#chkFilterSrcCollection','#chkFilterSrcPlaylist',
                  '#chkFilterSrcAI','#chkFilterSrcManual','#chkFilterSrcRotating','#chkFilterSrcNextWatch',
                  '#chkFilterActive','#chkFilterInactive','#chkFilterIssues'
