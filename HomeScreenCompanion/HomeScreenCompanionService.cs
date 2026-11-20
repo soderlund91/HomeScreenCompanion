@@ -2211,7 +2211,12 @@ public class HomeScreenCompanionService : IService
                         Name = tc.Tag,
                         Recursive = true
                     }).FirstOrDefault();
-                    if (tagItem != null) settingsDict["_queryTagId"] = tagItem.InternalId.ToString();
+                    // A tag row without its tag would show every title (the tag is gone while no item
+                    // has it, e.g. the anchor was lost): the rows are left as they are, and the next
+                    // sync puts the tag back on the anchor and writes them.
+                    if (tagItem == null)
+                        return new HscApplyTagHomeSectionsResponse { Success = true, Message = $"Tag '{tc.Tag}' does not exist in the library: rows left as they are until the next sync." };
+                    settingsDict["_queryTagId"] = tagItem.InternalId.ToString();
                 }
 
                 // Build section marker (same pattern as the task)

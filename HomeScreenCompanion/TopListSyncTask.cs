@@ -688,17 +688,21 @@ namespace HomeScreenCompanion
 
                 if (!rotating && !string.IsNullOrEmpty(tc.Tag))
                 {
+                    BaseItem? tagItem = null;
                     try
                     {
-                        var tagItem = libraryManager.GetItemList(new InternalItemsQuery
+                        tagItem = libraryManager.GetItemList(new InternalItemsQuery
                         {
                             IncludeItemTypes = new[] { "Tag" },
                             Name = tc.Tag,
                             Recursive = true
                         }, cancellationToken).FirstOrDefault();
-                        if (tagItem != null) tcSettings["_queryTagId"] = tagItem.InternalId.ToString();
                     }
                     catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+                    // A tag row without its tag would show every title: its rows are left as they are
+                    // (the exclusion is saved above), and the next sync writes them with the tag.
+                    if (tagItem == null) continue;
+                    tcSettings["_queryTagId"] = tagItem.InternalId.ToString();
                 }
 
 

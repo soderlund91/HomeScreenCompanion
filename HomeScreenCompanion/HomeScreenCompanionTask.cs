@@ -5144,16 +5144,14 @@ namespace HomeScreenCompanion
                         Name = _hsTagName,
                         Recursive = true
                     }).FirstOrDefault();
-                    // A tag row without its tag would show every title: no row until the tag exists.
-                    if (tagItem == null && tc.EnableTag)
+                    // A tag row without its tag would show every title: no row until the tag exists
+                    // (also for a source that does not write the tag itself).
+                    if (tagItem == null)
                     {
                         HsWarn(statsList, _hsTagName, _hsDisplayName, $"tag '{_hsTagName}' does not exist in the library yet, so the home section was not created or updated");
                         continue;
                     }
-                    if (tagItem != null)
-                        settingsDict["_queryTagId"] = tagItem.InternalId.ToString();
-                    else
-                        HsWarn(statsList, _hsTagName, _hsDisplayName, $"tag '{tc.Tag}' does not exist in the library yet, so the home section may be empty");
+                    settingsDict["_queryTagId"] = tagItem.InternalId.ToString();
                 }
 
                 var removedUsers = tc.HomeSectionTracked.Where(t => !tc.HomeSectionUserIds.Contains(t.UserId)).ToList();

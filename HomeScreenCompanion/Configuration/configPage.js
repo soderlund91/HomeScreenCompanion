@@ -15547,11 +15547,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 return !!a && !!b && JSON.stringify(Object.assign({}, a, { LastModified: '' })) === JSON.stringify(Object.assign({}, b, { LastModified: '' }));
             };
 
+            // The same sources get their home rows applied after the save (changedSourceKeys).
+            var changedSourceKeys = {};
             configObj.Tags.forEach(tag => {
                 var key = tag.Name ? tag.Name + '\x1F' + tag.Tag : tag.Tag;
                 var originalTag = originalTags[key];
                 if (originalTag && sameCard(currentTags[key], originalTag)) tag.LastModified = originalTag.LastModified;
-                else tag.LastModified = new Date().toISOString();
+                else { tag.LastModified = new Date().toISOString(); changedSourceKeys[key] = 1; }
             });
 
             // Pre-fetch current config to preserve HomeSectionTracked set by the sync task
@@ -15695,9 +15697,11 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     if (followSavedPositions(view, c) && clean) { originalConfigState = JSON.stringify(getUiConfig(view, true)); checkFormState(); }
                 }).catch(function () { });
 
-                // Apply home section settings immediately for existing tracked sections (fire-and-forget)
+                // Apply home section settings immediately for existing tracked sections (fire-and-forget),
+                // only for the sources changed on the page: the rows of the others are left to the runs.
                 configObj.Tags.forEach(function(tc) {
                     if (!tc.EnableHomeSection) return;
+                    if (!changedSourceKeys[tc.Name ? tc.Name + '\x1F' + tc.Tag : tc.Tag]) return;
                     var hasTracked = (tc.HomeSectionTracked || []).some(function(t) {
                         return t.SectionId && !t.SectionId.startsWith('hsc__');
                     });
