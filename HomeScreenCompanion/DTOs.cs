@@ -115,6 +115,10 @@ namespace HomeScreenCompanion
         public string UserId { get; set; } = "";
         // UserId's home screen in the current period: the set's rows marked.
         public List<RowShuffleScreenRow> Screen { get; set; } = new List<RowShuffleScreenRow>();
+        // How many of the set's rows UserId has on the home screen now, and, when it is fewer than the
+        // set has (2 or more), their own turns now and in the next periods (RowShuffle.UserOrder).
+        public int UserRows { get; set; }
+        public List<RowShufflePeriod> UserPeriods { get; set; } = new List<RowShufflePeriod>();
         // The set is new or changed: it starts in its start order when saved.
         public bool StartsOnSave { get; set; }
     }

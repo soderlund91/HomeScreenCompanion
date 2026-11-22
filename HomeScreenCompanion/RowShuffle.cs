@@ -20,7 +20,9 @@ namespace HomeScreenCompanion
     ///
     /// The order is worked out, not saved: from the set's start order (its Rows) and the number of
     /// the period since it started (StartDate, stamped by the server when the set is saved changed),
-    /// so every user gets the same order and a run that makes a row again cannot change it for good.
+    /// so a run that makes a row again cannot change it for good. Each user's order is worked out on
+    /// the rows they have (UserOrder): users with the same rows get the same order, and a user with
+    /// fewer rows takes turns among their own, one step every period (owner 2026-11-22).
     /// Rolling: each period every row climbs one place and the top one goes to the bottom. Random: a
     /// new order each period, never the same row on top two periods running.
     ///
@@ -277,6 +279,35 @@ namespace HomeScreenCompanion
 
         // ── Putting it into effect ───────────────────────────────────────────────
 
+        /// <summary>
+        /// The set's rows the user has on the home screen now, in start order (one row per key, as
+        /// Arrange). A user takes turns among these (owner 2026-11-22): the order is worked out on them,
+        /// so a user with 2 of 14 rows gets a change every period, not now and then. A user with all the
+        /// rows gets the set's order. Worked out every time, never saved: a row the user gets or loses
+        /// counts from the next check on (the one change then may be uneven, an accepted limit).
+        /// </summary>
+        internal static List<string> PresentRows(List<string> current, Dictionary<string, List<string>> byKey, List<string> rows)
+        {
+            var taken = new HashSet<string>();
+            var result = new List<string>();
+            foreach (var key in rows)
+            {
+                if (!byKey.TryGetValue(key, out var ids)) continue;
+                var id = current.FirstOrDefault(c => ids.Contains(c) && !taken.Contains(c));
+                if (id == null) continue;
+                taken.Add(id);
+                result.Add(key);
+            }
+            return result;
+        }
+
+        /// <summary>The order the user's rows of the set get in period <paramref name="k"/>: their own turns.</summary>
+        internal static List<string> UserOrder(RowShuffleSet s, List<string> rows, long k, List<string> current, Dictionary<string, List<string>> byKey)
+        {
+            var own = PresentRows(current, byKey, rows);
+            return own.Count >= 2 ? Order(s, own, k) : own;
+        }
+
         /// <summary>The rows of one user's home screen in the order they get (ids), or null when nothing moves.</summary>
         internal static List<string>? Arrange(List<string> current, Dictionary<string, List<string>> byKey, List<string> order)
         {
@@ -313,19 +344,23 @@ namespace HomeScreenCompanion
             var now = RunGate.ScheduleNow;
             var activeRows = new HashSet<string>(active.SelectMany(a => a.rows), StringComparer.OrdinalIgnoreCase);
 
-            // What each set puts in effect: its order now; a set that is gone or off: its start order,
-            // only for rows no set that takes turns now has.
-            var jobs = new List<(string id, string name, List<string> order, bool restore)>();
+            // What each set puts in effect: its order now, each user's worked out on the rows they have
+            // (UserOrder; `order` is the set's order, for the log); a set that is gone or off: its start
+            // order, only for rows no set that takes turns now has.
+            var jobs = new List<(string id, string name, RowShuffleSet? set, List<string> rows, long k, List<string> order, bool restore)>();
             foreach (var (set, rows) in active)
-                jobs.Add((set.Id, string.IsNullOrWhiteSpace(set.Name) ? "Row shuffle" : set.Name.Trim(), Order(set, rows, Period(set, now)), false));
+            {
+                long k = Period(set, now);
+                jobs.Add((set.Id, string.IsNullOrWhiteSpace(set.Name) ? "Row shuffle" : set.Name.Trim(), set, rows, k, Order(set, rows, k), false));
+            }
             foreach (var kv in state.Where(kv => !active.Any(a => a.set.Id == kv.Key)))
             {
                 var rows = kv.Value.rows.Where(r => !activeRows.Contains(r)).ToList();
-                jobs.Add((kv.Key, kv.Value.name, rows, true));
+                jobs.Add((kv.Key, kv.Value.name, null, rows, 0, rows, true));
             }
             if (jobs.Count == 0) return 0;
 
-            var byUser = RowsByUser(config, jobs.SelectMany(j => j.order).Distinct(StringComparer.OrdinalIgnoreCase));
+            var byUser = RowsByUser(config, jobs.SelectMany(j => j.rows).Distinct(StringComparer.OrdinalIgnoreCase));
             var userStatus = UserStatus.Read(userManager);
             int usersMoved = 0;
             var movedFor = new int[jobs.Count];     // users whose rows of the job moved
@@ -346,7 +381,8 @@ namespace HomeScreenCompanion
                 for (int j = 0; j < jobs.Count; j++)
                 {
                     var job = jobs[j];
-                    var target = Arrange(current, byKey, job.order);
+                    var order = job.restore ? job.rows : UserOrder(job.set!, job.rows, job.k, current, byKey);
+                    var target = Arrange(current, byKey, order);
                     if (target == null) continue;
                     if (disabled) { disabledOf[j]++; continue; }   // rule 10: left as it is
                     var name = UserName(userManager, user);
@@ -523,7 +559,17 @@ namespace HomeScreenCompanion
                     var current = sections.Select(s => s.Id ?? "").ToList();
                     byUser.TryGetValue(pick, out var byKey);
                     byKey ??= new Dictionary<string, List<string>>();
-                    var order = rows.Count >= 2 ? Order(probe, rows, k) : rows;
+                    // The user's own turns (UserOrder), as Schedule Switch puts them in effect.
+                    var order = rows.Count >= 2 ? UserOrder(probe, rows, k, current, byKey) : rows;
+                    var own = PresentRows(current, byKey, rows);
+                    resp.UserRows = own.Count;
+                    if (own.Count >= 2 && own.Count < rows.Count)
+                        for (long p = k; p < k + 5; p++)
+                            resp.UserPeriods.Add(new RowShufflePeriod
+                            {
+                                Starts = p == k ? "" : PeriodStart(probe, p, now).ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
+                                Order = Order(probe, own, p).Select(r => Label(config, r)).ToList()
+                            });
                     var arranged = Arrange(current, byKey, order) ?? current;
                     var keyOf = new Dictionary<string, string>();
                     foreach (var kv in byKey) foreach (var id in kv.Value) if (!keyOf.ContainsKey(id)) keyOf[id] = kv.Key;

@@ -1689,9 +1689,28 @@
         .rs-row-name.rs-missing { opacity: 0.6; text-decoration: line-through; }
         .rs-row-note { font-size: 0.8em; color: var(--hsc-warning-text); }
         .rs-row-remove { margin-left: auto !important; padding: 2px !important; }
-        .rs-add-wrap { margin-top: 8px; max-width: 360px; }
+        .rs-pick { margin-top: 12px; border: 1px solid var(--hsc-hairline); border-radius: 8px; padding: 8px; background: var(--hsc-tint-1); }
+        .rs-pick-head { display: flex; align-items: center; gap: 8px; padding: 0 4px; }
+        .rs-pick-head .rs-field-label { margin: 4px 0; }
+        .rs-pick-all { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; border: 1px solid var(--hsc-hairline-strong); border-radius: 6px; padding: 4px 10px; background: transparent; color: inherit; font-family: inherit; font-size: 0.85em; font-weight: 500; }
+        .rs-pick-all:hover { background: var(--hsc-tint-2); }
+        .rs-pick-all .md-icon { font-size: 1.15em; color: var(--hsc-primary-text); }
+        .rs-filter { width: 100%; box-sizing: border-box; padding: 7px 10px; font-size: 0.9em; margin: 6px 0 4px; }
+        .rs-pick-list { display: flex; flex-direction: column; gap: 2px; max-height: 300px; overflow-y: auto; margin-top: 4px; }
+        .rs-pick-group { font-size: 0.78em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--theme-text-secondary); padding: 8px 6px 2px; }
+        .rs-pick-item { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; text-align: left; padding: 5px 8px; border: none; border-radius: 6px; background: transparent; color: inherit; font-family: inherit; font-size: 0.9em; cursor: pointer; }
+        button.rs-pick-item:hover, button.rs-pick-item:focus-visible { background: var(--hsc-tint-2); }
+        button.rs-pick-item:focus-visible { outline: 2px solid var(--hsc-primary-text); outline-offset: -2px; }
+        .rs-pick-item > .md-icon { font-size: 1.2em; color: var(--hsc-primary-text); }
+        .rs-pick-item .tag-indicator { margin-left: 0; }
+        .rs-pick-item .tag-indicator.toplist .md-icon { color: var(--hsc-cat-toplist); }
+        .rs-pick-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+        .rs-pick-note { font-size: 0.85em; color: var(--theme-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .rs-pick-item.used { cursor: default; opacity: 0.55; }
+        .rs-pick-item.used > .md-icon { color: var(--theme-text-secondary); }
+        .rs-pick-empty { font-size: 0.88em; color: var(--theme-text-secondary); padding: 6px 8px; }
         .rs-note { display: flex; gap: 8px; align-items: flex-start; font-size: 0.88em; line-height: 1.45; padding: 8px 12px; margin: 8px 0; border: 1px solid var(--hsc-hairline); border-radius: 6px; background: var(--hsc-tint-1); }
-        .rs-note .md-icon { font-size: 1.2em; color: var(--theme-text-secondary); }
+        .rs-note .md-icon { font-size: 1.2em; color: var(--theme-text-secondary); flex-shrink: 0; }
         .rs-preview-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin-top: 8px; }
         .rs-periods { display: flex; flex-direction: column; gap: 8px; }
         .rs-period { border: 1px solid var(--hsc-hairline); border-radius: 6px; padding: 8px 12px; }
@@ -3122,7 +3141,7 @@
                     <div><strong>Take over existing rows</strong> — Rows made by hand in Emby (or copied out by Copy &amp; Sync) that show a source's tag or collection can become that source's home row, as if HSC had made them. Nothing visible changes: the users who have the row are added to the source, the row keeps its title, sorting and look, and its <em>Position</em> becomes <em>after</em> the row above it, so it stays where it is.
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li>On a source: tick <em>Add as home screen section</em>. When users already have such a row, a notice offers <em>Take it over as it is</em> or <em>Use my settings</em> (the rows are taken over too, with the settings on the card).</li>
-                            <li>In <strong>Row Shuffle</strong>: <em>Add a row</em> lists them under <em>Existing rows (take over)</em>. In <strong>Manage</strong>: such a row has a <em>Take over</em> button.</li>
+                            <li>In <strong>Row Shuffle</strong>: <em>Add rows</em> lists them under <em>Existing rows (take over)</em>. In <strong>Manage</strong>: such a row has a <em>Take over</em> button.</li>
                             <li>Then click <strong>Save Settings</strong>; the next sync makes them the source's rows.</li>
                             <li>From then on they are like any row HSC made: untick a user, untick <em>Add as home screen section</em> or delete the source, and the rows are removed (by the next full sync).</li>
                             <li>A tag that several sources write (for example a Priority Override) is not offered in the lists: only one source can own the row.</li>
@@ -3134,8 +3153,8 @@
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li><em>Rolling</em>: each time, every row moves up one place and the top row goes to the bottom. <em>Random</em>: a new random order each time; the same row is never on top twice in a row.</li>
                             <li>Change <em>every hour</em>, <em>every day</em>, <em>every week</em> or <em>every … days</em>. It changes on the full hour or at midnight (server time), and shows on the home screen within 15 minutes, the next time it is opened.</li>
-                            <li>Only rows HSC makes can be picked: a source's home row and top-list rows. A row can be in one set only, and a set needs at least two rows. Emby's own rows and rows users made themselves are never moved.</li>
-                            <li>It works for every user who has the rows, and everyone gets the same order. Copy &amp; Sync targets follow along.</li>
+                            <li>Only rows HSC makes can be picked: a source's home row and top-list rows. Under <em>Add rows</em> every such row is listed: click one to add it, or <em>Add all</em> (with the filter: the rows shown). A row can be in one set only (rows in another set are greyed out), and a set needs at least two rows. Emby's own rows and rows users made themselves are never moved.</li>
+                            <li>It works for every user who has the rows. Users with the same rows get the same order. A user with only some of the rows takes turns among their own, one step each change, so every row they have gets its time on top. When a user gets or loses one of the rows, that one change can be uneven. Copy &amp; Sync targets follow along.</li>
                             <li>The list in the set is the <strong>start order</strong>. A set that is new or changed starts in that order when you save. Switch a set off or delete it, and its rows go back to the start order once and then stay there.</li>
                             <li>A row's <em>Position</em> only places it when the row is made. After that the set decides where it is. Moving one of the rows by hand moves its place in the set.</li>
                             <li>The preview shows the order now and for the next changes, and the home screen of a user you pick, with the rows that take turns marked.</li>

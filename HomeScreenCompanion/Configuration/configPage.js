@@ -9046,8 +9046,13 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '<div class="fieldDescription">Changes on the full hour, or at midnight (server time). A new period shows on the home screen within 15 minutes, the next time it is opened.</div>' +
             '<div class="rs-field-label" style="margin-top:20px;">Rows, in start order</div>' +
             '<div class="rs-rows">' + (s.Rows || []).map(function (k) { return rsRowHtml(k, choices); }).join('') + '</div>' +
-            '<div class="rs-add-wrap"><select is="emby-select" class="rs-add" label="Add a row"></select></div>' +
-            '<div class="fieldDescription">Only rows HSC makes: sources with a home row and top-lists. A row can be in one set only. The other rows on the home screen never move.</div>' +
+            '<div class="rs-pick">' +
+            '<div class="rs-pick-head"><span class="rs-field-label">Add rows</span>' +
+            '<button type="button" class="rs-pick-all" style="display:none;"><i class="md-icon">playlist_add</i><span></span></button></div>' +
+            '<input type="search" class="rs-filter emby-input" placeholder="Filter rows…" autocomplete="off" style="display:none;" />' +
+            '<div class="rs-pick-list"></div>' +
+            '</div>' +
+            '<div class="fieldDescription">Click a row to add it to the end of the start order. Only rows HSC makes: sources with a home row and top-lists. A row can be in one set only. The other rows on the home screen never move.</div>' +
             '<div class="rs-preview"></div>' +
             '<div class="rs-foot"><button type="button" is="emby-button" class="raised hsc-btn-danger rs-delete"><i class="md-icon" style="font-size:1em;margin-right:4px;">delete</i><span>Delete set</span></button></div>' +
             '</div></div>';
@@ -9096,7 +9101,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '<div class="rs-intro">' +
             '<p>Rows lower down on the home screen are easy to miss. In a <strong>Row shuffle set</strong>, the rows you choose take turns on the places they have: ' +
             'every hour, day, week or number of days they move, one step at a time or in a random order. All other rows stay where they are.</p>' +
-            '<p class="textMuted">It works for every user who has the rows, and everyone gets the same order. Copy &amp; Sync targets follow along.</p>' +
+            '<p class="textMuted">It works for every user who has the rows. Users with the same rows get the same order; a user with only some of them takes turns among their own. Copy &amp; Sync targets follow along.</p>' +
             '</div>' +
             '<div class="rs-sets">' + sets.map(function (s) { return rsSetHtml(s, choices, false); }).join('') + '</div>' +
             '<div class="rs-empty"' + (sets.length ? ' style="display:none;"' : '') + '><p class="textMuted">No sets yet.</p></div>' +
@@ -9104,34 +9109,16 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         container.dataset.loaded = '1';
         container.querySelectorAll('.rs-set').forEach(function (card) { rsRefreshCard(view, card); });
         if (!container._rsWired) { container._rsWired = true; rsWire(view, container); }
-        // Existing rows that can be taken over: offered in the Add lists once known.
+        // Existing rows that can be taken over: offered in the Add rows lists once known.
         rtoLoadList().then(function () { container.querySelectorAll('.rs-set').forEach(function (card) { rsRefreshCard(view, card, true); }); });
     }
 
-    // After any change on a card: positions, the Add list, the header and the preview.
+    // After any change on a card: positions, the Add rows list, the header and the preview.
     function rsRefreshCard(view, card, noPreview) {
-        var container = view.querySelector('#rsContainer');
         var choices = rsRowChoices(view);
         var s = rsReadSet(card);
         card.querySelectorAll('.rs-row').forEach(function (r, i) { r.querySelector('.rs-row-pos').textContent = (i + 1) + '.'; });
-        // Rows in any set (this one included) are not offered again.
-        var used = {};
-        container.querySelectorAll('.rs-row').forEach(function (r) { used[r.dataset.key.toLowerCase()] = 1; });
-        var add = card.querySelector('.rs-add');
-        var free = choices.order.filter(function (k) { return !used[k]; });
-        // Rows users already have that a source can take over (Take over home rows): picking one takes
-        // it over on the source card too.
-        var takeable = (_rtoList || []).filter(function (o, i) { o._i = i; return !used[(o.SourceKey || '').toLowerCase()] && !choices.byKey[(o.SourceKey || '').toLowerCase()]; });
-        add.innerHTML = '<option value="">' + (free.length || takeable.length ? 'Choose a row…' : (choices.order.length ? 'All rows are in a set' : 'No sources with a home row yet')) + '</option>' +
-            (free.length ? '<optgroup label="HSC rows">' : '') +
-            free.map(function (k) {
-                var c = choices.byKey[k];
-                return '<option value="' + escapeHtml(c.key) + '">' + escapeHtml(c.name) + ' (' + RS_KIND[c.kind].label.toLowerCase() + ')</option>';
-            }).join('') + (free.length ? '</optgroup>' : '') +
-            (takeable.length ? '<optgroup label="Existing rows (take over)">' + takeable.map(function (o) {
-                return '<option value="rto:' + o._i + '">' + escapeHtml(o.Title) + ' (source "' + escapeHtml(o.Name) + '", ' + (o.Users || []).length + ' users)</option>';
-            }).join('') + '</optgroup>' : '');
-        add.disabled = !free.length && !takeable.length;
+        rsRenderPick(view, card, choices);
         card.querySelector('.rs-set-title').textContent = s.Name || 'New set';
         card.querySelector('.rs-set-meta').textContent = rsSetMeta(s);
         var pill = card.querySelector('.rs-pill');
@@ -9139,6 +9126,89 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         pill.textContent = s.Active ? 'On' : 'Off';
         card.querySelector('.rs-days-wrap').style.display = s.Every === 'Days' ? '' : 'none';
         if (!noPreview) rsQueuePreview(view, card);
+    }
+
+    // The Add rows list under a set: every row a set can hold, one click adds it (owner 2026-11-22: all
+    // rows in view instead of a dropdown, so several are quick to add). Rows in this set are not listed
+    // (they are above, with their remove button); rows in another set are shown greyed out with its name.
+    function rsRenderPick(view, card, choices) {
+        var container = view.querySelector('#rsContainer');
+        var list = card.querySelector('.rs-pick-list');
+        if (!list) return;
+        var inThis = {}, inOther = {};
+        container.querySelectorAll('.rs-set').forEach(function (c) {
+            var name = ((c.querySelector('.rs-name') || {}).value || '').trim() || 'New set';
+            c.querySelectorAll('.rs-row').forEach(function (r) {
+                var k = r.dataset.key.toLowerCase();
+                if (c === card) inThis[k] = 1; else if (!inOther[k]) inOther[k] = name;
+            });
+        });
+        var hsc = choices.order.filter(function (k) { return !inThis[k]; });
+        // Rows users already have that a source can take over (Take over home rows): adding one takes
+        // it over on the source card too.
+        var takeable = (_rtoList || []).filter(function (o, i) {
+            o._i = i;
+            var k = (o.SourceKey || '').toLowerCase();
+            return !inThis[k] && !inOther[k] && !choices.byKey[k];
+        });
+        function kindTag(kind) {
+            var kd = RS_KIND[kind];
+            return '<span class="tag-indicator ' + kd.cls + '"><i class="md-icon">' + kd.icon + '</i>' + kd.label + '</span>';
+        }
+        var html = '';
+        if (takeable.length && hsc.length) html += '<div class="rs-pick-group">HSC rows</div>';
+        html += hsc.map(function (k) {
+            var c = choices.byKey[k];
+            var search = escapeHtml(c.name.toLowerCase());
+            if (inOther[k]) {
+                return '<div class="rs-pick-item used" data-search="' + search + '" title="A row can be in one set only">' +
+                    '<i class="md-icon">block</i><span class="rs-pick-name">' + escapeHtml(c.name) + '</span>' + kindTag(c.kind) +
+                    '<span class="rs-pick-note">in "' + escapeHtml(inOther[k]) + '"</span></div>';
+            }
+            return '<button type="button" class="rs-pick-item" data-key="' + escapeHtml(c.key) + '" data-search="' + search + '" title="Add to this set">' +
+                '<i class="md-icon">add</i><span class="rs-pick-name">' + escapeHtml(c.name) + '</span>' + kindTag(c.kind) + '</button>';
+        }).join('');
+        if (takeable.length) {
+            html += '<div class="rs-pick-group">Existing rows (take over)</div>' + takeable.map(function (o) {
+                var n = (o.Users || []).length;
+                return '<button type="button" class="rs-pick-item" data-rto="' + o._i + '" data-search="' + escapeHtml(((o.Title || '') + ' ' + (o.Name || '')).toLowerCase()) + '" title="Take over this row and add it to this set">' +
+                    '<i class="md-icon">add</i><span class="rs-pick-name">' + escapeHtml(o.Title) + '</span>' +
+                    '<span class="rs-pick-note">source "' + escapeHtml(o.Name) + '", ' + n + ' user' + (n === 1 ? '' : 's') + '</span></button>';
+            }).join('');
+        }
+        if (!hsc.length && !takeable.length)
+            html = '<div class="rs-pick-empty">' + (choices.order.length ? 'All rows are in this set.' : 'No sources with a home row yet.') + '</div>';
+        var top = list.scrollTop;
+        list.innerHTML = html;
+        list.scrollTop = top;
+        card.querySelector('.rs-filter').style.display = hsc.length + takeable.length > 8 ? '' : 'none';
+        rsApplyFilter(card);
+    }
+
+    // The filter over the Add rows list, and the Add all button (the HSC rows that can be added and
+    // are shown; never rows to take over, they are taken over one at a time).
+    function rsApplyFilter(card) {
+        var input = card.querySelector('.rs-filter');
+        var q = input && input.style.display !== 'none' ? (input.value || '').trim().toLowerCase() : '';
+        var list = card.querySelector('.rs-pick-list');
+        var items = Array.from(list.querySelectorAll('.rs-pick-item'));
+        items.forEach(function (it) { it.style.display = !q || it.dataset.search.indexOf(q) >= 0 ? '' : 'none'; });
+        // A group heading is shown when one of its rows is.
+        list.querySelectorAll('.rs-pick-group').forEach(function (g) {
+            var any = false;
+            for (var el = g.nextElementSibling; el && !el.classList.contains('rs-pick-group'); el = el.nextElementSibling)
+                if (el.style.display !== 'none') { any = true; break; }
+            g.style.display = any ? '' : 'none';
+        });
+        var none = list.querySelector('.rs-pick-nomatch');
+        var shown = items.filter(function (it) { return it.style.display !== 'none'; }).length;
+        if (q && items.length && !shown) {
+            if (!none) list.insertAdjacentHTML('beforeend', '<div class="rs-pick-empty rs-pick-nomatch">No rows match the filter.</div>');
+        } else if (none) none.remove();
+        var addable = items.filter(function (it) { return it.dataset.key && it.style.display !== 'none'; }).length;
+        var all = card.querySelector('.rs-pick-all');
+        all.style.display = addable >= 2 ? '' : 'none';
+        all.querySelector('span').textContent = (q ? 'Add all shown' : 'Add all') + ' (' + addable + ')';
     }
 
     function rsQueuePreview(view, card) {
@@ -9195,7 +9265,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         // Right: one user's home screen now.
         html += '<div class="rs-screen">';
         if (!users.length) {
-            html += '<div class="rs-note"><i class="md-icon">person_outline</i><span>No user has these rows yet. Users get them from the sources\' and top-lists\' home row settings (after the next sync).</span></div>';
+            html += '<div class="rs-note"><i class="md-icon">person</i><span>No user has these rows yet. Users get them from the sources\' and top-lists\' home row settings (after the next sync).</span></div>';
         } else {
             html += '<div class="inputContainer" style="margin-bottom:8px;"><select is="emby-select" class="rs-user" label="Home screen of">' + users.map(function (u) {
                 return '<option value="' + escapeHtml(u.Id) + '"' + (u.Id === p.UserId ? ' selected' : '') + '>' + escapeHtml(u.Name) +
@@ -9208,6 +9278,14 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                     '<i class="md-icon">' + (r.Member ? 'swap_vert' : 'lock') + '</i><span>' + escapeHtml(r.Title) + '</span></div>';
             }).join('') + '</div>';
             html += '<div class="fieldDescription"><i class="md-icon" style="font-size:1em;vertical-align:-2px;">swap_vert</i> takes turns &nbsp; <i class="md-icon" style="font-size:1em;vertical-align:-2px;">lock</i> stays in place</div>';
+            // A user with fewer of the rows takes turns among their own (RowShuffle.UserOrder).
+            var own = p.UserPeriods || [];
+            if (own.length) {
+                html += '<div class="rs-note"><i class="md-icon">person</i><span>Has ' + p.UserRows + ' of the ' + s.Rows.length +
+                    ' rows: they take turns among their own, one step each change. On top: ' + own.map(function (per, i) {
+                        return '<strong>' + escapeHtml((per.Order || [])[0] || '') + '</strong>' + (i === 0 ? ' now' : ' from ' + escapeHtml(rsWhen(per.Starts)));
+                    }).join(', ') + '.</span></div>';
+            }
         }
         html += '</div></div>';
         return html;
@@ -9254,6 +9332,34 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 changed(card);
                 return;
             }
+            var pick = e.target.closest('button.rs-pick-item');
+            var all = !pick && e.target.closest('.rs-pick-all');
+            if (pick || all) {
+                var keys = [];
+                if (all) {
+                    card.querySelectorAll('button.rs-pick-item[data-key]').forEach(function (it) { if (it.style.display !== 'none') keys.push(it.dataset.key); });
+                } else if (pick.dataset.rto != null) {
+                    var opt = (_rtoList || [])[+pick.dataset.rto];
+                    var src = opt && rtoCardOf(view, opt);
+                    if (!src) { window.Dashboard.alert('The source of that row was not found on this page.'); return; }
+                    rtoApply(view, src, opt);
+                    keys.push(opt.SourceKey);
+                    showToast('"' + opt.Title + '" taken over by the source "' + opt.Name + '": save to apply');
+                } else keys.push(pick.dataset.key);
+                // Keyboard: the focus goes on to the row that takes the clicked one's place.
+                var visible = Array.from(card.querySelectorAll('button.rs-pick-item')).filter(function (it) { return it.style.display !== 'none'; });
+                var at = pick && e.detail === 0 ? visible.indexOf(pick) : -1;
+                var rowChoices = rsRowChoices(view);
+                var rows = card.querySelector('.rs-rows');
+                keys.forEach(function (k) { rows.insertAdjacentHTML('beforeend', rsRowHtml(k, rowChoices)); });
+                container.querySelectorAll('.rs-set').forEach(function (c) { if (c !== card) rsRefreshCard(view, c, true); });
+                changed(card);
+                if (at >= 0) {
+                    var next = Array.from(card.querySelectorAll('button.rs-pick-item')).filter(function (it) { return it.style.display !== 'none'; });
+                    if (next.length) next[Math.min(at, next.length - 1)].focus();
+                }
+                return;
+            }
             var rm = e.target.closest('.rs-row-remove');
             if (rm) {
                 rm.closest('.rs-row').remove();
@@ -9274,22 +9380,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         container.addEventListener('change', function (e) {
             var card = e.target.closest('.rs-set');
             if (!card) return;
-            if (e.target.closest('.rs-add')) {
-                var key = e.target.value;
-                if (!key) return;
-                if (key.indexOf('rto:') === 0) {
-                    var opt = (_rtoList || [])[+key.slice(4)];
-                    var src = opt && rtoCardOf(view, opt);
-                    if (!src) { window.Dashboard.alert('The source of that row was not found on this page.'); rsRefreshCard(view, card, true); return; }
-                    rtoApply(view, src, opt);
-                    key = opt.SourceKey;
-                    showToast('"' + opt.Title + '" taken over by the source "' + opt.Name + '": save to apply');
-                }
-                card.querySelector('.rs-rows').insertAdjacentHTML('beforeend', rsRowHtml(key, rsRowChoices(view)));
-                container.querySelectorAll('.rs-set').forEach(function (c) { if (c !== card) rsRefreshCard(view, c, true); });
-                changed(card);
-                return;
-            }
+            if (e.target.closest('.rs-filter')) return;
             if (e.target.closest('.rs-user')) {
                 card._rsUser = e.target.value;
                 rsLoadPreview(view, card);
@@ -9299,11 +9390,22 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         });
         container.addEventListener('input', function (e) {
             var card = e.target.closest('.rs-set');
-            // Text fields only: a select sends input before change, and redrawing the Add list
-            // here would empty the choice before change sees it.
+            if (card && e.target.closest('.rs-filter')) { rsApplyFilter(card); return; }
+            // Text fields only: a select sends input before change, and redrawing here could empty
+            // a choice before change sees it.
             if (!card || !e.target.closest('.rs-name, .rs-days')) return;
-            // Typing a name: the header follows, the preview does not need asking again.
-            changed(card, !!e.target.closest('.rs-name'));
+            // Typing a name: the header follows, the preview does not need asking again; the other
+            // sets' Add rows lists show the new name on their greyed-out rows.
+            var isName = !!e.target.closest('.rs-name');
+            changed(card, isName);
+            if (isName) {
+                var ch = rsRowChoices(view);
+                container.querySelectorAll('.rs-set').forEach(function (c) { if (c !== card) rsRenderPick(view, c, ch); });
+            }
+        });
+        // Enter in the filter must not submit the page's form (Save).
+        container.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' && e.target.closest && e.target.closest('.rs-filter')) e.preventDefault();
         });
         // Dragging a row within its set changes the start order.
         var dragged = null;
@@ -9341,7 +9443,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
     // collection): the users who have the row, the row's settings and Position "after" the row above.
     // The next sync finds the rows by what they show and keeps their ids and places; from then on they
     // are the source's rows like any HSC made (owner 2026-11-19). One function (rtoApply) for all the
-    // ways in: the source card's notice, Row Shuffle's Add list and the Manage tab.
+    // ways in: the source card's notice, Row Shuffle's Add rows list and the Manage tab.
 
     var _rtoList = null;          // HomeRows/TakeOverList, until the next Save
     var _rtoListPromise = null;
@@ -16149,7 +16251,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 view.querySelector('#hscSubTabShuffle').style.display = '';
                 var rsContainer = view.querySelector('#rsContainer');
                 if (rsContainer && !rsContainer.dataset.loaded) loadRowShuffleTab(view);
-                // The source cards may have changed since: the row names and the Add lists follow.
+                // The source cards may have changed since: the row names and the Add rows lists follow.
                 else if (rsContainer) rsContainer.querySelectorAll('.rs-set').forEach(function (c) { rsRefreshCard(view, c); });
             } else if (target === 'manage') {
                 view.querySelector('#hscSubTabManage').style.display = '';
