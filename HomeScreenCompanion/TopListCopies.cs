@@ -116,11 +116,15 @@ namespace HomeScreenCompanion
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) { debug?.Invoke($"  Top-list copy '{copy.Name}': cast could not be copied: {ex.Message}"); }
 
-            // Merged once as a version of the film (one entry in search, shared watched state).
+            // Merged once as a version of the film (one entry in search, shared watched state). A copy
+            // still merged with another film (the one it was merged with before "Prioritize high
+            // quality" chose another copy) leaves it first: Emby's merge would join the two films.
             var target = mergeWith ?? film;
             try
             {
-                if (copy.Id != target.Id && !IsMerged(copy, target))
+                bool detached = BestCopy.DetachFromOtherFilm(copy, target, libraryManager);
+                if (detached) writes++;
+                if (copy.Id != target.Id && (detached || !IsMerged(copy, target)))
                 {
                     GentleMode.Timed("top-list merge", () => libraryManager.MergeItems(new[] { target, copy }));
                     writes += 2;

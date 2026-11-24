@@ -183,11 +183,14 @@ namespace HomeScreenCompanion
                 var imdb = li.GetProviderId("Imdb");
                 if (string.IsNullOrEmpty(imdb)) continue;
                 if (!origLookup.TryGetValue(imdb, out var primary)) continue;
+                // "Prioritize high quality": the film the copy plays (as the sync merges it).
+                if (BestCopy.Enabled && TopListCopies.FilmOf(li, libraryManager) is BaseItem plays && TopListCollectionMirror.IsOriginal(plays)) primary = plays;
                 if (li.Id == primary.Id) continue;
 
                 if (dry)
                 {
-                    if (primary is Video pv && pv.GetAlternateVersionIds().Contains(li.InternalId)) continue;
+                    if (primary is Video pv && pv.GetAlternateVersionIds().Contains(li.InternalId)
+                        && !BestCopy.LinkedToOtherFilm(li, primary, libraryManager)) continue;
                     merged++;
                     _log.Debug($"  [Dry run] '{li.Name}' would be linked to '{primary.Name}'");
                     continue;
@@ -195,6 +198,8 @@ namespace HomeScreenCompanion
 
                 try
                 {
+                    // Still a version of another film: leaves it first (Emby's merge would join the two films).
+                    BestCopy.DetachFromOtherFilm(li, primary, libraryManager);
                     libraryManager.MergeItems(new[] { primary, li });
                     QueueStrmProbe(providerManager, fileSystem, li, libraryManager, primary);
                     merged++;
@@ -257,11 +262,15 @@ namespace HomeScreenCompanion
                 var imdb = li.GetProviderId("Imdb");
                 if (string.IsNullOrEmpty(imdb)) continue;
                 if (!origLookup.TryGetValue(imdb, out var primary)) continue;
+                // "Prioritize high quality": the film the copy plays (as the sync merges it).
+                if (BestCopy.Enabled && TopListCopies.FilmOf(li, libraryManager) is BaseItem plays && TopListCollectionMirror.IsOriginal(plays)) primary = plays;
                 if (li.Id == primary.Id) continue;
                 try
                 {
-                    // Already a version of it (the real-time handler links new copies too).
-                    if (!TopListCopies.IsMerged(li, primary)) libraryManager.MergeItems(new[] { primary, li });
+                    // Already a version of it (the real-time handler links new copies too). Still a
+                    // version of another film: leaves it first (Emby's merge would join the two films).
+                    bool detached = BestCopy.DetachFromOtherFilm(li, primary, libraryManager);
+                    if (detached || !TopListCopies.IsMerged(li, primary)) libraryManager.MergeItems(new[] { primary, li });
                     QueueStrmProbe(providerManager, fileSystem, li, libraryManager, primary);
                     merged++;
                 }

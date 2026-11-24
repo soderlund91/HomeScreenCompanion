@@ -200,8 +200,9 @@ namespace HomeScreenCompanion
             if (root == null) return null;
             var folderPath = Path.Combine(root, FolderName(tc));
 
-            // Movies once each, in list order: the same version the collection would take
-            // (lowest id, see HomeScreenCompanionTask.ExtraVersionIds). Copies never count.
+            // Movies once each, in list order: the same version the collection would take (lowest id,
+            // or the best with "Prioritize high quality", see HomeScreenCompanionTask.ExtraVersionIds).
+            // Copies never count.
             var real = orderedItems.Where(i => !IsRankedCopy(i) && !TopListCollectionMirror.IsTopListItem(i)).ToList();
             var extra = HomeScreenCompanionTask.ExtraVersionIds(real);
             var seenIds = new HashSet<long>();
@@ -213,7 +214,8 @@ namespace HomeScreenCompanion
                 if (!seenIds.Add(item.InternalId)) continue;
                 if (item is Movie)
                 {
-                    // The list order is that of the first version listed; the version kept is the lowest id.
+                    // The list order is that of the first version listed; the version kept is the one
+                    // ExtraVersionIds keeps.
                     var imdb = item.GetProviderId("Imdb");
                     var key = !string.IsNullOrEmpty(imdb) ? imdb : "id:" + item.InternalId;
                     if (firstByKey.ContainsKey(key)) continue;
@@ -508,9 +510,13 @@ namespace HomeScreenCompanion
             catch (Exception ex) { log.Debug($"  Ranked copy '{copy.Name}': cast could not be copied: {ex.Message}"); }
 
             // Merge once: merging saves the real film again (and its nfo, when the library writes nfo files).
+            // A copy still merged with the film it pointed at before (another copy of this film was
+            // chosen, "Prioritize high quality") leaves that one first: Emby's merge would join the two.
             try
             {
-                bool merged = film is Video v && v.GetAlternateVersionIds().Contains(copy.InternalId);
+                bool detached = BestCopy.DetachFromOtherFilm(copy, film, libraryManager);
+                if (detached) writes++;
+                bool merged = !detached && film is Video v && v.GetAlternateVersionIds().Contains(copy.InternalId);
                 if (!merged && copy.Id != film.Id)
                 {
                     GentleMode.Timed("merge", () => libraryManager.MergeItems(new[] { film, copy }));

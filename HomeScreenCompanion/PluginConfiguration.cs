@@ -50,6 +50,10 @@ namespace HomeScreenCompanion
         // On by default (owner, 2026-11-10, also for existing installs). Off: every run goes at full
         // speed as if nobody watched.
         public bool GentleModeEnabled { get; set; } = true;
+        // Settings > Advanced Settings: a film that is in the library more than once (versions, or
+        // copies in different libraries) is held by collections, playlists and top-lists as its best
+        // copy instead of the lowest id / first one (BestCopy). Off by default (owner, 2026-11-24).
+        public bool PrioritizeHighQuality { get; set; } = false;
         // Give top-list copies the same collection memberships as their original movie.
         public bool TopListMirrorCollections { get; set; } = false;
         // Settings > Features: show the Copy / Paste buttons and the Import collection button.

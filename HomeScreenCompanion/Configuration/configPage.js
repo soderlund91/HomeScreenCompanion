@@ -7522,6 +7522,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             PreserveTagsOnEmptyResult: view.querySelector('#chkPreserveTagsOnEmptyResult').checked,
             IgnoreMarkedAsWatched: view.querySelector('#chkIgnoreMarkedAsWatched').checked,
             GentleModeEnabled: view.querySelector('#chkGentleModeEnabled').checked,
+            PrioritizeHighQuality: view.querySelector('#chkPrioritizeHighQuality').checked,
             TopListMirrorCollections: view.querySelector('#chkTopListMirrorCollections').checked,
             HideTopListLibraries: view.querySelector('#chkHideTopListLibraries').checked,
             ShowCopyPasteButtons: view.querySelector('#chkShowCopyPasteButtons').checked,
@@ -7728,6 +7729,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         ExtendedConsoleOutput: 'Extended log', LogMissingItems: 'Log missing movies and shows',
         DryRunMode: 'Dry Run Mode', PreserveTagsOnEmptyResult: 'Preserve tags and collections on empty result',
         IgnoreMarkedAsWatched: 'Ignore titles only marked as watched', GentleModeEnabled: 'Gentle mode',
+        PrioritizeHighQuality: 'Prioritize high quality',
         TopListMirrorCollections: 'Show collections on top-list items', HideTopListLibraries: 'Hide HSC libraries',
         ShowCopyPasteButtons: 'Copy & paste sources', ShowImportCollectionButton: 'Import collection', ShowMissingTitles: 'Show missing titles',
         MissingIncludeGaps: 'Missing: include shows that lack episodes', MissingExportToFile: 'Missing: keep the list in a file',
@@ -9683,6 +9685,12 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
         var k = 'movies';
         try { k = localStorage.getItem('HomeScreenCompanion_MissingList') || 'movies'; } catch (e) { }
         return ['movies', 'shows', 'export'].indexOf(k) >= 0 ? k : 'movies';
+    }
+
+    // "Prioritize high quality": its known limits show while it is ticked.
+    function updatePrioritizeQualityWarning(view) {
+        var on = view.querySelector('#chkPrioritizeHighQuality').checked;
+        view.querySelector('.prioritize-quality-warning').style.display = on ? '' : 'none';
     }
 
     // The file options show only with "Keep the list in a file" on.
@@ -14949,6 +14957,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             var settingsTab = view.querySelector('#tabSettings');
             settingsTab.addEventListener('input',  changeHandler, { signal: _signal });
             settingsTab.addEventListener('change', changeHandler, { signal: _signal });
+            view.querySelector('#chkPrioritizeHighQuality').addEventListener('change', function () { updatePrioritizeQualityWarning(view); }, { signal: _signal });
             // The Missing tab's Export panel is saved with the settings.
             var mtExport = view.querySelector('#mtExportPanel');
             mtExport.addEventListener('input',  changeHandler, { signal: _signal });
@@ -16066,6 +16075,8 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
                 view.querySelector('#chkPreserveTagsOnEmptyResult').checked = config.PreserveTagsOnEmptyResult || false;
                 view.querySelector('#chkIgnoreMarkedAsWatched').checked = !!config.IgnoreMarkedAsWatched;
                 view.querySelector('#chkGentleModeEnabled').checked = config.GentleModeEnabled !== false;
+                view.querySelector('#chkPrioritizeHighQuality').checked = !!config.PrioritizeHighQuality;
+                updatePrioritizeQualityWarning(view);
                 view.querySelector('#chkTopListMirrorCollections').checked = config.TopListMirrorCollections || false;
                 view.querySelector('#chkHideTopListLibraries').checked = config.HideTopListLibraries !== false;
                 view.querySelector('#chkShowCopyPasteButtons').checked = config.ShowCopyPasteButtons || false;

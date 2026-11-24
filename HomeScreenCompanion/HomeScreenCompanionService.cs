@@ -823,6 +823,8 @@ namespace HomeScreenCompanion
         public bool IgnoreMarkedAsWatched { get; set; }
         // Null in backups made before Gentle mode: the current setting is kept.
         public bool? GentleModeEnabled { get; set; }
+        // Null in backups made before "Prioritize high quality": the current setting is kept.
+        public bool? PrioritizeHighQuality { get; set; }
         public bool TopListMirrorCollections { get; set; }
         public bool ShowCopyPasteButtons { get; set; }
         public bool ShowImportCollectionButton { get; set; }
@@ -3002,7 +3004,9 @@ public class HomeScreenCompanionService : IService
                     catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                 }
 
-                // First pass: deduplicate and preserve query order
+                // First pass: deduplicate and preserve query order. A film in the chosen libraries more
+                // than once: its first copy, or with "Prioritize high quality" its best (as the runs do).
+                if (BestCopy.Enabled) items = BestCopy.OnePerFilm(items.Where(i => !string.IsNullOrEmpty(i.Path)).ToList());
                 var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var selected = new List<(string BaseName, string FilePath, BaseItem Item)>();
                 foreach (var item in items)
@@ -4193,6 +4197,7 @@ public class HomeScreenCompanionService : IService
                     PreserveTagsOnEmptyResult = config.PreserveTagsOnEmptyResult,
                     IgnoreMarkedAsWatched     = config.IgnoreMarkedAsWatched,
                     GentleModeEnabled         = config.GentleModeEnabled,
+                    PrioritizeHighQuality     = config.PrioritizeHighQuality,
                     TopListMirrorCollections  = config.TopListMirrorCollections,
                     ShowCopyPasteButtons      = config.ShowCopyPasteButtons,
                     ShowImportCollectionButton = config.ShowImportCollectionButton,
@@ -4352,6 +4357,7 @@ public class HomeScreenCompanionService : IService
                     config.PreserveTagsOnEmptyResult = s.PreserveTagsOnEmptyResult;
                     config.IgnoreMarkedAsWatched     = s.IgnoreMarkedAsWatched;
                     if (s.GentleModeEnabled != null) config.GentleModeEnabled = s.GentleModeEnabled.Value;
+                    if (s.PrioritizeHighQuality != null) config.PrioritizeHighQuality = s.PrioritizeHighQuality.Value;
                     mirrorChanged = config.TopListMirrorCollections != s.TopListMirrorCollections;
                     config.TopListMirrorCollections  = s.TopListMirrorCollections;
                     config.ShowCopyPasteButtons      = s.ShowCopyPasteButtons;

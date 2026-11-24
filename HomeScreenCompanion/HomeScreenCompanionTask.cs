@@ -74,6 +74,7 @@ namespace HomeScreenCompanion
             public HashSet<string> AudioLanguages;
             public double? DateModifiedDays;
             public double? FileSizeMb;
+            public int? VideoBitRate;  // kbps, the highest video stream's (BestCopy)
             // Music-specific fields
             public int? BitRate;       // kbps
             public int? SampleRate;    // Hz
@@ -4684,19 +4685,37 @@ namespace HomeScreenCompanion
                 _log.Section($"Playlist \"{_plLogName}\"");
                 try
                 {
-                    // Deduplicate — pick one physical version per logical movie (IMDb > TMDb > InternalId).
-                    // Keep an ordered list mirroring the source order plus a set for fast membership checks.
+                    // Deduplicate — pick one physical version per logical movie (IMDb > TMDb > InternalId):
+                    // the first listed, or with "Prioritize high quality" the best movie copy (BestCopy),
+                    // at the first one's place. Keep an ordered list mirroring the source order plus a
+                    // set for fast membership checks.
+                    bool bestCopy = BestCopy.Enabled;
                     (List<long> List, HashSet<long> Set) Desired(List<BaseItem> items)
                     {
+                        string KeyOf(BaseItem item) => item.GetProviderId("Imdb")
+                                   ?? item.GetProviderId("Tmdb")
+                                   ?? item.InternalId.ToString();
+                        Dictionary<string, List<BaseItem>>? copies = null;
+                        if (bestCopy)
+                        {
+                            copies = new Dictionary<string, List<BaseItem>>(StringComparer.OrdinalIgnoreCase);
+                            foreach (var item in items)
+                            {
+                                var k = KeyOf(item);
+                                if (!copies.TryGetValue(k, out var cl)) copies[k] = cl = new List<BaseItem>();
+                                if (!cl.Any(c => c.InternalId == item.InternalId)) cl.Add(item);
+                            }
+                        }
                         var seenPlKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                         var list = new List<long>();   // ordered, mirrors source
                         var set = new HashSet<long>();  // fast Contains
                         foreach (var item in items)
                         {
-                            var key = item.GetProviderId("Imdb")
-                                   ?? item.GetProviderId("Tmdb")
-                                   ?? item.InternalId.ToString();
-                            if (seenPlKeys.Add(key)) { list.Add(item.InternalId); set.Add(item.InternalId); }
+                            var key = KeyOf(item);
+                            if (!seenPlKeys.Add(key)) continue;
+                            var chosen = copies != null && copies[key].Count > 1 && copies[key].All(c => c is MediaBrowser.Controller.Entities.Movies.Movie)
+                                ? BestCopy.Pick(copies[key], true) : item;
+                            list.Add(chosen.InternalId); set.Add(chosen.InternalId);
                         }
                         return (list, set);
                     }
@@ -7081,6 +7100,7 @@ namespace HomeScreenCompanion
                                     }
                                 }
                                 catch { }
+                                try { int vbr = (int)stream.BitRate; if (vbr > 0 && vbr / 1000 > (info.VideoBitRate ?? 0)) info.VideoBitRate = vbr / 1000; } catch { }
                                 if (codec.IndexOf("hevc", StringComparison.OrdinalIgnoreCase) >= 0 || codec.IndexOf("h265", StringComparison.OrdinalIgnoreCase) >= 0) info.IsHevc = true;
                                 if (codec.IndexOf("av1", StringComparison.OrdinalIgnoreCase) >= 0) info.IsAv1 = true;
                                 if (codec.IndexOf("h264", StringComparison.OrdinalIgnoreCase) >= 0 || codec.IndexOf("avc", StringComparison.OrdinalIgnoreCase) >= 0) info.IsH264 = true;
@@ -7194,6 +7214,20 @@ namespace HomeScreenCompanion
         // Resolution classes in order; 5K/6K (known, no class) rank between 4K and 8K.
         private static int ResolutionRank(CachedMediaInfo i) =>
             !i.ResolutionKnown ? 0 : i.Is8k ? 7 : i.Is4k ? 5 : i.Is1440 ? 4 : i.Is1080 ? 3 : i.Is720 ? 2 : i.IsSd ? 1 : 6;
+
+        // A copy's quality for "Prioritize high quality" (BestCopy): its own file only, never its
+        // other versions (each copy is weighed on its own).
+        internal static BestCopy.Quality QualityOf(BaseItem item)
+        {
+            var i = ExtractMediaInfo(item);
+            return new BestCopy.Quality
+            {
+                Resolution = ResolutionRank(i),
+                Range = i.IsDv ? 2 : (i.IsHdr || i.IsHdr10) ? 1 : 0,
+                VideoKbps = i.VideoBitRate ?? 0,
+                SizeMb = i.FileSizeMb ?? 0
+            };
+        }
 
         private static void SetResolutionRank(ref CachedMediaInfo i, int rank)
         {
@@ -8549,27 +8583,37 @@ namespace HomeScreenCompanion
             try { var path = Path.Combine(Plugin.Instance.DataFolderPath, filename); Directory.CreateDirectory(Path.GetDirectoryName(path)); File.WriteAllLines(path, data); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
         }
 
-        // A film's versions (e.g. 2160p and 1080p files) are separate items that Emby shows as one
-        // movie. A collection gets one of them, the first (lowest id), like Emby's own grouping;
-        // this returns the ids of the other versions. Anything that is not a movie is kept. The same
-        // item listed twice (e.g. two objects for one film) is one item, never its own extra version:
-        // that would leave the film out of the collection altogether.
+        // A film's versions (e.g. 2160p and 1080p files, merged or in different libraries) are
+        // separate items. A collection gets one of them: the lowest id, like Emby's own grouping, or
+        // with "Prioritize high quality" the best (BestCopy.Pick, the setting from when the run
+        // started); this returns the ids of the other versions. Anything that is not a movie is kept.
+        // The same item listed twice (e.g. two objects for one film) is one item, never its own extra
+        // version: that would leave the film out of the collection altogether.
         internal static HashSet<long> ExtraVersionIds(IEnumerable<BaseItem> items)
         {
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            bool best = BestCopy.Enabled;
+            var byKey = new Dictionary<string, List<BaseItem>>(StringComparer.OrdinalIgnoreCase);
             var seenIds = new HashSet<long>();
-            var extra = new HashSet<long>();
             foreach (var item in items.Where(i => i is MediaBrowser.Controller.Entities.Movies.Movie).OrderBy(i => i.InternalId))
             {
                 if (!seenIds.Add(item.InternalId)) continue;
                 var key = VersionKey(item);
-                if (key != null && !seen.Add(key)) extra.Add(item.InternalId);
+                if (key == null) continue;
+                if (!byKey.TryGetValue(key, out var list)) byKey[key] = list = new List<BaseItem>();
+                list.Add(item);
+            }
+            var extra = new HashSet<long>();
+            foreach (var list in byKey.Values)
+            {
+                if (list.Count < 2) continue;
+                var keep = BestCopy.Pick(list, best);
+                foreach (var item in list) if (item.InternalId != keep.InternalId) extra.Add(item.InternalId);
             }
             return extra;
         }
 
         // What makes two movie items versions of one film: the same IMDb id, else the same PresentationUniqueKey.
-        private static string? VersionKey(BaseItem item)
+        internal static string? VersionKey(BaseItem item)
         {
             var imdb = item.GetProviderId("Imdb");
             return !string.IsNullOrEmpty(imdb) ? "imdb:" + imdb
@@ -9072,6 +9116,9 @@ namespace HomeScreenCompanion
                     catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                 }
 
+                // A film in the chosen libraries more than once: its first copy, or with "Prioritize
+                // high quality" its best (BestCopy), at the first one's place.
+                if (BestCopy.Enabled) items = BestCopy.OnePerFilm(items.Where(i => !string.IsNullOrEmpty(i.Path)).ToList());
                 var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var selected = new List<(string BaseName, string FilePath, BaseItem Item)>();
                 foreach (var item in items)
@@ -9254,7 +9301,9 @@ namespace HomeScreenCompanion
                         cancellationToken.ThrowIfCancellationRequested();
                         if (!strmPaths.TryGetValue(li.Path, out var want)) continue;
                         var imdb = li.GetProviderId("Imdb");
-                        var mergeWith = !string.IsNullOrEmpty(imdb) && origLookup.TryGetValue(imdb, out var orig) ? orig : want.Film;
+                        // Merged with the first film with its IMDb id; with "Prioritize high quality"
+                        // with the copy it plays (the best one), so its watched state goes with that file.
+                        var mergeWith = !BestCopy.Enabled && !string.IsNullOrEmpty(imdb) && origLookup.TryGetValue(imdb, out var orig) ? orig : want.Film;
                         int writes = TopListCopies.Prepare(li, want.Film, mergeWith, want.Rank,
                             changedBases.Contains(Path.GetFileNameWithoutExtension(li.Path)),
                             _libraryManager, _providerManager, _fileSystem, m => _log.Warn(m), m => _log.Debug(m), cancellationToken);

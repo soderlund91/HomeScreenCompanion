@@ -2173,6 +2173,18 @@
                             <div class="fieldDescription">Lists the titles from your lists that are not in your library, so you know what to add.</div>
                         </div>
 
+                        <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="chkPrioritizeHighQuality" />
+                                <span>Prioritize high quality</span>
+                            </label>
+                            <div class="fieldDescription">When the same movie is in your library more than once (versions, or copies in different libraries), collections, playlists and top-lists use the best copy: highest resolution, then Dolby Vision or HDR, then bitrate. Off: the first copy. Tags still go on every copy.</div>
+                            <div class="prioritize-quality-warning hsc-callout warning" style="margin-top:8px; display:none;">
+                                <i class="md-icon">warning</i>
+                                <span>Users who can't open the library with the best copy may not see the movie in collections and playlists. A top-list plays the best file, also for users who only have the lower-quality libraries. Turning this on or off swaps the copies at the next sync.</span>
+                            </div>
+                        </div>
+
                         <div class="hsc-eyebrow" style="margin-top: 24px; margin-bottom: 8px;">Top-lists</div>
 
                         <div class="checkboxContainer checkboxContainer-withDescription">
@@ -3350,6 +3362,10 @@
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">playlist_remove</i>
                     <div><strong>Log missing movies and shows</strong> <span style="opacity:0.6;">(Tags &amp; Collections)</span> — Lists in the Tag &amp; Collections log, per source, the titles on your External and AI lists that are not in your library, with their IMDb id — handy for finding what to add next.</div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">high_quality</i>
+                    <div><strong>Prioritize high quality</strong> <span style="opacity:0.6;">(Tags &amp; Collections)</span> — Off by default. A movie can be in your library more than once: as versions, or as separate copies in different libraries (a 4K and a 1080p library). Tags always go on every copy. A collection, a playlist, a movie top-list and a ranked collection hold one copy per movie: normally the first one HSC finds, with this on the best one, picked by resolution, then Dolby Vision or HDR, then bitrate (file size when the bitrate is not known). Shows and episodes keep the first copy. Known limits: a user who can't open the library with the best copy may not see the movie in collections and playlists, and a top-list plays the best file for everyone who can open the top-list, also users who only have the lower-quality libraries. Turning it on or off swaps the copies at the next sync. With it on, a top-list copy is linked as a version of the copy it plays. HSC never links your separate copies to each other.</div>
                 </div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">collections_bookmark</i>
