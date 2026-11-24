@@ -60,6 +60,8 @@ namespace HomeScreenCompanion
                 RowPlacement.FollowRenamedSources(incoming, RotatingRow.Renames(current, incoming));
                 // The page does not send it: once the tour has been shown it stays shown.
                 incoming.WelcomeTourSeen = incoming.WelcomeTourSeen || current.WelcomeTourSeen;
+                // Pinned and hand-picked titles keep what they are next to their ids (the page does not send it).
+                try { TitleRefs.Carry(current, incoming); } catch (Exception ex) { PluginLog.Swallowed(ex); }
             }
             base.UpdateConfiguration(configuration);
             HomeScreenCompanionTask.RecordImportedCollections(Configuration);

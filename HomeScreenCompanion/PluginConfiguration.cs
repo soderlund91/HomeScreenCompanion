@@ -227,6 +227,8 @@ namespace HomeScreenCompanion
         public List<string> LocalSources { get; set; } = new List<string>();
         // "Manual" source: Emby item ids (movies and series), in list order.
         public List<string> ManualItemIds { get; set; } = new List<string>();
+        // What each of them is (by id), to find it again when Emby gives it a new id (TitleRefs).
+        public List<TitleRef> ManualItemRefs { get; set; } = new List<TitleRef>();
         // "Rotating from existing" source (see RotatingRow): its items, every how many days it moves
         // on, the weekday it starts on ("" = the day it was saved) and its order ("List" or "Shuffle").
         public List<RotationItem> RotationItems { get; set; } = new List<RotationItem>();
@@ -239,6 +241,8 @@ namespace HomeScreenCompanion
         // "Pinned titles": movies and shows (Emby item ids) that always get this source's tag,
         // collection and playlist, first, and take places in its Max (see RandomPick).
         public List<string> PinnedItemIds { get; set; } = new List<string>();
+        // What each of them is (by id), to find it again when Emby gives it a new id (TitleRefs).
+        public List<TitleRef> PinnedItemRefs { get; set; } = new List<TitleRef>();
         // "Random pick": the source's Max (less its pinned titles) is filled with titles picked at
         // random from everything it finds, the same pick for each period (RandomPickEvery
         // "Hour", "Day" or "Week"; see RandomPick.Every).
