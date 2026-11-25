@@ -40,6 +40,8 @@ namespace HomeScreenCompanion
             var wasMirroring = Configuration?.TopListMirrorCollections ?? false;
             var wasDryRun = Configuration?.DryRunMode ?? false;
             HomeScreenCompanionTask.KeepLastRunCounts(Configuration, configuration as PluginConfiguration);
+            // A home row switched on (e.g. rows taken over): its Position is in effect, nothing moves.
+            RowPlacement.NoteHomeRowsSwitchedOn(Configuration, configuration as PluginConfiguration);
             // A changed row Position: the next run moves the rows already there (see RowPlacement).
             RowPlacement.NoteChanges(Configuration, configuration as PluginConfiguration);
             // Groups deleted on the settings page: their tag and home rows are cleaned up by the next full run.
@@ -52,10 +54,14 @@ namespace HomeScreenCompanion
                 incoming.HomeSyncAdditions = (current.HomeSyncAdditions ?? new List<HomeSyncAddition>())
                     .Select(a => new HomeSyncAddition { List = a.List, Key = a.Key, UserId = a.UserId, Picked = a.Picked, SectionId = a.SectionId, FromCopyAll = a.FromCopyAll }).ToList();
                 HomeSectionSyncTask.KeepKeysOfRenamedSources(current, incoming);
+                // Row shuffle: its rows follow renamed sources; a new or changed set starts now.
+                RowShuffle.Saved(current, incoming, HomeSectionSyncTask.RenamedSourceKeys(current, incoming, withTopLists: true));
                 // A Position that points at a rotating source's row follows when the source is renamed.
                 RowPlacement.FollowRenamedSources(incoming, RotatingRow.Renames(current, incoming));
                 // The page does not send it: once the tour has been shown it stays shown.
                 incoming.WelcomeTourSeen = incoming.WelcomeTourSeen || current.WelcomeTourSeen;
+                // Pinned and hand-picked titles keep what they are next to their ids (the page does not send it).
+                try { TitleRefs.Carry(current, incoming); } catch (Exception ex) { PluginLog.Swallowed(ex); }
             }
             base.UpdateConfiguration(configuration);
             HomeScreenCompanionTask.RecordImportedCollections(Configuration);

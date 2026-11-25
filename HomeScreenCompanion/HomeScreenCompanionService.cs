@@ -1,4 +1,4 @@
-﻿using MediaBrowser.Common.Net;
+using MediaBrowser.Common.Net;
 using HttpRequestOptions = MediaBrowser.Common.Net.HttpRequestOptions;
 using SkiaSharp;
 using MediaBrowser.Controller.Entities;
@@ -677,6 +677,28 @@ namespace HomeScreenCompanion
         public List<SearchTitleItem> Items { get; set; } = new List<SearchTitleItem>();
     }
 
+    // The Manual List's and Pinned titles' entries on the settings page: each id's title, also when
+    // Emby made it a new item (found by its TitleRef), else the stored name with Found false.
+    [Route("/HomeScreenCompanion/ResolveTitles", "GET")]
+    [Authenticated(Roles = "Admin")]
+    public class ResolveTitlesRequest : IReturn<ResolveTitlesResponse>
+    {
+        public string Ids { get; set; } = "";   // comma-separated
+    }
+    public class ResolvedTitle
+    {
+        public string Id { get; set; } = "";          // the id asked for
+        public string CurrentId { get; set; } = "";   // the item's id now ("" when not found)
+        public string Name { get; set; } = "";
+        public int? ProductionYear { get; set; }
+        public string Type { get; set; } = "";
+        public bool Found { get; set; }
+    }
+    public class ResolveTitlesResponse
+    {
+        public List<ResolvedTitle> Items { get; set; } = new List<ResolvedTitle>();
+    }
+
     // Series for the manual show top-list picker (same shape as AllMovies).
     [Route("/HomeScreenCompanion/TopList/AllSeries", "GET")]
     [Authenticated(Roles = "Admin")]
@@ -801,6 +823,8 @@ namespace HomeScreenCompanion
         public bool IgnoreMarkedAsWatched { get; set; }
         // Null in backups made before Gentle mode: the current setting is kept.
         public bool? GentleModeEnabled { get; set; }
+        // Null in backups made before "Prioritize high quality": the current setting is kept.
+        public bool? PrioritizeHighQuality { get; set; }
         public bool TopListMirrorCollections { get; set; }
         public bool ShowCopyPasteButtons { get; set; }
         public bool ShowImportCollectionButton { get; set; }
@@ -857,6 +881,8 @@ namespace HomeScreenCompanion
         public bool? OrigPostersSeries { get; set; }
         public bool? OrigPostersSeasons { get; set; }
         public bool? OrigPostersEpisodes { get; set; }
+        // Row shuffle sets (null in older backups: the current sets stay).
+        public List<RowShuffleSet>? RowShuffleSets { get; set; }
     }
 
     public class BackupTopList
@@ -1655,9 +1681,7 @@ public class HomeScreenCompanionService : IService
             var found = new List<BaseItem>();
             foreach (var id in source.ManualItemIds ?? new List<string>())
             {
-                BaseItem? item = null;
-                if (long.TryParse(id, out var internalId)) item = _libraryManager.GetItemById(internalId);
-                else if (Guid.TryParse(id, out var guid)) item = _libraryManager.GetItemById(guid);
+                var item = TitleRefs.Resolve(id, source.ManualItemRefs, source);
                 if (item != null) found.Add(item);
             }
             return ArtTopLevel(found);
@@ -1994,6 +2018,28 @@ public class HomeScreenCompanionService : IService
 
 
 
+        public object Post(RowTakeOverRequest request)
+        {
+            var config = Plugin.Instance?.Configuration;
+            if (config == null || request == null) return new RowTakeOverResponse();
+            return new RowTakeOverResponse { Options = RowTakeOver.Find(config, _libraryManager, _userManager, _jsonSerializer,
+                request.Name, request.Tag, request.CollectionName, request.TagRow, request.CollectionRow) };
+        }
+
+        public object Get(RowTakeOverListRequest request)
+        {
+            var config = Plugin.Instance?.Configuration;
+            if (config == null) return new RowTakeOverResponse();
+            return new RowTakeOverResponse { Options = RowTakeOver.List(config, _libraryManager, _userManager, _jsonSerializer) };
+        }
+
+        public object Post(RowShufflePreviewRequest request)
+        {
+            var config = Plugin.Instance?.Configuration;
+            if (config == null || request?.Set == null) return new RowShufflePreviewResponse();
+            return RowShuffle.Preview(config, _userManager, request.Set, request.UserId);
+        }
+
         public object Get(HscDebugMethodsRequest request)
         {
             var lines = new System.Text.StringBuilder();
@@ -2187,7 +2233,12 @@ public class HomeScreenCompanionService : IService
                         Name = tc.Tag,
                         Recursive = true
                     }).FirstOrDefault();
-                    if (tagItem != null) settingsDict["_queryTagId"] = tagItem.InternalId.ToString();
+                    // A tag row without its tag would show every title (the tag is gone while no item
+                    // has it, e.g. the anchor was lost): the rows are left as they are, and the next
+                    // sync puts the tag back on the anchor and writes them.
+                    if (tagItem == null)
+                        return new HscApplyTagHomeSectionsResponse { Success = true, Message = $"Tag '{tc.Tag}' does not exist in the library: rows left as they are until the next sync." };
+                    settingsDict["_queryTagId"] = tagItem.InternalId.ToString();
                 }
 
                 // Build section marker (same pattern as the task)
@@ -2953,7 +3004,9 @@ public class HomeScreenCompanionService : IService
                     catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
                 }
 
-                // First pass: deduplicate and preserve query order
+                // First pass: deduplicate and preserve query order. A film in the chosen libraries more
+                // than once: its first copy, or with "Prioritize high quality" its best (as the runs do).
+                if (BestCopy.Enabled) items = BestCopy.OnePerFilm(items.Where(i => !string.IsNullOrEmpty(i.Path)).ToList());
                 var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var selected = new List<(string BaseName, string FilePath, BaseItem Item)>();
                 foreach (var item in items)
@@ -3074,6 +3127,26 @@ public class HomeScreenCompanionService : IService
                             Type = i.GetType().Name
                         });
                     if (page.Length < Page) break;
+                }
+            }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+            return response;
+        }
+
+        public object Get(ResolveTitlesRequest request)
+        {
+            var response = new ResolveTitlesResponse();
+            try
+            {
+                var refs = TitleRefs.AllRefs(Plugin.Instance?.Configuration);
+                foreach (var id in (request.Ids ?? "").Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).Distinct())
+                {
+                    refs.TryGetValue(id, out var r);
+                    var item = TitleRefs.ById(id);
+                    if (!TitleRefs.IsOriginal(item)) item = r == null ? null : TitleRefs.Find(r);
+                    response.Items.Add(item != null
+                        ? new ResolvedTitle { Id = id, CurrentId = item.InternalId.ToString(), Name = item.Name ?? "", ProductionYear = item.ProductionYear, Type = item.GetType().Name, Found = true }
+                        : new ResolvedTitle { Id = id, Name = r?.Name ?? "", ProductionYear = r?.Year, Type = r?.Type ?? "", Found = false });
                 }
             }
             catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
@@ -4124,6 +4197,7 @@ public class HomeScreenCompanionService : IService
                     PreserveTagsOnEmptyResult = config.PreserveTagsOnEmptyResult,
                     IgnoreMarkedAsWatched     = config.IgnoreMarkedAsWatched,
                     GentleModeEnabled         = config.GentleModeEnabled,
+                    PrioritizeHighQuality     = config.PrioritizeHighQuality,
                     TopListMirrorCollections  = config.TopListMirrorCollections,
                     ShowCopyPasteButtons      = config.ShowCopyPasteButtons,
                     ShowImportCollectionButton = config.ShowImportCollectionButton,
@@ -4224,7 +4298,8 @@ public class HomeScreenCompanionService : IService
                     OrigPostersMovies    = config.OrigPostersMovies,
                     OrigPostersSeries    = config.OrigPostersSeries,
                     OrigPostersSeasons   = config.OrigPostersSeasons,
-                    OrigPostersEpisodes  = config.OrigPostersEpisodes
+                    OrigPostersEpisodes  = config.OrigPostersEpisodes,
+                    RowShuffleSets       = (config.RowShuffleSets ?? new List<RowShuffleSet>()).Where(s => s != null).Select(RowShuffle.Copy).ToList()
                 };
                 file.Sections.Add("HomeSync");
             }
@@ -4282,6 +4357,7 @@ public class HomeScreenCompanionService : IService
                     config.PreserveTagsOnEmptyResult = s.PreserveTagsOnEmptyResult;
                     config.IgnoreMarkedAsWatched     = s.IgnoreMarkedAsWatched;
                     if (s.GentleModeEnabled != null) config.GentleModeEnabled = s.GentleModeEnabled.Value;
+                    if (s.PrioritizeHighQuality != null) config.PrioritizeHighQuality = s.PrioritizeHighQuality.Value;
                     mirrorChanged = config.TopListMirrorCollections != s.TopListMirrorCollections;
                     config.TopListMirrorCollections  = s.TopListMirrorCollections;
                     config.ShowCopyPasteButtons      = s.ShowCopyPasteButtons;
@@ -4389,6 +4465,10 @@ public class HomeScreenCompanionService : IService
                     if (h.OrigPostersSeries.HasValue)   config.OrigPostersSeries   = h.OrigPostersSeries.Value;
                     if (h.OrigPostersSeasons.HasValue)  config.OrigPostersSeasons  = h.OrigPostersSeasons.Value;
                     if (h.OrigPostersEpisodes.HasValue) config.OrigPostersEpisodes = h.OrigPostersEpisodes.Value;
+                    // Row keys are names (src:<name>/<tag>, tl:<tag>), so they work on another server.
+                    // A restored set starts again from its start order.
+                    if (h.RowShuffleSets != null)
+                        config.RowShuffleSets = RowShuffle.Restored(h.RowShuffleSets);
                     response.Applied.Add("Home screen sync");
                 }
 
@@ -4832,6 +4912,8 @@ public class HomeScreenCompanionService : IService
             // On another server the collection is HSC's own, not one it took over.
             t.CollectionImported = false; t.CollectionPosterReplaced = false; t.CollectionBackgroundReplaced = false;
             t.CollectionThumbReplaced = false; t.CollectionBannerReplaced = false;
+            // Item ids of this server: the other server makes its own on save (TitleRefs.Carry).
+            t.ManualItemRefs = new List<TitleRef>(); t.PinnedItemRefs = new List<TitleRef>();
         }
 
         // The user id inside a smart-filter rule (IsPlayed/LastPlayed/PlayCount:<userId>:<op>:<value>,
@@ -4947,12 +5029,11 @@ public class HomeScreenCompanionService : IService
                     if (settings.TryGetValue(key, out var csv))
                         foreach (var id in SplitIds(csv)) AddLibrary(id);
 
+                var titleRefs = (t.ManualItemRefs ?? new List<TitleRef>()).Concat(t.PinnedItemRefs ?? new List<TitleRef>()).ToList();
                 foreach (var id in (t.ManualItemIds ?? new List<string>()).Concat(t.PinnedItemIds ?? new List<string>()))
                 {
                     if (string.IsNullOrWhiteSpace(id) || file.Items.ContainsKey(id)) continue;
-                    BaseItem? item = null;
-                    if (long.TryParse(id, out var internalId)) item = _libraryManager.GetItemById(internalId);
-                    else if (Guid.TryParse(id, out var guid)) item = _libraryManager.GetItemById(guid);
+                    var item = TitleRefs.Resolve(id, titleRefs, t);
                     if (item == null) continue; // already gone here; the import reports it as missing
                     file.Items[id] = ItemRefFor(item);
                 }

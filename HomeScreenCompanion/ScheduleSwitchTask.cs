@@ -1,3 +1,4 @@
+using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Serialization;
 using MediaBrowser.Model.Tasks;
@@ -16,17 +17,21 @@ namespace HomeScreenCompanion
     /// It only checks the schedules; the sync itself does the switching (overrides, cleanup).
     /// A rotating row (RotatingRow) that is due runs its own Run Group, also when that failed
     /// or was missed before: being due is not lost.
+    /// It also puts Row shuffle's sets in the order of their period (RowShuffle), when no other run
+    /// holds RunGate; else on the next check.
     /// </summary>
     public class ScheduleSwitchTask : IScheduledTask, IConfigurableScheduledTask
     {
         private readonly ITaskManager _taskManager;
         private readonly PluginLogger _logger;
         private readonly IJsonSerializer _json;
+        private readonly IUserManager _userManager;
 
-        public ScheduleSwitchTask(ITaskManager taskManager, ILogManager logManager, IJsonSerializer json)
+        public ScheduleSwitchTask(ITaskManager taskManager, ILogManager logManager, IJsonSerializer json, IUserManager userManager)
         {
             _taskManager = taskManager;
             _json = json;
+            _userManager = userManager;
             _logger = PluginLog.Wrap(logManager.GetLogger("HomeScreenCompanion_Schedule"), "Schedule");
         }
 
@@ -59,8 +64,8 @@ namespace HomeScreenCompanion
             try { if (File.Exists(statePath)) previous = File.ReadAllText(statePath); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
 
             // First run: remember the state; the daily sync already matches it.
-            if (previous == null) { Save(statePath, state); RunDueRotations(config); return Task.CompletedTask; }
-            if (previous == state) { RunDueRotations(config); return Task.CompletedTask; }
+            if (previous == null) { Save(statePath, state); RunDueRotations(config); ShuffleRows(config, cancellationToken); return Task.CompletedTask; }
+            if (previous == state) { RunDueRotations(config); ShuffleRows(config, cancellationToken); return Task.CompletedTask; }
 
             // Try again on the next check rather than lose the switch.
             if (HomeScreenCompanionTask.IsRunning) return Task.CompletedTask;
@@ -89,6 +94,32 @@ namespace HomeScreenCompanion
             _logger.Info("Rotating row due; running {0}", string.Join(", ", due.Select(n => $"Run Group '{n}'")));
             foreach (var name in due)
                 _ = Task.Run(() => task.RunSingleEntryAsync(name, CancellationToken.None));
+        }
+
+        // Row shuffle: a new period (or a set switched off or deleted). Only when no run holds the
+        // gate (rule 8); a run puts the rows in order at its end, the next check does the rest.
+        private static string _lastDryRunNote = "";
+        private void ShuffleRows(PluginConfiguration config, CancellationToken cancellationToken)
+        {
+            if (!RowShuffle.HasWork(config)) return;
+            using var gate = RunGate.TryEnter("Row shuffle");
+            if (gate == null) return;
+            try
+            {
+                bool dry = config.DryRunMode;
+                // A dry run says it once per change, not every 15 minutes.
+                var log = new RunLog(new List<string>(), dry ? null : _logger, "", false);
+                int users = RowShuffle.Apply(config, _userManager, dry, log, cancellationToken);
+                if (!dry && users > 0) _logger.Info("Row shuffle: rows moved for {0}", RunLog.Plural(users, "user"));
+                if (dry)
+                {
+                    var note = users > 0 ? $"Dry run: Row shuffle would move rows for {RunLog.Plural(users, "user")}" : "";
+                    if (note.Length > 0 && note != _lastDryRunNote) _logger.Info(note);
+                    _lastDryRunNote = note;
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { _logger.Warn("Row shuffle failed: {0}", ex.Message); }
         }
 
         // One line per scheduled source: "<name>\t1" when in schedule, "\t0" when not.

@@ -46,6 +46,7 @@ namespace HomeScreenCompanion
             _holder = name;
             Interlocked.Exchange(ref _startTicks, DateTime.Now.Ticks);
             GentleMode.Begin();
+            BestCopy.Begin();
         }
 
         /// <summary>Waits (asynchronously) until no other run holds the gate. Dispose the result to release it.</summary>
@@ -81,6 +82,7 @@ namespace HomeScreenCompanion
                 if (Interlocked.Exchange(ref _done, 1) != 0) return;
                 _holder = "";
                 Interlocked.Exchange(ref _startTicks, 0);
+                BestCopy.End();
                 Gate.Release();
                 RealPosterBadges.RunFinished();
             }

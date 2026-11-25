@@ -489,6 +489,10 @@ namespace HomeScreenCompanion
                 var copy = PrepareCopy(config, managed, section, sourceKey, targetIdStr, targetKey, targetName, notCopied);
                 if (copy != null) copies.Add((section, copy));
             }
+            // Row shuffle: the rows of its sets in this user's own order (as Schedule Switch puts them),
+            // not the master's, so a user with fewer of a set's rows is not written again every time.
+            var shuffled = RowShuffle.CopyOrder(config, copies.Select(c => managed.RowKey(config, c.Section, sourceKey)).ToList(), RunGate.ScheduleNow);
+            copies = shuffled.Select(i => copies[i]).ToList();
             // The user's rows already are the master's (the same rows in the same order, none kept
             // aside): nothing is written. Deleting and adding them all again would write every row
             // of every user on every sync, and give each row a new id.
@@ -1063,11 +1067,24 @@ namespace HomeScreenCompanion
         // no id, so a rename is told by its place: the page saves the sources in their order.
         internal static void KeepKeysOfRenamedSources(PluginConfiguration? old, PluginConfiguration? incoming)
         {
+            var moved = RenamedSourceKeys(old, incoming);
+            if (moved.Count == 0) return;
+            foreach (var a in incoming!.HomeSyncAdditions ?? new List<HomeSyncAddition>())
+                if (moved.TryGetValue(a.Key ?? "", out var to)) a.Key = to;
+            foreach (var p in incoming.HomeSyncProfiles ?? new List<HomeSyncProfile>())
+                if (p.SelectedRows != null)
+                    p.SelectedRows = p.SelectedRows.Select(k => moved.TryGetValue(k ?? "", out var to) ? to : k ?? "").ToList();
+        }
+
+        // The row keys of sources renamed on the settings page: old key → new key (see above). Also a
+        // source's top-list key ("tl:<tag>") when its tag was renamed: Row shuffle follows it too.
+        internal static Dictionary<string, string> RenamedSourceKeys(PluginConfiguration? old, PluginConfiguration? incoming, bool withTopLists = false)
+        {
+            var moved = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var oldTags = old?.Tags; var newTags = incoming?.Tags;
-            if (oldTags == null || newTags == null || oldTags.Count != newTags.Count) return;
+            if (oldTags == null || newTags == null || oldTags.Count != newTags.Count) return moved;
             var oldKeys = new HashSet<string>(oldTags.Select(t => SourceKey(t.Name, t.Tag)), StringComparer.OrdinalIgnoreCase);
             var newKeys = new HashSet<string>(newTags.Select(t => SourceKey(t.Name, t.Tag)), StringComparer.OrdinalIgnoreCase);
-            var moved = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             for (int i = 0; i < oldTags.Count; i++)
             {
                 var o = oldTags[i]; var n = newTags[i];
@@ -1075,14 +1092,12 @@ namespace HomeScreenCompanion
                 if (string.Equals(from, to, StringComparison.OrdinalIgnoreCase) || newKeys.Contains(from) || oldKeys.Contains(to)) continue;
                 bool sameName = string.Equals((o.Name ?? "").Trim(), (n.Name ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
                 bool sameTag = string.Equals((o.Tag ?? "").Trim(), (n.Tag ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
-                if ((sameName || sameTag) && string.Equals(o.SourceType, n.SourceType, StringComparison.OrdinalIgnoreCase)) moved[from] = to;
+                if (!(sameName || sameTag) || !string.Equals(o.SourceType, n.SourceType, StringComparison.OrdinalIgnoreCase)) continue;
+                moved[from] = to;
+                if (withTopLists && !sameTag && SourceTopLists.IsOn(o) && SourceTopLists.IsOn(n))
+                    moved[TopListKey(o.Tag)] = TopListKey(n.Tag);
             }
-            if (moved.Count == 0) return;
-            foreach (var a in incoming!.HomeSyncAdditions ?? new List<HomeSyncAddition>())
-                if (moved.TryGetValue(a.Key ?? "", out var to)) a.Key = to;
-            foreach (var p in incoming.HomeSyncProfiles ?? new List<HomeSyncProfile>())
-                if (p.SelectedRows != null)
-                    p.SelectedRows = p.SelectedRows.Select(k => moved.TryGetValue(k ?? "", out var to) ? to : k ?? "").ToList();
+            return moved;
         }
 
         // Row keys (RowKey): a source's row, a top-list's row, any other row by its SectionKey.

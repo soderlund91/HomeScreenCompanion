@@ -66,6 +66,7 @@ namespace HomeScreenCompanion
             catch (Exception ex) { _logger.Warn($"[Migration] Top-lists could not be moved to their sources: {ex.Message}"); }
             TagCacheManager.Instance.Initialize(Plugin.Instance.DataFolderPath, _jsonSerializer);
             TopListCollectionMirror.Initialize(_libraryManager, _collectionManager, _logger);
+            TitleRefs.Initialize(_libraryManager);
             RankedCopyGuard.Initialize(_libraryManager, _collectionManager, _logger);
             ShowTopList.Initialize(_itemRepository, _mediaSourceManager);
 
@@ -331,13 +332,14 @@ namespace HomeScreenCompanion
                             && string.Equals(m.GetProviderId("Imdb"), imdb, StringComparison.OrdinalIgnoreCase))
                           .ToList();
 
-                        // The film the .strm points at; else the first with the IMDb id (merged with that one).
+                        // The film the .strm points at; else the first with the IMDb id (merged with that one,
+                        // or with "Prioritize high quality" with the film it plays, as the sync does).
                         BaseItem? primary = originals.Count > 0 ? originals[0] : null;
                         var film = TopListCopies.FilmOf(current, _libraryManager) ?? primary;
                         int writes = 0;
                         if (film != null)
                         {
-                            writes = TopListCopies.Prepare(current, film, primary ?? film, null, false,
+                            writes = TopListCopies.Prepare(current, film, BestCopy.Enabled ? film : primary ?? film, null, false,
                                 _libraryManager, _providerManager, _fileSystem, m => _logger.Warn("[TopList] " + m), null, CancellationToken.None);
 
                             // Optional: same collection memberships as the originals.

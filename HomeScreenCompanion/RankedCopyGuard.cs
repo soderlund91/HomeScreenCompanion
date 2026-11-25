@@ -164,9 +164,14 @@ namespace HomeScreenCompanion
             if (film is Video filmVideo && film.Id != copy.Id)
             {
                 // The film's top-list copies too: a split of the film's versions takes them apart as well.
+                // Never a copy that is a version of another film with the same IMDb id (a copy in another
+                // library, "Prioritize high quality"): Emby's merge would join the two films for good.
+                // The ranked copy itself leaves such a film first (dry: it is only counted).
                 var group = new HashSet<long>(filmVideo.GetAlternateVersionIds());
                 var parts = new List<BaseItem> { film };
-                if (!group.Contains(copy.InternalId)) parts.Add(copy);
+                bool elsewhere = BestCopy.LinkedToOtherFilm(copy, film, lm);
+                if (elsewhere && !dry) BestCopy.DetachFromOtherFilm(copy, film, lm);
+                if (elsewhere || !group.Contains(copy.InternalId)) parts.Add(copy);
                 var filmImdb = film.GetProviderId("Imdb");
                 if (!string.IsNullOrEmpty(filmImdb))
                     parts.AddRange(lm.GetItemList(new InternalItemsQuery
@@ -176,7 +181,8 @@ namespace HomeScreenCompanion
                         IsVirtualItem = false,
                         AnyProviderIdEquals = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>("Imdb", filmImdb!) }
                     }).Where(t => TopListCollectionMirror.IsTopListItem(t) && !group.Contains(t.InternalId)
-                               && string.Equals(t.GetProviderId("Imdb"), filmImdb, StringComparison.OrdinalIgnoreCase)));
+                               && string.Equals(t.GetProviderId("Imdb"), filmImdb, StringComparison.OrdinalIgnoreCase)
+                               && !BestCopy.LinkedToOtherFilm(t, film, lm)));
                 if (parts.Count > 1 && dry)
                     _logger?.Info($"[Ranked] [Dry run] '{copy.Name}': {RunLog.Plural(parts.Count - 1, "version")} would be merged with the film again");
                 else if (parts.Count > 1)
