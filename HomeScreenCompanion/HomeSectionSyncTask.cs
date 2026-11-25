@@ -489,6 +489,10 @@ namespace HomeScreenCompanion
                 var copy = PrepareCopy(config, managed, section, sourceKey, targetIdStr, targetKey, targetName, notCopied);
                 if (copy != null) copies.Add((section, copy));
             }
+            // Row shuffle: the rows of its sets in this user's own order (as Schedule Switch puts them),
+            // not the master's, so a user with fewer of a set's rows is not written again every time.
+            var shuffled = RowShuffle.CopyOrder(config, copies.Select(c => managed.RowKey(config, c.Section, sourceKey)).ToList(), RunGate.ScheduleNow);
+            copies = shuffled.Select(i => copies[i]).ToList();
             // The user's rows already are the master's (the same rows in the same order, none kept
             // aside): nothing is written. Deleting and adding them all again would write every row
             // of every user on every sync, and give each row a new id.

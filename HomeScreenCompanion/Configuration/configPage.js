@@ -9066,7 +9066,7 @@ define(['emby-input', 'emby-button', 'emby-select', 'emby-checkbox'], function (
             '<input type="search" class="rs-filter emby-input" placeholder="Filter rows…" autocomplete="off" style="display:none;" />' +
             '<div class="rs-pick-list"></div>' +
             '</div>' +
-            '<div class="fieldDescription">Click a row to add it to the end of the start order. Only rows HSC makes: sources with a home row and top-lists. A row can be in one set only. The other rows on the home screen never move.</div>' +
+            '<div class="fieldDescription">Click a row to add it to the end of the start order. Only rows HSC makes: sources with a home row and top-lists. A row can be in one set only. The other rows on the home screen never move. A row you remove from the set stays where it is.</div>' +
             '<div class="rs-preview"></div>' +
             '<div class="rs-foot"><button type="button" is="emby-button" class="raised hsc-btn-danger rs-delete"><i class="md-icon" style="font-size:1em;margin-right:4px;">delete</i><span>Delete set</span></button></div>' +
             '</div></div>';

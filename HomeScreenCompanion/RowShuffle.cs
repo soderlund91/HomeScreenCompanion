@@ -308,6 +308,41 @@ namespace HomeScreenCompanion
             return own.Count >= 2 ? Order(s, own, k) : own;
         }
 
+        /// <summary>
+        /// Copy all (HomeSectionSyncTask.CopyAllRows): the copies of the master's rows in the order the
+        /// target user's rows of the sets have now, as Schedule Switch puts them (UserOrder on the rows
+        /// the user gets). A user whose rows already are like that is not written again, and one that is
+        /// written is right at once (without it, a user with fewer of a set's rows than the master got
+        /// the master's order on every Copy &amp; Sync and Schedule Switch moved them back).
+        /// <paramref name="keys"/>: each copy's row key, in the master's order. Returns the copies'
+        /// indices in their new order.
+        /// </summary>
+        internal static List<int> CopyOrder(PluginConfiguration config, List<string> keys, DateTime now)
+        {
+            var cur = Enumerable.Range(0, keys.Count).ToList();
+            foreach (var (set, rows) in ActiveSets(config))
+            {
+                // As PresentRows: one copy per key (the first), the keys in start order.
+                var at = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                var taken = new HashSet<int>();
+                var own = new List<string>();
+                foreach (var key in rows)
+                {
+                    int p = cur.FindIndex(i => !taken.Contains(i) && string.Equals(keys[i], key, StringComparison.OrdinalIgnoreCase));
+                    if (p < 0) continue;
+                    taken.Add(cur[p]); at[key] = p; own.Add(key);
+                }
+                if (own.Count < 2) continue;
+                var order = Order(set, own, Period(set, now));
+                var slots = own.Select(k => at[k]).OrderBy(p => p).ToList();
+                var wanted = order.Select(k => cur[at[k]]).ToList();
+                var next = cur.ToList();
+                for (int i = 0; i < slots.Count; i++) next[slots[i]] = wanted[i];
+                cur = next;
+            }
+            return cur;
+        }
+
         /// <summary>The rows of one user's home screen in the order they get (ids), or null when nothing moves.</summary>
         internal static List<string>? Arrange(List<string> current, Dictionary<string, List<string>> byKey, List<string> order)
         {
@@ -347,16 +382,17 @@ namespace HomeScreenCompanion
             // What each set puts in effect: its order now, each user's worked out on the rows they have
             // (UserOrder; `order` is the set's order, for the log); a set that is gone or off: its start
             // order, only for rows no set that takes turns now has.
-            var jobs = new List<(string id, string name, RowShuffleSet? set, List<string> rows, long k, List<string> order, bool restore)>();
+            // A set put back: only for the users still to do (pending; null = everyone, the first time).
+            var jobs = new List<(string id, string name, RowShuffleSet? set, List<string> rows, long k, List<string> order, bool restore, HashSet<string>? pending)>();
             foreach (var (set, rows) in active)
             {
                 long k = Period(set, now);
-                jobs.Add((set.Id, string.IsNullOrWhiteSpace(set.Name) ? "Row shuffle" : set.Name.Trim(), set, rows, k, Order(set, rows, k), false));
+                jobs.Add((set.Id, string.IsNullOrWhiteSpace(set.Name) ? "Row shuffle" : set.Name.Trim(), set, rows, k, Order(set, rows, k), false, null));
             }
             foreach (var kv in state.Where(kv => !active.Any(a => a.set.Id == kv.Key)))
             {
                 var rows = kv.Value.rows.Where(r => !activeRows.Contains(r)).ToList();
-                jobs.Add((kv.Key, kv.Value.name, null, rows, 0, rows, true));
+                jobs.Add((kv.Key, kv.Value.name, null, rows, 0, rows, true, kv.Value.pending));
             }
             if (jobs.Count == 0) return 0;
 
@@ -365,26 +401,43 @@ namespace HomeScreenCompanion
             int usersMoved = 0;
             var movedFor = new int[jobs.Count];     // users whose rows of the job moved
             var disabledOf = new int[jobs.Count];   // users left alone: disabled in Emby (rule 10)
+            // A set put back: the users whose rows could not be put back now (disabled in Emby, or it
+            // failed). Kept in the state file and tried again at the next check; when it is empty the
+            // set is forgotten. A user who no longer has the rows (or no longer exists) is done.
+            var left = jobs.Select(_ => new HashSet<string>(StringComparer.OrdinalIgnoreCase)).ToArray();
+            bool ToDo(int j, string user) => jobs[j].restore && (jobs[j].pending == null || jobs[j].pending!.Contains(user));
+            void NotNow(string user)
+            {
+                if (!UserExists(userManager, user)) return;
+                for (int j = 0; j < jobs.Count; j++) if (ToDo(j, user)) left[j].Add(user);
+            }
 
             foreach (var entry in byUser)
             {
                 var user = entry.Key; var byKey = entry.Value;
                 cancellationToken.ThrowIfCancellationRequested();
                 long uid;
-                try { uid = userManager.GetInternalId(user); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); continue; }
+                try { uid = userManager.GetInternalId(user); } catch (Exception swallowed) { PluginLog.Swallowed(swallowed); NotNow(user); continue; }
                 ContentSection[] sections;
                 try { sections = userManager.GetHomeSections(uid, cancellationToken)?.Sections ?? Array.Empty<ContentSection>(); }
-                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); continue; }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception swallowed) { PluginLog.Swallowed(swallowed); NotNow(user); continue; }
                 var current = sections.Select(s => s.Id ?? "").ToList();
                 bool disabled = userStatus.IsDisabled(user);
                 bool moved = false;
                 for (int j = 0; j < jobs.Count; j++)
                 {
                     var job = jobs[j];
+                    if (job.restore && !ToDo(j, user)) continue;
                     var order = job.restore ? job.rows : UserOrder(job.set!, job.rows, job.k, current, byKey);
                     var target = Arrange(current, byKey, order);
                     if (target == null) continue;
-                    if (disabled) { disabledOf[j]++; continue; }   // rule 10: left as it is
+                    if (disabled)   // rule 10: left as it is (a set put back: when they are enabled again)
+                    {
+                        disabledOf[j]++;
+                        if (job.restore) left[j].Add(user);
+                        continue;
+                    }
                     var name = UserName(userManager, user);
                     if (dryRun)
                     {
@@ -414,6 +467,7 @@ namespace HomeScreenCompanion
                     catch (Exception ex)
                     {
                         if (log != null) { Head(log); log.Warn($"{name}: the rows of '{job.name}' could not be moved — {ex.Message}"); }
+                        if (job.restore) left[j].Add(user);   // tried again at the next check
                         // Read again: some of the moves may have been made.
                         try { current = (userManager.GetHomeSections(uid, cancellationToken)?.Sections ?? Array.Empty<ContentSection>()).Select(s => s.Id ?? "").ToList(); }
                         catch (Exception swallowed) { PluginLog.Swallowed(swallowed); break; }
@@ -428,19 +482,36 @@ namespace HomeScreenCompanion
             if (log != null)
                 for (int j = 0; j < jobs.Count; j++)
                 {
-                    if (movedFor[j] == 0) continue;
                     var job = jobs[j];
-                    var first = job.restore || job.order.Count == 0 ? "" : $", '{Label(config, job.order[0])}' first";
-                    var users = RunLog.Plural(movedFor[j], "user");
+                    // (A set put back: the users disabled in Emby are said the first time, not every check.)
+                    bool sayDisabled = disabledOf[j] > 0 && (movedFor[j] > 0 || (job.restore && job.pending == null));
+                    if (movedFor[j] == 0 && !sayDisabled) continue;
                     Head(log);
-                    log.Ok(dryRun
-                        ? $"[Dry run] '{job.name}' would {(job.restore ? "go back to its start order" : "get its new order")} for {users}{first}"
-                        : $"'{job.name}' {(job.restore ? "back in its start order" : "in its new order")} for {users}{first}");
-                    if (disabledOf[j] > 0) log.Skip($"'{job.name}': {RunLog.Plural(disabledOf[j], "user")} disabled in Emby, left as they are");
+                    if (movedFor[j] > 0)
+                    {
+                        var first = job.restore || job.order.Count == 0 ? "" : $", '{Label(config, job.order[0])}' first";
+                        var users = RunLog.Plural(movedFor[j], "user");
+                        log.Ok(dryRun
+                            ? $"[Dry run] '{job.name}' would {(job.restore ? "go back to its start order" : "get its new order")} for {users}{first}"
+                            : $"'{job.name}' {(job.restore ? "back in its start order" : "in its new order")} for {users}{first}");
+                    }
+                    if (sayDisabled)
+                        log.Skip(job.restore
+                            ? $"'{job.name}': {RunLog.Plural(disabledOf[j], "user")} disabled in Emby, put back when enabled again"
+                            : $"'{job.name}': {RunLog.Plural(disabledOf[j], "user")} disabled in Emby, left as they are");
                 }
 
-            if (!dryRun) SaveState(active);
+            if (!dryRun)
+                SaveState(active, Enumerable.Range(0, jobs.Count).Where(j => jobs[j].restore && left[j].Count > 0)
+                    .Select(j => (jobs[j].id, jobs[j].name, jobs[j].rows, left[j])).ToList());
             return usersMoved;
+        }
+
+        // A user who is gone from Emby: nothing left to put back for them.
+        private static bool UserExists(IUserManager userManager, string user)
+        {
+            try { return !Guid.TryParse(user, out var g) || userManager.GetUserById(g) != null; }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); return true; }
         }
 
         // The log's heading, once per log.
@@ -468,10 +539,11 @@ namespace HomeScreenCompanion
         // ── State: the sets in effect, so one switched off or deleted can be put back ──
 
         // One line per set: id, name, then its rows in start order, separated by \x1F (a data file,
-        // never the config: rule 4).
-        private static Dictionary<string, (string name, List<string> rows)> LoadState()
+        // never the config: rule 4). A set being put back can end with "@user,user": the users still
+        // to do (none = everyone; a row key never starts with "@").
+        private static Dictionary<string, (string name, List<string> rows, HashSet<string>? pending)> LoadState()
         {
-            var result = new Dictionary<string, (string, List<string>)>(StringComparer.Ordinal);
+            var result = new Dictionary<string, (string, List<string>, HashSet<string>?)>(StringComparer.Ordinal);
             try
             {
                 lock (_lock)
@@ -481,7 +553,10 @@ namespace HomeScreenCompanion
                     {
                         var parts = line.Split('\u001F');
                         if (parts.Length < 2 || parts[0].Length == 0) continue;
-                        result[parts[0]] = (parts[1], parts.Skip(2).Where(p => p.Length > 0).ToList());
+                        var rest = parts.Skip(2).Where(p => p.Length > 0).ToList();
+                        var users = rest.FirstOrDefault(p => p.StartsWith("@", StringComparison.Ordinal));
+                        var pending = users == null ? null : new HashSet<string>(users.Substring(1).Split(',').Select(Norm).Where(u => u.Length > 0), StringComparer.OrdinalIgnoreCase);
+                        result[parts[0]] = (parts[1], rest.Where(p => !p.StartsWith("@", StringComparison.Ordinal)).ToList(), pending);
                     }
                 }
             }
@@ -489,10 +564,14 @@ namespace HomeScreenCompanion
             return result;
         }
 
-        // After a run: the sets that take turns now; the ones put back are forgotten.
-        private static void SaveState(List<(RowShuffleSet set, List<string> rows)> active)
+        // After a run: the sets that take turns now, and the sets put back that still have users to do
+        // (disabled in Emby, or it failed); the others put back are forgotten.
+        private static void SaveState(List<(RowShuffleSet set, List<string> rows)> active, List<(string id, string name, List<string> rows, HashSet<string> users)> putBack)
         {
-            var lines = active.Select(a => string.Join("\u001F", new[] { a.set.Id, XmlSafe(a.set.Name ?? "") }.Concat(a.rows))).ToList();
+            var lines = active.Select(a => string.Join("\u001F", new[] { a.set.Id, XmlSafe(a.set.Name ?? "") }.Concat(a.rows)))
+                .Concat(putBack.Select(b => string.Join("\u001F", new[] { b.id, XmlSafe(b.name) }.Concat(b.rows)
+                    .Concat(new[] { "@" + string.Join(",", b.users.OrderBy(u => u, StringComparer.Ordinal)) }))))
+                .ToList();
             try
             {
                 lock (_lock)
