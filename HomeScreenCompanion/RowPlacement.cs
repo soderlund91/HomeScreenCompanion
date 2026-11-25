@@ -70,6 +70,38 @@ namespace HomeScreenCompanion
         }
 
         /// <summary>
+        /// Settings saved: a source whose home row was off and is on now gets its Position as already in
+        /// effect. Rows that are there already (a row taken over, found by what it shows) stay where they
+        /// are; a row made new is placed by its Position as always (PlaceNewRow). Owner 2026-11-19: taking
+        /// over a row changes as little as possible. Before NoteChanges, which then leaves it alone.
+        /// </summary>
+        internal static void NoteHomeRowsSwitchedOn(PluginConfiguration? old, PluginConfiguration? saved)
+        {
+            if (old == null || saved == null) return;
+            try
+            {
+                var wasOn = new HashSet<string>((old.Tags ?? new List<TagConfig>()).Where(t => t.EnableHomeSection).Select(SourceKey), StringComparer.OrdinalIgnoreCase);
+                var known = new HashSet<string>((old.Tags ?? new List<TagConfig>()).Select(SourceKey), StringComparer.OrdinalIgnoreCase);
+                bool changed = false;
+                lock (_lock)
+                {
+                    var applied = Applied();
+                    foreach (var t in saved.Tags ?? new List<TagConfig>())
+                    {
+                        var key = SourceKey(t);
+                        if (!t.EnableHomeSection || wasOn.Contains(key) || !known.Contains(key)) continue;
+                        var now = PositionIn(t.HomeSectionSettings);
+                        if (applied.TryGetValue(key, out var was) && was == now) continue;
+                        applied[key] = now;
+                        changed = true;
+                    }
+                    if (changed) Save();
+                }
+            }
+            catch (Exception swallowed) { PluginLog.Swallowed(swallowed); }
+        }
+
+        /// <summary>
         /// Settings saved: a source or top-list whose Position changed and has no position recorded yet
         /// gets the old one recorded, so the next run sees the change and moves its rows.
         /// </summary>

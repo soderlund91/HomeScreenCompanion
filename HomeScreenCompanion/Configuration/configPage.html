@@ -1662,6 +1662,77 @@
         }
         .hsc-level-switch select:hover { background: var(--plugin-popup-hover); }
         .hsc-level-switch select option { background: var(--plugin-popup-bg); color: var(--plugin-popup-color); }
+        /* Row Shuffle (Home Screen → Row Shuffle) */
+        .rs-intro p { font-size: 0.9em; line-height: 1.5; margin: 0 0 8px; }
+        .rs-intro { margin-bottom: 20px; }
+        .rs-sets { margin-bottom: 8px; }
+        .rs-set-head { gap: 10px; }
+        .rs-set-meta { font-size: 0.8em; color: var(--theme-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .rs-pill { margin-left: auto; font-size: 0.8em; font-weight: 500; padding: 2px 8px; border-radius: 999px; }
+        .rs-pill.on { background: rgba(82,181,75,0.15); color: var(--hsc-primary-text); }
+        .rs-pill.off { background: rgba(154,164,176,0.15); color: var(--hsc-neutral); }
+        .rs-field-label { font-size: 0.88em; font-weight: 500; margin: 16px 0 8px; }
+        .rs-seg { display: flex; max-width: 360px; border: 1px solid var(--hsc-hairline); border-radius: 8px; padding: 2px; gap: 2px; background: var(--hsc-tint-1); }
+        .rs-mode-desc { margin-top: 6px; }
+        .rs-every-wrap { display: flex; gap: 16px; align-items: flex-end; margin-top: 16px; flex-wrap: wrap; }
+        .rs-every-sel { min-width: 200px; margin-bottom: 0 !important; }
+        .rs-days-wrap { width: 110px; margin-bottom: 0 !important; }
+        .rs-rows { display: flex; flex-direction: column; gap: 4px; }
+        .rs-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 6px; border: 1px solid var(--hsc-hairline); border-radius: 6px; background: var(--theme-background-level2); }
+        .rs-row:hover { background: var(--hsc-tint-2); }
+        .rs-row.rs-dragging { opacity: 0.5; }
+        .rs-row .tag-indicator { margin-left: 0; }
+        .rs-row .tag-indicator.toplist .md-icon { color: var(--hsc-cat-toplist); }
+        .rs-handle { cursor: grab; color: var(--theme-text-secondary); font-size: 1.2em; }
+        .rs-row-pos { font-variant-numeric: tabular-nums; color: var(--theme-text-secondary); font-size: 0.85em; min-width: 1.6em; text-align: right; }
+        .rs-row-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .rs-row-name.rs-missing { opacity: 0.6; text-decoration: line-through; }
+        .rs-row-note { font-size: 0.8em; color: var(--hsc-warning-text); }
+        .rs-row-remove { margin-left: auto !important; padding: 2px !important; }
+        .rs-pick { margin-top: 12px; border: 1px solid var(--hsc-hairline); border-radius: 8px; padding: 8px; background: var(--hsc-tint-1); }
+        .rs-pick-head { display: flex; align-items: center; gap: 8px; padding: 0 4px; }
+        .rs-pick-head .rs-field-label { margin: 4px 0; }
+        .rs-pick-all { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; border: 1px solid var(--hsc-hairline-strong); border-radius: 6px; padding: 4px 10px; background: transparent; color: inherit; font-family: inherit; font-size: 0.85em; font-weight: 500; }
+        .rs-pick-all:hover { background: var(--hsc-tint-2); }
+        .rs-pick-all .md-icon { font-size: 1.15em; color: var(--hsc-primary-text); }
+        .rs-filter { width: 100%; box-sizing: border-box; padding: 7px 10px; font-size: 0.9em; margin: 6px 0 4px; }
+        .rs-pick-list { display: flex; flex-direction: column; gap: 2px; max-height: 300px; overflow-y: auto; margin-top: 4px; }
+        .rs-pick-group { font-size: 0.78em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--theme-text-secondary); padding: 8px 6px 2px; }
+        .rs-pick-item { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; text-align: left; padding: 5px 8px; border: none; border-radius: 6px; background: transparent; color: inherit; font-family: inherit; font-size: 0.9em; cursor: pointer; }
+        button.rs-pick-item:hover, button.rs-pick-item:focus-visible { background: var(--hsc-tint-2); }
+        button.rs-pick-item:focus-visible { outline: 2px solid var(--hsc-primary-text); outline-offset: -2px; }
+        .rs-pick-item > .md-icon { font-size: 1.2em; color: var(--hsc-primary-text); }
+        .rs-pick-item .tag-indicator { margin-left: 0; }
+        .rs-pick-item .tag-indicator.toplist .md-icon { color: var(--hsc-cat-toplist); }
+        .rs-pick-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+        .rs-pick-note { font-size: 0.85em; color: var(--theme-text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .rs-pick-item.used { cursor: default; opacity: 0.55; }
+        .rs-pick-item.used > .md-icon { color: var(--theme-text-secondary); }
+        .rs-pick-empty { font-size: 0.88em; color: var(--theme-text-secondary); padding: 6px 8px; }
+        .rs-note { display: flex; gap: 8px; align-items: flex-start; font-size: 0.88em; line-height: 1.45; padding: 8px 12px; margin: 8px 0; border: 1px solid var(--hsc-hairline); border-radius: 6px; background: var(--hsc-tint-1); }
+        .rs-note .md-icon { font-size: 1.2em; color: var(--theme-text-secondary); flex-shrink: 0; }
+        .rs-preview-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin-top: 8px; }
+        .rs-periods { display: flex; flex-direction: column; gap: 8px; }
+        .rs-period { border: 1px solid var(--hsc-hairline); border-radius: 6px; padding: 8px 12px; }
+        .rs-period.now { background: var(--hsc-tint-1); border-color: var(--hsc-hairline-strong); }
+        .rs-period-when { font-size: 0.8em; font-weight: 600; color: var(--theme-text-secondary); margin-bottom: 4px; }
+        .rs-period.now .rs-period-when { color: var(--theme-text-primary); }
+        .rs-period ol { margin: 0; padding-left: 22px; font-size: 0.88em; line-height: 1.5; }
+        .rs-screen-rows { display: flex; flex-direction: column; gap: 3px; margin-bottom: 6px; }
+        .rs-screen-row { display: flex; align-items: center; gap: 8px; font-size: 0.88em; padding: 5px 10px; border-radius: 6px; color: var(--theme-text-secondary); background: var(--hsc-tint-1); }
+        .rs-screen-row .md-icon { font-size: 1.1em; opacity: 0.7; }
+        .rs-screen-row.member { color: var(--theme-text-primary); font-weight: 500; background: var(--hsc-seg-on-bg); box-shadow: inset 0 0 0 1px var(--hsc-hairline-strong); }
+        .rs-screen-row.member .md-icon { color: var(--hsc-primary-text); opacity: 1; }
+        .rs-foot { margin-top: 24px; display: flex; justify-content: flex-end; }
+        /* Take over home rows: the notice on a source card's Home Screen tab, the Manage tab's button */
+        .rto-note { flex-direction: column; margin: 0 0 16px; }
+        .rto-note > .md-icon, .rto-note > span { align-self: flex-start; }
+        .rto-note:not(:has(.rto-opt)) { flex-direction: row; }
+        .rto-opt { display: flex; gap: 8px; align-items: flex-start; }
+        .rto-opt + .rto-opt { border-top: 1px solid var(--hsc-hairline); padding-top: 10px; margin-top: 4px; }
+        .rto-warn { color: var(--hsc-warning-text); margin-top: 4px; }
+        .rto-btns { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 6px; }
+        .man-btn-takeover { margin-right: 8px !important; font-size: 0.85em !important; padding: 4px 10px !important; }
     </style>
 
     <div class="content-primary">
@@ -2102,6 +2173,18 @@
                             <div class="fieldDescription">Lists the titles from your lists that are not in your library, so you know what to add.</div>
                         </div>
 
+                        <div class="checkboxContainer checkboxContainer-withDescription" style="margin-top: 15px;">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="chkPrioritizeHighQuality" />
+                                <span>Prioritize high quality</span>
+                            </label>
+                            <div class="fieldDescription">When the same movie is in your library more than once (versions, or copies in different libraries), collections, playlists and top-lists use the best copy: highest resolution, then Dolby Vision or HDR, then bitrate. Off: the first copy. Tags still go on every copy.</div>
+                            <div class="prioritize-quality-warning hsc-callout warning" style="margin-top:8px; display:none;">
+                                <i class="md-icon">warning</i>
+                                <span>Users who can't open the library with the best copy may not see the movie in collections and playlists. A top-list plays the best file, also for users who only have the lower-quality libraries. Turning this on or off swaps the copies at the next sync.</span>
+                            </div>
+                        </div>
+
                         <div class="hsc-eyebrow" style="margin-top: 24px; margin-bottom: 8px;">Top-lists</div>
 
                         <div class="checkboxContainer checkboxContainer-withDescription">
@@ -2261,6 +2344,7 @@
                 <div class="hsc-sub-tab-nav">
                     <button class="hsc-sub-tab-btn active" data-hsc-tab="manage">Manage</button>
                     <button class="hsc-sub-tab-btn" data-hsc-tab="copy">Copy &amp; Sync</button>
+                    <button class="hsc-sub-tab-btn" data-hsc-tab="shuffle">Row Shuffle</button>
                     <button class="hsc-sub-tab-btn" data-hsc-tab="tweaks">Home Screen Tweaks</button>
                 </div>
                 <div id="hscSubTabManage" class="hsc-sub-tab-content verticalSection">
@@ -2268,6 +2352,9 @@
                 </div>
                 <div id="hscSubTabCopy" class="hsc-sub-tab-content verticalSection" style="display:none;">
                     <div id="hscContainer"></div>
+                </div>
+                <div id="hscSubTabShuffle" class="hsc-sub-tab-content verticalSection" style="display:none;">
+                    <div id="rsContainer"></div>
                 </div>
                 <div id="hscSubTabTweaks" class="hsc-sub-tab-content verticalSection" style="display:none;">
                     <div id="hstContainer"></div>
@@ -2584,7 +2671,7 @@
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li>Type in <em>Add a movie or show</em> to search your library and click a title to add it. <strong>▲ ▼</strong> move it, <strong>✕</strong> removes it.</li>
                             <li>The order is kept: a top-list made from the tag and a playlist follow it. An Emby collection still shows Emby's own sort order (see <em>Keep the list order</em> under Tags &amp; Collections).</li>
-                            <li>Titles later deleted from the library are skipped. Copy/paste matches the titles on another server by IMDb/TMDb/TVDb id.</li>
+                            <li>When Emby makes a title a new item (a replaced file or a moved folder), the next sync finds it again by its IMDb, TMDb or TVDb id. Titles that are nowhere in the library any more are skipped and stay in the list as <em>Not found</em>. Copy/paste matches the titles on another server by IMDb/TMDb/TVDb id.</li>
                             <li><em>Preview</em> lists the titles that would get the tag, in your order.</li>
                             <li><em>Max items</em> caps how many of the titles are used (0 = all of them).</li>
                         </ul></div>
@@ -2594,6 +2681,7 @@
                     <div><strong>Pinned titles and Random pick</strong> — on the Source tab of every source type that tags titles (not <em>Rotating from existing</em> or <em>Your Next Watch</em>).
                         <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
                             <li><em>Pinned titles</em> (Advanced): search and add any movie or show in your library. They always get the source's tag, collection and playlist, even when the source itself does not have them. The source's filters and blacklist do not take them out.</li>
+                            <li>A pinned title stays pinned when Emby makes it a new item (a replaced file or a moved folder): the next sync finds it again by its IMDb, TMDb or TVDb id, always the library's own item, never one of HSC's copies. A title that is nowhere in the library stays in the list as <em>Not found</em>.</li>
                             <li>Pinned titles come first where the source's order is used: the playlist, a top-list made from the source and a collection with <em>Keep the list order</em>. A home row and other collections keep the sort order set in Emby; the pinned titles are always in them, but not moved to the front. Their sort titles are never changed.</li>
                             <li><em>Max items</em> is the total, pinned titles included. With 1 pinned title and Max 8, the source adds 7 of its own titles.</li>
                             <li><em>Random pick</em> off: the source's first titles fill the rest of Max. On: the rest is picked at random from everything the source finds. With Max 0 nothing is picked: all titles are used.</li>
@@ -3042,7 +3130,7 @@
                     <i class="md-icon help-section-icon">home</i>
                     <span>Home Screen</span>
                 </div>
-                <div class="step-text" style="margin-bottom:10px; font-size:0.92em;">The <strong>Home Screen</strong> tab has three independent sub-sections: <strong>Manage</strong> (source-based rows), <strong>Copy &amp; Sync</strong> (copy one user's layout to others) and <strong>Home Screen Tweaks</strong> (adjustments to Emby's built-in rows and posters).</div>
+                <div class="step-text" style="margin-bottom:10px; font-size:0.92em;">The <strong>Home Screen</strong> tab has four independent sub-sections: <strong>Manage</strong> (source-based rows), <strong>Copy &amp; Sync</strong> (copy one user's layout to others), <strong>Row Shuffle</strong> (rows that take turns on their places) and <strong>Home Screen Tweaks</strong> (adjustments to Emby's built-in rows and posters).</div>
                 <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">view_list</i>
                     <div><strong>Manage</strong> — Creates and keeps custom home screen rows up to date. Each row is tied to one of your sources and is automatically refreshed for the selected users every time sync runs. To set up a row for a source, open that source card and go to its <em>Home Screen</em> tab.</div>
@@ -3059,6 +3147,30 @@
                             <li>The target users' own rows are <strong>replaced</strong>, so changes they made themselves are lost on the next run.</li>
                             <li><em>Also copy library order</em> copies the order of the libraries in the sidebar too.</li>
                             <li>When <em>Enable Home Screen sync</em> is off, the copy never runs, not even from <strong>Run</strong>.</li>
+                        </ul></div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">input</i>
+                    <div><strong>Take over existing rows</strong> — Rows made by hand in Emby (or copied out by Copy &amp; Sync) that show a source's tag or collection can become that source's home row, as if HSC had made them. Nothing visible changes: the users who have the row are added to the source, the row keeps its title, sorting and look, and its <em>Position</em> becomes <em>after</em> the row above it, so it stays where it is.
+                        <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
+                            <li>On a source: tick <em>Add as home screen section</em>. When users already have such a row, a notice offers <em>Take it over as it is</em> or <em>Use my settings</em> (the rows are taken over too, with the settings on the card).</li>
+                            <li>In <strong>Row Shuffle</strong>: <em>Add rows</em> lists them under <em>Existing rows (take over)</em>. In <strong>Manage</strong>: such a row has a <em>Take over</em> button.</li>
+                            <li>Then click <strong>Save Settings</strong>; the next sync makes them the source's rows.</li>
+                            <li>From then on they are like any row HSC made: untick a user, untick <em>Add as home screen section</em> or delete the source, and the rows are removed (by the next full sync).</li>
+                            <li>A tag that several sources write (for example a Priority Override) is not offered in the lists: only one source can own the row.</li>
+                        </ul></div>
+                </div>
+                <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">swap_vert</i>
+                    <div><strong>Row Shuffle</strong> — Rows far down the home screen are easy to miss. In a <em>Row shuffle set</em>, the rows you pick take turns on the places they already have, so each one gets its time near the top. All other rows stay exactly where they are.
+                        <ul style="margin:4px 0 0;padding-left:18px;line-height:1.7;">
+                            <li><em>Rolling</em>: each time, every row moves up one place and the top row goes to the bottom. <em>Random</em>: a new random order each time; the same row is never on top twice in a row.</li>
+                            <li>Change <em>every hour</em>, <em>every day</em>, <em>every week</em> or <em>every … days</em>. It changes on the full hour or at midnight (server time), and shows on the home screen within 15 minutes, the next time it is opened.</li>
+                            <li>Only rows HSC makes can be picked: a source's home row and top-list rows. Under <em>Add rows</em> every such row is listed: click one to add it, or <em>Add all</em> (with the filter: the rows shown). A row can be in one set only (rows in another set are greyed out), and a set needs at least two rows. Emby's own rows and rows users made themselves are never moved.</li>
+                            <li>It works for every user who has the rows. Users with the same rows get the same order. A user with only some of the rows takes turns among their own, one step each change, so every row they have gets its time on top. When a user gets or loses one of the rows, that one change can be uneven. Copy &amp; Sync targets follow along.</li>
+                            <li>The list in the set is the <strong>start order</strong>. A set that is new or changed starts in that order when you save. Switch a set off or delete it, and its rows go back to the start order once and then stay there (a user who is disabled in Emby then gets them back when enabled again). A row you take out of a set stays where it is.</li>
+                            <li>A row's <em>Position</em> only places it when the row is made. After that the set decides where it is. Moving one of the rows by hand moves its place in the set.</li>
+                            <li>The preview shows the order now and for the next changes, and the home screen of a user you pick, with the rows that take turns marked.</li>
                         </ul></div>
                 </div>
                 <div class="help-feature-row">
@@ -3252,6 +3364,10 @@
                     <div><strong>Log missing movies and shows</strong> <span style="opacity:0.6;">(Tags &amp; Collections)</span> — Lists in the Tag &amp; Collections log, per source, the titles on your External and AI lists that are not in your library, with their IMDb id — handy for finding what to add next.</div>
                 </div>
                 <div class="help-feature-row">
+                    <i class="md-icon help-feat-icon">high_quality</i>
+                    <div><strong>Prioritize high quality</strong> <span style="opacity:0.6;">(Tags &amp; Collections)</span> — Off by default. A movie can be in your library more than once: as versions, or as separate copies in different libraries (a 4K and a 1080p library). Tags always go on every copy. A collection, a playlist, a movie top-list and a ranked collection hold one copy per movie: normally the first one HSC finds, with this on the best one, picked by resolution, then Dolby Vision or HDR, then bitrate (file size when the bitrate is not known). Shows and episodes keep the first copy. Known limits: a user who can't open the library with the best copy may not see the movie in collections and playlists, and a top-list plays the best file for everyone who can open the top-list, also users who only have the lower-quality libraries. Turning it on or off swaps the copies at the next sync. With it on, a top-list copy is linked as a version of the copy it plays. HSC never links your separate copies to each other.</div>
+                </div>
+                <div class="help-feature-row">
                     <i class="md-icon help-feat-icon">collections_bookmark</i>
                     <div><strong>Show collections on top-list items</strong> <span style="opacity:0.6;">(Top-lists)</span> — Adds each top-list movie to the same collections as the original, so "Included in &lt;collection&gt;" also shows when a movie is opened from a top-list. Depending on the collection's sort order, it may then show the top-list version with its rank-badge poster. A ranked collection (<em>Keep the list order</em>) is left out: it keeps its own copies.</div>
                 </div>
@@ -3415,6 +3531,7 @@
                             <li>Tick <strong>Add as home screen section</strong>.</li>
                             <li>Tick the users under <strong>Target Users</strong>.</li>
                             <li>Pick the look under <strong>Section Settings</strong>.</li>
+                            <li>Optional: to let it take turns with other rows so it is not always far down, add it to a set under <strong>Home Screen → Row Shuffle</strong>.</li>
                         </ul>
                     </div>
                 </div>
