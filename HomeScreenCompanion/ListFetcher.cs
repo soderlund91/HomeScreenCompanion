@@ -354,6 +354,24 @@ namespace HomeScreenCompanion
                         return new TmdbApiTarget { FullUrl = $"https://api.themoviedb.org/3/collection/{id}", MediaType = "movie" };
                 }
 
+                // The website's filtered browse page (themoviedb.org/movie?with_keywords=207317&vote_count.gte=50):
+                // the same filters as TMDb's discover API. Without this the query was dropped and the link read
+                // as Popular. The site's own paging and the API key are left out (HSC adds both).
+                if (segments.Count == 1 && (segments[0] == "movie" || segments[0] == "tv") && uri.Query.Length > 1)
+                {
+                    var filters = uri.Query.TrimStart('?').Split('&')
+                        .Where(p => p.Length > 0)
+                        .Where(p =>
+                        {
+                            var name = p.Split('=')[0];
+                            return !name.Equals("page", StringComparison.OrdinalIgnoreCase)
+                                && !name.Equals("api_key", StringComparison.OrdinalIgnoreCase);
+                        })
+                        .ToList();
+                    if (filters.Count > 0)
+                        return new TmdbApiTarget { FullUrl = $"https://api.themoviedb.org/3/discover/{segments[0]}?{string.Join("&", filters)}", MediaType = segments[0] };
+                }
+
                 if (segments.Count >= 1 && (segments[0] == "movie" || segments[0] == "tv"))
                 {
                     string type = segments[0];
